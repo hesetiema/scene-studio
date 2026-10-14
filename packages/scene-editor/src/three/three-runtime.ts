@@ -47,9 +47,14 @@ export class ThreeRuntime implements RuntimeContract {
   #orbit: { update: () => void; dispose: () => void } | null = null;
   #transformBinding: ReturnType<typeof createTransformControlsBinding> | null = null;
   #transformControls: (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D }) | null = null;
+  #controlsReady: Promise<void>;
+  #resolveControlsReady!: () => void;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
+    this.#controlsReady = new Promise<void>((resolve) => {
+      this.#resolveControlsReady = resolve;
+    });
     this.camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
     this.camera.position.set(6, 5, 10);
     this.camera.lookAt(0, 0, 0);
@@ -65,9 +70,16 @@ export class ThreeRuntime implements RuntimeContract {
 
     if (options.enableControls !== false) {
       this.#initControls(options);
+    } else {
+      this.#resolveControlsReady();
     }
 
     this.#syncSize();
+  }
+
+  /** Resolves when TransformControls (gizmo) is mounted, or immediately if disabled. */
+  get controlsReady(): Promise<void> {
+    return this.#controlsReady;
   }
 
   #initControls(options: ThreeRuntimeOptions): void {
@@ -91,41 +103,52 @@ export class ThreeRuntime implements RuntimeContract {
       this.#orbit = null;
     }
 
+    if (options.transformControlsFactory) {
+      this.#mountTransformControls(options.transformControlsFactory(this.camera, dom));
+      this.#resolveControlsReady();
+    } else {
+      // Lazy load real TransformControls (D15) — keeps unit tests free of examples/jsm.
+      void import("three/examples/jsm/controls/TransformControls.js")
+        .then(({ TransformControls }) => {
+          const tc = new TransformControls(this.camera, dom) as unknown as TransformControlsLike & {
+            getHelper?: () => THREE.Object3D;
+            update?: () => void;
+          };
+          this.#mountTransformControls(tc);
+          this.#render();
+          this.#resolveControlsReady();
+        })
+        .catch(() => {
+          // optional addon unavailable — gizmo-less runtime still works
+          this.#resolveControlsReady();
+        });
+    }
+  }
+
+  #mountTransformControls(
+    tc: (TransformControlsLike & { getHelper?: () => THREE.Object3D; update?: () => void }) | null | undefined,
+  ): void {
+    if (!tc) return;
     try {
-      const makeTc =
-        options.transformControlsFactory ??
-        ((
-          camera: THREE.Camera,
-          element: HTMLElement,
-        ):
-          | (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D })
-          | undefined => {
-          // Sync dynamic import is unavailable; tests inject factories.
-          // Production element path can pass a factory or we load lazily below.
-          void camera;
-          void element;
-          return undefined;
-        });
-      const tc = makeTc(this.camera, dom);
-      if (tc) {
-        this.#transformControls = tc;
-        const helper = tc.getHelper?.() ?? (tc as unknown as THREE.Object3D);
-        if (helper && !this.scene.getObjectById((helper as THREE.Object3D).id)) {
-          this.scene.add(helper as THREE.Object3D);
-        }
-        this.#transformBinding = createTransformControlsBinding({
-          controls: tc,
-          getSelectedObject: () => {
-            const id = this.#selectedIds[0];
-            return id ? this.#objects.get(id) ?? null : null;
-          },
-          onTransform: ({ from, to }) => {
-            const id = this.#selectedIds[0];
-            if (!id) return;
-            this.events.emit("transform-commit", { id, from, to });
-          },
-        });
+      this.#transformControls = tc;
+      const helper = tc.getHelper?.() ?? (tc as unknown as THREE.Object3D);
+      if (helper && !this.scene.getObjectById((helper as THREE.Object3D).id)) {
+        this.scene.add(helper as THREE.Object3D);
       }
+      this.#transformBinding = createTransformControlsBinding({
+        controls: tc,
+        getSelectedObject: () => {
+          const id = this.#selectedIds[0];
+          return id ? (this.#objects.get(id) ?? null) : null;
+        },
+        onTransform: ({ from, to }) => {
+          const id = this.#selectedIds[0];
+          if (!id) return;
+          this.events.emit("transform-commit", { id, from, to });
+        },
+      });
+      // re-attach if selection happened before controls finished loading
+      this.#syncTransformTarget();
     } catch {
       this.#transformControls = null;
       this.#transformBinding = null;

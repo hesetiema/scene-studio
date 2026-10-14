@@ -89,6 +89,17 @@ export class SceneEditorElement extends HTMLElement {
     return this.#requireController().selectedIds;
   }
 
+  /**
+   * Resolves when the runtime finished mounting viewport controls (gizmo).
+   * FakeRuntime and other non-three runtimes resolve immediately.
+   */
+  get controlsReady(): Promise<void> {
+    const runtime = this.#requireController().runtime as {
+      controlsReady?: Promise<void>;
+    };
+    return runtime.controlsReady ?? Promise.resolve();
+  }
+
   /** Host confirmed save: adopt server revision and clear dirty (D17/D18). */
   markSaved(serverRevision: number): void {
     this.#requireController().markSaved(serverRevision);

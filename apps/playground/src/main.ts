@@ -86,5 +86,38 @@ el.addEventListener("save-conflict", () => {
 document.body.dataset.boot = "pending";
 void el.ready.then(async () => {
   await el.loadDocument(doc);
+
+  // URL-driven visual states for deterministic screenshot regression.
+  // e.g. /?select=box-1  /?select=box-1&move=1,0.5,0&rot=0,0.8,0&scale=1.2,1.2,1.2
+  const params = new URLSearchParams(location.search);
+  const selectId = params.get("select");
+  if (selectId) {
+    el.selectObject(selectId);
+  }
+  const move = params.get("move");
+  const rot = params.get("rot");
+  const scale = params.get("scale");
+  if (selectId && (move || rot || scale)) {
+    const from = el.getDocument().objects.find((o) => o.id === selectId);
+    if (from) {
+      const parseVec = (s: string | null, fallback: [number, number, number]): [number, number, number] =>
+        s ? (s.split(",").map(Number) as [number, number, number]) : fallback;
+      el.applyTransform(
+        selectId,
+        { position: from.position, rotation: from.rotation, scale: from.scale },
+        {
+          position: parseVec(move, from.position as [number, number, number]),
+          rotation: parseVec(rot, from.rotation as [number, number, number]),
+          scale: parseVec(scale, from.scale as [number, number, number]),
+        },
+      );
+    }
+  }
+
+  // Wait for gizmo (TransformControls) so selection screenshots include it.
+  await el.controlsReady;
+
+  // Let rAF settle so WebGL has painted the final frame before screenshots.
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
   document.body.dataset.boot = "ready";
 });

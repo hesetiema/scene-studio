@@ -5,6 +5,7 @@
   "scripts": {
     "test": "pnpm -r test",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:visual": "playwright test --config e2e/playwright.config.ts visual",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"
   },
