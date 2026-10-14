@@ -18,9 +18,5 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.ts"],
-    environmentMatchGlobs: [
-      ["test/element/**", "happy-dom"],
-      ["test/three/**", "happy-dom"],
-    ],
   },
 });
