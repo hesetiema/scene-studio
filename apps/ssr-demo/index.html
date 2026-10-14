@@ -17,6 +17,10 @@
       <div id="asset-list" hx-get="/fragments/assets" hx-trigger="load" hx-swap="innerHTML"></div>
       <div id="object-panel" aria-live="polite"></div>
       <div id="save-status"></div>
+      <p>
+        <button id="btn-save" type="button">Save</button>
+        <button id="btn-conflict" type="button" title="Simulate concurrent writer">Drill conflict</button>
+      </p>
     </aside>
     <scene-editor id="viewport"></scene-editor>
 
@@ -53,19 +57,68 @@
         document.title = e.detail.dirty ? "● scene" : "scene";
       });
 
+      /**
+       * Reference host save API (D17/D18). Real SSR apps replace this with
+       * their server; the contract is: PUT full doc + revision → 200 {revision}
+       * or 409 {base, incoming, local}. SDK never auto-merges.
+       */
+      const api = (() => {
+        let server = null;
+        return {
+          async put(doc) {
+            if (!server) {
+              server = { ...doc, revision: 1 };
+              return { status: 200, body: { revision: 1 } };
+            }
+            if (doc.revision !== server.revision) {
+              return {
+                status: 409,
+                body: {
+                  base: { ...server },
+                  incoming: { ...server },
+                  local: doc,
+                },
+              };
+            }
+            server = { ...doc, revision: doc.revision + 1 };
+            return { status: 200, body: { revision: server.revision } };
+          },
+          /** Simulate another writer bumping the revision (conflict drill). */
+          bumpRemote() {
+            if (server) server = { ...server, revision: server.revision + 1 };
+          },
+        };
+      })();
+
       el.addEventListener("save-request", async () => {
         // 权威保存路径（D18）：宿主持久化，HTMX 只更新状态提示
         const doc = el.getDocument();
-        const res = await fetch("/api/scene", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(doc),
-        });
-        document.querySelector("#save-status").textContent = res.ok ? "saved" : "save failed";
+        const res = await api.put(doc);
+        const status = document.querySelector("#save-status");
+        if (res.status === 409) {
+          // 结构化冲突（D17）：SDK 不自动合并，宿主驱动恢复
+          status.textContent = `conflict: server r${res.body.incoming.revision} vs local r${doc.revision}`;
+          status.dataset.state = "conflict";
+          return;
+        }
+        if (res.status === 200) {
+          el.markSaved(res.body.revision);
+          status.textContent = "saved";
+          status.dataset.state = "saved";
+        } else {
+          status.textContent = "save failed";
+          status.dataset.state = "error";
+        }
       });
 
       el.addEventListener("error", (e) => {
         console.error("[scene-editor]", e.detail);
+      });
+
+      document.querySelector("#btn-save").addEventListener("click", () => el.requestSave());
+      document.querySelector("#btn-conflict").addEventListener("click", () => {
+        api.bumpRemote();
+        el.requestSave();
       });
 
       await el.ready;
