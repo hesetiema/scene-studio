@@ -1,0 +1,47 @@
+{
+  "name": "@your-scope/scene-editor",
+  "version": "0.1.0-alpha.1",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./three": {
+      "types": "./dist/three-entry.d.ts",
+      "import": "./dist/three-entry.js"
+    },
+    "./element": {
+      "types": "./dist/element-entry.d.ts",
+      "import": "./dist/element-entry.js"
+    },
+    "./style.css": "./dist/scene-editor.css"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "scripts": {
+    "build": "vite build && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "three": "^0.186.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "happy-dom": "^20.0.0",
+    "three": "^0.186.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4",
+    "zod": "^4.6.7"
+  },
+  "dependencies": {
+    "zod": "^4.6.7"
+  }
+}
