@@ -4,10 +4,12 @@
   "packageManager": "pnpm@11.1.1",
   "scripts": {
     "test": "pnpm -r test",
+    "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "typescript": "^5.9.3"
   }
 }

@@ -14,7 +14,8 @@ export interface HistoryState {
 export class CommandHistory {
   #undoStack: Command[] = [];
   #redoStack: Command[] = [];
-  #dirty = false;
+  /** Depth of undoStack at the last clean point (save/load). */
+  #cleanIndex = 0;
   #lastCommand: string | undefined;
 
   constructor(private readonly onChange?: (state: HistoryState) => void) {}
@@ -28,14 +29,18 @@ export class CommandHistory {
   }
 
   get dirty(): boolean {
-    return this.#dirty;
+    return this.#undoStack.length !== this.#cleanIndex;
   }
 
   execute(command: Command): void {
+    // If the clean point lived in the redo branch we are about to discard,
+    // invalidate it so a new command at the same depth is still dirty.
+    if (this.#cleanIndex > this.#undoStack.length) {
+      this.#cleanIndex = -1;
+    }
     command.execute();
     this.#undoStack.push(command);
     this.#redoStack = [];
-    this.#dirty = true;
     this.#lastCommand = command.label;
     this.#notify();
   }
@@ -45,7 +50,6 @@ export class CommandHistory {
     if (!command) return false;
     command.undo();
     this.#redoStack.push(command);
-    this.#dirty = true;
     this.#lastCommand = command.label;
     this.#notify();
     return true;
@@ -56,21 +60,21 @@ export class CommandHistory {
     if (!command) return false;
     command.execute();
     this.#undoStack.push(command);
-    this.#dirty = true;
     this.#lastCommand = command.label;
     this.#notify();
     return true;
   }
 
+  /** Anchor the clean point at the current undo depth (after host save). */
   markClean(): void {
-    this.#dirty = false;
+    this.#cleanIndex = this.#undoStack.length;
     this.#notify();
   }
 
   clear(): void {
     this.#undoStack = [];
     this.#redoStack = [];
-    this.#dirty = false;
+    this.#cleanIndex = 0;
     this.#lastCommand = undefined;
     this.#notify();
   }
@@ -80,7 +84,7 @@ export class CommandHistory {
     const state: HistoryState = {
       canUndo: this.canUndo,
       canRedo: this.canRedo,
-      dirty: this.#dirty,
+      dirty: this.dirty,
     };
     if (this.#lastCommand !== undefined) {
       state.lastCommand = this.#lastCommand;
