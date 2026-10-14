@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import type { RendererHandle } from "../../src/three/renderer-handle";
 import type { SceneDocument } from "../../src/core/document/schema";
@@ -37,11 +37,13 @@ function makeDoc(): SceneDocument {
   };
 }
 
-function makeRuntime() {
+function makeRuntime(overrides?: Partial<ConstructorParameters<typeof ThreeRuntime>[0]>) {
   const renderer = stubRenderer();
   const runtime = new ThreeRuntime({
     canvas: document.createElement("canvas"),
     rendererFactory: () => renderer,
+    enableControls: false,
+    ...overrides,
   });
   return { runtime, renderer };
 }
@@ -96,5 +98,40 @@ describe("ThreeRuntime", () => {
     const { runtime, renderer } = makeRuntime();
     runtime.flushDisposers();
     expect(renderer.disposed).toBe(true);
+  });
+
+  it("select attaches transform controls to selected object; drag emits transform-commit", async () => {
+    const listeners = new Map<string, (e: never) => void>();
+    const detach = vi.fn();
+    const attach = vi.fn();
+    const commits: unknown[] = [];
+    const tc = {
+      addEventListener: (type: string, fn: never) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+      detach,
+      attach,
+    };
+    const { runtime } = makeRuntime({
+      enableControls: true,
+      orbitControlsFactory: () => ({ update: () => {}, dispose: () => {} }),
+      transformControlsFactory: () => tc,
+    });
+    runtime.events.on("transform-commit", (payload) => commits.push(payload));
+    await runtime.loadDocument(makeDoc());
+    runtime.select(["box-1"]);
+    expect(attach).toHaveBeenCalledTimes(1);
+    // drag: mouseDown captures from, mutate, mouseUp commits
+    listeners.get("mouseDown")!({} as never);
+    const obj = runtime.getObjectById("box-1")!;
+    obj.position.set(5, 0, 0);
+    listeners.get("mouseUp")!({} as never);
+    expect(commits).toHaveLength(1);
+    expect(commits[0]).toMatchObject({
+      id: "box-1",
+      from: { position: [1, 2, 3] },
+      to: { position: [5, 0, 0] },
+    });
+    runtime.clearSelection();
+    expect(detach).toHaveBeenCalled();
   });
 });

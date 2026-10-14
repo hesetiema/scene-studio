@@ -9,7 +9,17 @@ export {
   type Vec3,
 } from "./core/document/schema";
 export { parseSceneDocument } from "./core/document/parse";
+export { validateHierarchy } from "./core/document/hierarchy";
 export { SceneEditorError, SceneErrorCode } from "./core/events/errors";
+export { createConflictError, type ConflictDocuments } from "./core/events/conflict";
+export { AssetCache, type AssetLoader, type LoadedAsset } from "./assets/asset-cache";
+export { AssetError, AssetErrorCode } from "./assets/asset-error";
+export {
+  createGltfAssetLoader,
+  SUPPORTED_ASSET_FORMATS,
+  type GltfAssetLoaderOptions,
+  type MinimalGltfLoader,
+} from "./assets/gltf-asset-loader";
 export { CommandHistory, type Command, type HistoryState } from "./core/history/command-history";
 export { TransformCommand } from "./core/commands/transform-command";
 export { EditorController } from "./runtime/editor-controller";

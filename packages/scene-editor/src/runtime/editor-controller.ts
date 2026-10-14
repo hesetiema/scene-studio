@@ -5,6 +5,7 @@ import { SelectionManager } from "./selection-manager";
 import type { RuntimeContract, RuntimeEventMap, Transform } from "./runtime-contract";
 import { parseSceneDocument } from "../core/document/parse";
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
+import { createConflictError } from "../core/events/conflict";
 import type { SceneDocument } from "../core/document/schema";
 
 /**
@@ -18,6 +19,7 @@ export class EditorController {
   readonly selection: SelectionManager;
 
   #doc: SceneDocument | null = null;
+  #baseRevision = 0;
 
   constructor(readonly runtime: RuntimeContract) {
     this.history = new CommandHistory((state) => {
@@ -50,6 +52,55 @@ export class EditorController {
 
   get selectedIds(): readonly string[] {
     return this.selection.ids;
+  }
+
+  get revision(): number {
+    return this.#doc?.revision ?? this.#baseRevision;
+  }
+
+  /** Host confirmed save: adopt server revision and clear dirty (D17/D18). */
+  markSaved(serverRevision: number): void {
+    if (this.#doc) {
+      this.#doc = { ...this.#doc, revision: serverRevision };
+    }
+    this.#baseRevision = serverRevision;
+    this.history.markClean();
+  }
+
+  /**
+   * Apply a remote document. Fast-forwards only when there are no local edits
+   * and the remote is the exact next revision; otherwise throws a structured
+   * conflict (synchronously) for the host to resolve (D17 — SDK never auto-merges).
+   */
+  applyRemote(
+    remoteInput: unknown,
+    options: { baseRevision: number },
+  ): Promise<void> {
+    const remote = parseSceneDocument(remoteInput);
+    const local = this.#doc;
+    if (local && this.history.dirty) {
+      throw createConflictError({
+        base: { ...local, revision: options.baseRevision },
+        incoming: remote,
+        local,
+      });
+    }
+    const expected = options.baseRevision + 1;
+    if (remote.revision !== expected) {
+      throw createConflictError({
+        base: local
+          ? { ...local, revision: options.baseRevision }
+          : { ...remote, revision: options.baseRevision },
+        incoming: remote,
+        local: local ?? { ...remote, revision: options.baseRevision },
+      });
+    }
+    return this.runtime.loadDocument(remote).then(() => {
+      this.#doc = structuredClone(remote);
+      this.#baseRevision = remote.revision;
+      this.history.clear();
+      this.selection.clear();
+    });
   }
 
   executeCommand(command: Command): void {
@@ -92,6 +143,7 @@ export class EditorController {
     const doc = parseSceneDocument(input);
     await this.runtime.loadDocument(doc);
     this.#doc = structuredClone(doc);
+    this.#baseRevision = doc.revision;
     this.history.clear();
     this.selection.clear();
   }

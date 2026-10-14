@@ -1,4 +1,5 @@
 import { SceneDocumentSchema, type SceneDocument } from "./schema";
+import { validateHierarchy } from "./hierarchy";
 import { SceneEditorError, SceneErrorCode } from "../events/errors";
 
 export function parseSceneDocument(input: unknown): SceneDocument {
@@ -9,5 +10,7 @@ export function parseSceneDocument(input: unknown): SceneDocument {
       detail: { issues: result.error.issues },
     });
   }
+  validateHierarchy(result.data.objects);
   return result.data;
 }
+

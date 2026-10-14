@@ -14,7 +14,6 @@ export default defineConfig({
       external: ["three", /^three\//, "zod"],
     },
     cssCodeSplit: false,
-    cssFileName: "scene-editor",
   },
   test: {
     environment: "node",

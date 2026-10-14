@@ -77,6 +77,23 @@ export class SceneEditorElement extends HTMLElement {
     return this.#requireController().getDocument();
   }
 
+  get revision(): number {
+    return this.#requireController().revision;
+  }
+
+  get dirty(): boolean {
+    return this.#requireController().dirty;
+  }
+
+  get selectedIds(): readonly string[] {
+    return this.#requireController().selectedIds;
+  }
+
+  /** Host confirmed save: adopt server revision and clear dirty (D17/D18). */
+  markSaved(serverRevision: number): void {
+    this.#requireController().markSaved(serverRevision);
+  }
+
   selectObject(id: string): void {
     this.#requireController().select([id]);
   }
@@ -99,7 +116,12 @@ export class SceneEditorElement extends HTMLElement {
 
   /** Authoritative save path (D18): hosts persist in response to this event. */
   requestSave(): void {
-    this.dispatchEvent(new CustomEvent("save-request", { detail: { reason: "manual" } }));
+    const doc = this.getDocument();
+    this.dispatchEvent(
+      new CustomEvent("save-request", {
+        detail: { reason: "manual", document: doc, revision: doc.revision },
+      }),
+    );
   }
 
   #requireController(): EditorController {
@@ -128,6 +150,19 @@ export class SceneEditorElement extends HTMLElement {
       const runtime = SceneEditorElement.runtimeFactory(canvas);
       const controller = new EditorController(runtime);
       this.#controller = controller;
+
+      // Click-to-select (P2-T7): pick on canvas click, empty → clear.
+      const onClick = (event: MouseEvent): void => {
+        const picked = runtime.pick(event.clientX, event.clientY);
+        if (picked) controller.select([picked]);
+        else controller.clearSelection();
+      };
+      canvas.addEventListener("click", onClick, { signal });
+
+      // One TransformControls drag → one undoable command (D15 / P2-T6).
+      runtime.events.on("transform-commit", ({ id, from, to }) => {
+        controller.applyTransform(id, from, to);
+      });
 
       // resize seam: ThreeRuntime exposes resize(); FakeRuntime does not (optional).
       const maybeResize = runtime as { resize?: (w?: number, h?: number) => void };

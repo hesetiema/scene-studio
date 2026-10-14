@@ -204,6 +204,36 @@ describe("SceneEditorElement API and events (D18)", () => {
     expect(spy).toHaveBeenCalledTimes(1);
   });
 
+  it("save-request detail carries document and revision (D18)", async () => {
+    const { el } = makeElement();
+    const spy = vi.fn();
+    el.addEventListener("save-request", spy);
+    await connected(el);
+    await el.loadDocument(doc);
+    el.requestSave();
+    const detail = spy.mock.calls[0]![0] as CustomEvent;
+    expect(detail.detail).toMatchObject({ reason: "manual", revision: 0 });
+    expect((detail.detail as { document: SceneDocument }).document.sceneId).toBe("s1");
+  });
+
+  it("exposes revision and dirty; markSaved adopts server revision and clears dirty", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    expect(el.revision).toBe(0);
+    expect(el.dirty).toBe(false);
+    el.applyTransform("box-1", doc.objects[0]!, {
+      position: [1, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    expect(el.dirty).toBe(true);
+    el.markSaved(1);
+    expect(el.revision).toBe(1);
+    expect(el.dirty).toBe(false);
+    expect(el.getDocument().revision).toBe(1);
+  });
+
   it("has tabindex for focus domain by default", async () => {
     const { el } = makeElement();
     await connected(el);

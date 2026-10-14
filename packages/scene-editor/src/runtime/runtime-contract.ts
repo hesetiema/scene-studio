@@ -14,6 +14,12 @@ export type RuntimeEventMap = {
     dirty: boolean;
     lastCommand?: string;
   };
+  /** One completed TransformControls drag (D15) — one command. */
+  "transform-commit": {
+    id: string;
+    from: Transform;
+    to: Transform;
+  };
   error: { code: string; message: string; cause?: unknown };
 };
 

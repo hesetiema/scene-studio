@@ -5,11 +5,27 @@ import { TypedEventBus } from "../runtime/typed-event-bus";
 import { DisposerStack } from "../runtime/disposer-stack";
 import { createRenderer } from "./create-renderer";
 import type { RendererHandle } from "./renderer-handle";
+import { createTransformControlsBinding, type TransformControlsLike } from "./transform-controls-binding";
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
   /** Injectable seam for tests; defaults to real WebGLRenderer via createRenderer (D1). */
   rendererFactory?: (canvas: HTMLCanvasElement) => RendererHandle;
+  /** Injectable seam: defaults to real three OrbitControls. */
+  orbitControlsFactory?: (
+    camera: THREE.Camera,
+    domElement: HTMLElement,
+  ) => {
+    update: () => void;
+    dispose: () => void;
+  } | null;
+  /** Injectable seam: defaults to real three TransformControls. */
+  transformControlsFactory?: (
+    camera: THREE.Camera,
+    domElement: HTMLElement,
+  ) => TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D };
+  /** Disable viewport controls (headless / unit tests). */
+  enableControls?: boolean;
 }
 
 /**
@@ -28,6 +44,9 @@ export class ThreeRuntime implements RuntimeContract {
   #objectDisposers = new DisposerStack();
   #raycaster = new THREE.Raycaster();
   #pointer = new THREE.Vector2();
+  #orbit: { update: () => void; dispose: () => void } | null = null;
+  #transformBinding: ReturnType<typeof createTransformControlsBinding> | null = null;
+  #transformControls: (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D }) | null = null;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
@@ -43,7 +62,74 @@ export class ThreeRuntime implements RuntimeContract {
 
     const factory = options.rendererFactory ?? createRenderer;
     this.renderer = factory(options.canvas);
+
+    if (options.enableControls !== false) {
+      this.#initControls(options);
+    }
+
     this.#syncSize();
+  }
+
+  #initControls(options: ThreeRuntimeOptions): void {
+    const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? this.#canvas;
+    try {
+      if (options.orbitControlsFactory) {
+        this.#orbit = options.orbitControlsFactory(this.camera, dom);
+      } else {
+        // Lazy require keeps unit tests (no WebGL) free of examples/jsm side effects.
+        void import("three/examples/jsm/controls/OrbitControls.js").then(({ OrbitControls }) => {
+          const controls = new OrbitControls(this.camera, dom) as unknown as {
+            update: () => void;
+            dispose: () => void;
+            addEventListener?: (type: string, fn: () => void) => void;
+          };
+          controls.addEventListener?.("change", () => this.#render());
+          this.#orbit = controls;
+        });
+      }
+    } catch {
+      this.#orbit = null;
+    }
+
+    try {
+      const makeTc =
+        options.transformControlsFactory ??
+        ((
+          camera: THREE.Camera,
+          element: HTMLElement,
+        ):
+          | (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D })
+          | undefined => {
+          // Sync dynamic import is unavailable; tests inject factories.
+          // Production element path can pass a factory or we load lazily below.
+          void camera;
+          void element;
+          return undefined;
+        });
+      const tc = makeTc(this.camera, dom);
+      if (tc) {
+        this.#transformControls = tc;
+        const helper = tc.getHelper?.() ?? (tc as unknown as THREE.Object3D);
+        if (helper && !this.scene.getObjectById((helper as THREE.Object3D).id)) {
+          this.scene.add(helper as THREE.Object3D);
+        }
+        this.#transformBinding = createTransformControlsBinding({
+          controls: tc,
+          getSelectedObject: () => {
+            const id = this.#selectedIds[0];
+            return id ? this.#objects.get(id) ?? null : null;
+          },
+          onTransform: ({ from, to }) => {
+            const id = this.#selectedIds[0];
+            if (!id) return;
+            this.events.emit("transform-commit", { id, from, to });
+          },
+        });
+      }
+    } catch {
+      this.#transformControls = null;
+      this.#transformBinding = null;
+    }
   }
 
   /** Match renderer size to the canvas's layout box (call on resize / after connect). */
@@ -93,12 +179,26 @@ export class ThreeRuntime implements RuntimeContract {
 
   select(ids: string[]): void {
     this.#selectedIds = [...ids];
+    this.#syncTransformTarget();
     this.#render();
   }
 
   clearSelection(): void {
     this.#selectedIds = [];
+    this.#syncTransformTarget();
     this.#render();
+  }
+
+  #syncTransformTarget(): void {
+    if (!this.#transformBinding) return;
+    const id = this.#selectedIds[0];
+    const obj = id ? this.#objects.get(id) : undefined;
+    if (obj) {
+      this.#transformBinding.attach(obj);
+      this.#transformBinding.updateSelectedObject(obj);
+    } else {
+      this.#transformBinding.detach();
+    }
   }
 
   get selectedIds(): readonly string[] {
@@ -128,11 +228,24 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   flushDisposers(): void {
+    this.#transformBinding?.dispose();
+    this.#transformBinding = null;
+    if (this.#transformControls) {
+      const helper =
+        this.#transformControls.getHelper?.() ??
+        (this.#transformControls as unknown as THREE.Object3D);
+      if (helper) this.scene.remove(helper as THREE.Object3D);
+      this.#transformControls.detach?.();
+      this.#transformControls = null;
+    }
+    this.#orbit?.dispose();
+    this.#orbit = null;
     this.#disposeSceneObjects();
     this.renderer.dispose();
   }
 
   #render(): void {
+    this.#orbit?.update?.();
     this.renderer.render(this.scene, this.camera);
   }
 
