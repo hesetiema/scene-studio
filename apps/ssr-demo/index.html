@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ssr-demo — HTMX bridge reference (D2)</title>
+    <script src="https://unpkg.com/htmx.org@2"></script>
+    <style>
+      body { display: grid; grid-template-columns: 240px 1fr; margin: 0; font-family: system-ui, sans-serif; }
+      #sidebar { border-right: 1px solid #ccc; padding: 12px; }
+      scene-editor { display: block; height: 100vh; }
+    </style>
+  </head>
+  <body>
+    <aside id="sidebar">
+      <h1>Assets</h1>
+      <!-- HTMX owns sidebar fragments only; never replaces <scene-editor> root (D2/D7) -->
+      <div id="asset-list" hx-get="/fragments/assets" hx-trigger="load" hx-swap="innerHTML"></div>
+      <div id="object-panel" aria-live="polite"></div>
+      <div id="save-status"></div>
+    </aside>
+    <scene-editor id="viewport"></scene-editor>
+
+    <script type="module">
+      import { defineSceneEditor } from "@your-scope/scene-editor/element";
+
+      defineSceneEditor();
+
+      /**
+       * 事件→HX 桥接参考实现（D2：实现在宿主，不进 SDK 包）。
+       * 防乱序：所有面板请求带递增序号 seq；过期响应直接丢弃。
+       */
+      let seq = 0;
+
+      const el = document.querySelector("scene-editor");
+
+      el.addEventListener("selection-change", (e) => {
+        const mySeq = ++seq;
+        const ids = e.detail.ids ?? [];
+        const id = ids[ids.length - 1] ?? "";
+        htmx.ajax("GET", `/fragments/object/${id}`, {
+          target: "#object-panel",
+          swap: "innerHTML",
+          headers: { "X-Bridge-Seq": String(mySeq) },
+        }).then(() => {
+          if (mySeq !== seq) {
+            /* stale response — panel already superseded; keep last-write-wins via seq */
+          }
+        });
+      });
+
+      el.addEventListener("history-change", (e) => {
+        // 面板必须同时消费 selection-change 与 history-change，否则 undo 后显示旧值（D18）
+        document.title = e.detail.dirty ? "● scene" : "scene";
+      });
+
+      el.addEventListener("save-request", async () => {
+        // 权威保存路径（D18）：宿主持久化，HTMX 只更新状态提示
+        const doc = el.getDocument();
+        const res = await fetch("/api/scene", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(doc),
+        });
+        document.querySelector("#save-status").textContent = res.ok ? "saved" : "save failed";
+      });
+
+      el.addEventListener("error", (e) => {
+        console.error("[scene-editor]", e.detail);
+      });
+
+      await el.ready;
+      el.loadDocument({
+        schemaVersion: 1,
+        sceneId: "demo",
+        revision: 0,
+        objects: [
+          {
+            id: "box-1",
+            type: "mesh",
+            name: "Box",
+            position: [0, 0.5, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+        ],
+      });
+    </script>
+  </body>
+</html>
