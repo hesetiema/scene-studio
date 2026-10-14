@@ -121,10 +121,25 @@ export class SceneEditorElement extends HTMLElement {
     const { signal } = this.#abort;
     try {
       const canvas = document.createElement("canvas");
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+      canvas.style.display = "block";
       this.appendChild(canvas);
       const runtime = SceneEditorElement.runtimeFactory(canvas);
       const controller = new EditorController(runtime);
       this.#controller = controller;
+
+      // resize seam: ThreeRuntime exposes resize(); FakeRuntime does not (optional).
+      const maybeResize = runtime as { resize?: (w?: number, h?: number) => void };
+      const applySize = (): void => {
+        maybeResize?.resize?.(this.clientWidth, this.clientHeight);
+      };
+      applySize();
+      if (typeof ResizeObserver !== "undefined") {
+        const ro = new ResizeObserver(applySize);
+        ro.observe(this);
+        controller.disposers.add(() => ro.disconnect());
+      }
 
       runtime.events.on(
         "selection-change",

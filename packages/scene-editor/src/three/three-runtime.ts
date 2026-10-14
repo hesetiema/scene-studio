@@ -21,6 +21,7 @@ export class ThreeRuntime implements RuntimeContract {
   readonly scene = new THREE.Scene();
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: RendererHandle;
+  readonly #canvas: HTMLCanvasElement;
 
   #objects = new Map<string, THREE.Object3D>();
   #selectedIds: string[] = [];
@@ -29,6 +30,7 @@ export class ThreeRuntime implements RuntimeContract {
   #pointer = new THREE.Vector2();
 
   constructor(options: ThreeRuntimeOptions) {
+    this.#canvas = options.canvas;
     this.camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
     this.camera.position.set(6, 5, 10);
     this.camera.lookAt(0, 0, 0);
@@ -41,6 +43,21 @@ export class ThreeRuntime implements RuntimeContract {
 
     const factory = options.rendererFactory ?? createRenderer;
     this.renderer = factory(options.canvas);
+    this.#syncSize();
+  }
+
+  /** Match renderer size to the canvas's layout box (call on resize / after connect). */
+  resize(width?: number, height?: number): void {
+    const w = width || this.#canvas.clientWidth || this.#canvas.width || 1;
+    const h = height || this.#canvas.clientHeight || this.#canvas.height || 1;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+    this.#render();
+  }
+
+  #syncSize(): void {
+    this.resize();
   }
 
   async loadDocument(doc: SceneDocument): Promise<void> {
@@ -62,6 +79,7 @@ export class ThreeRuntime implements RuntimeContract {
         material.dispose();
       });
     }
+    this.#render();
   }
 
   applyTransform(id: string, t: Transform): void {
