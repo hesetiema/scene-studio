@@ -15,7 +15,7 @@ export class CommandHistory {
   #undoStack: Command[] = [];
   #redoStack: Command[] = [];
   #dirty = false;
-  #lastCommand?: string;
+  #lastCommand: string | undefined;
 
   constructor(private readonly onChange?: (state: HistoryState) => void) {}
 

@@ -60,7 +60,17 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   async loadDocument(doc: unknown): Promise<void> {
-    await this.#requireController().loadDocument(doc);
+    performance.mark("scene-editor:load:start");
+    try {
+      await this.#requireController().loadDocument(doc);
+    } finally {
+      performance.mark("scene-editor:load:end");
+      try {
+        performance.measure("scene-editor:load", "scene-editor:load:start", "scene-editor:load:end");
+      } catch {
+        // older engines without measure window — marks alone are enough
+      }
+    }
   }
 
   getDocument(): SceneDocument {
