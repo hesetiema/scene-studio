@@ -3,15 +3,63 @@ import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import type { RuntimeContract, Transform } from "../runtime/runtime-contract";
 import type { SceneDocument } from "../core/document/schema";
 import { ThreeRuntime } from "../three/three-runtime";
+import type { PluginContext, PluginEditorApi, SceneEditorPlugin } from "../plugins/plugin";
+import type { AssetResolver } from "../assets/resolver-asset-loader";
+import { createResolverAssetLoader } from "../assets/resolver-asset-loader";
+import { AssetCache } from "../assets/asset-cache";
+import type { MinimalGltfLoader } from "../assets/gltf-asset-loader";
 
-export type SceneEditorRuntimeFactory = (canvas: HTMLCanvasElement) => RuntimeContract;
+export interface RuntimeFactoryOptions {
+  /** Host asset resolver (design §10); default factory builds an AssetCache from it. */
+  assetResolver?: AssetResolver;
+}
+
+export type SceneEditorRuntimeFactory = (
+  canvas: HTMLCanvasElement,
+  options?: RuntimeFactoryOptions,
+) => RuntimeContract;
+
+/** GLTFLoader is code-split so element-entry stays lean; loadAsync resolves on first use. */
+function lazyGltfLoader(): MinimalGltfLoader {
+  let pending: Promise<{ loadAsync(url: string): Promise<{ scene: unknown }> }> | null = null;
+  const load = (): Promise<{ loadAsync(url: string): Promise<{ scene: unknown }> }> =>
+    (pending ??= import("three/examples/jsm/loaders/GLTFLoader.js").then(
+      (m) => new m.GLTFLoader(),
+    ));
+  return {
+    loadAsync: async (url) => (await load()).loadAsync(url),
+  };
+}
 
 /** Keyboard capture list (D20) — documented for hosts. */
 export const CAPTURED_COMBOS = ["ctrl+z", "ctrl+shift+z", "ctrl+y", "g", "r", "s"] as const;
 
+interface ActivePlugin {
+  plugin: SceneEditorPlugin;
+  uninstall: void | (() => void);
+  disposers: Array<() => void>;
+  offs: Array<() => void>;
+}
+
 export class SceneEditorElement extends HTMLElement {
   /** Injectable seam for tests; defaults to real ThreeRuntime (D1). */
-  static runtimeFactory: SceneEditorRuntimeFactory = (canvas) => new ThreeRuntime({ canvas });
+  static runtimeFactory: SceneEditorRuntimeFactory = (canvas, options) => {
+    const assetCache = options?.assetResolver
+      ? new AssetCache(
+          createResolverAssetLoader({
+            resolver: options.assetResolver,
+            gltfLoader: lazyGltfLoader(),
+          }),
+        )
+      : undefined;
+    return new ThreeRuntime({
+      canvas,
+      ...(assetCache ? { assetCache } : {}),
+    });
+  };
+
+  /** Host-provided asset resolution — set before connect/ready. */
+  assetResolver: AssetResolver | null = null;
 
   #controller: EditorController | null = null;
   #ready!: Promise<void>;
@@ -20,6 +68,8 @@ export class SceneEditorElement extends HTMLElement {
   #abort: AbortController | null = null;
   #lastDirty = false;
   #wasDisconnected = false;
+  readonly #activePlugins = new Map<string, ActivePlugin>();
+  readonly #pendingPlugins: SceneEditorPlugin[] = [];
 
   constructor() {
     super();
@@ -52,11 +102,127 @@ export class SceneEditorElement extends HTMLElement {
     this.#abort = null;
     const controller = this.#controller;
     this.#controller = null;
+    this.#teardownAllPlugins();
     try {
       controller?.destroy();
     } catch (err) {
       this.#emitError(SceneErrorCode.Lifecycle, "Controller destroy failed", err);
     }
+  }
+
+  /**
+   * Install a plugin (design §5: `install(context)` form).
+   * Queued if called before init; duplicate id throws.
+   */
+  use(plugin: SceneEditorPlugin): void {
+    if (this.#activePlugins.has(plugin.id) || this.#pendingPlugins.some((p) => p.id === plugin.id)) {
+      throw new SceneEditorError(SceneErrorCode.Lifecycle, `Duplicate plugin id: ${plugin.id}`);
+    }
+    if (!this.#controller) {
+      this.#pendingPlugins.push(plugin);
+      return;
+    }
+    this.#installPlugin(plugin);
+  }
+
+  /** Uninstall a plugin by id; runs its uninstall + disposers. */
+  unuse(id: string): void {
+    const idx = this.#pendingPlugins.findIndex((p) => p.id === id);
+    if (idx >= 0) {
+      this.#pendingPlugins.splice(idx, 1);
+      return;
+    }
+    const active = this.#activePlugins.get(id);
+    if (!active) return;
+    this.#activePlugins.delete(id);
+    this.#disposePlugin(active);
+  }
+
+  #installPlugin(plugin: SceneEditorPlugin): void {
+    const controller = this.#controller;
+    if (!controller) return;
+    const runtime = controller.runtime;
+    const entry: ActivePlugin = { plugin, uninstall: undefined, disposers: [], offs: [] };
+    const editorApi: PluginEditorApi = {
+      loadDocument: (doc) => controller.loadDocument(doc),
+      getDocument: () => controller.getDocument(),
+      select: (ids) => controller.select(ids),
+      clearSelection: () => controller.clearSelection(),
+      applyTransform: (id, t) => controller.applyTransform(id, t, t),
+      undo: () => {
+        controller.undo();
+      },
+      redo: () => {
+        controller.redo();
+      },
+      requestSave: () => this.requestSave(),
+      get selectedIds() {
+        return controller.selectedIds;
+      },
+      get dirty() {
+        return controller.dirty;
+      },
+      get revision() {
+        return controller.revision;
+      },
+      get canUndo() {
+        return controller.canUndo;
+      },
+      get canRedo() {
+        return controller.canRedo;
+      },
+    };
+    const context: PluginContext = {
+      runtime,
+      editor: editorApi,
+      on: (type, handler) => {
+        const off = runtime.events.on(type, handler);
+        entry.offs.push(off);
+        return off;
+      },
+      addDisposer: (fn) => entry.disposers.push(fn),
+    };
+    this.#activePlugins.set(plugin.id, entry);
+    try {
+      entry.uninstall = plugin.install(context);
+    } catch (err) {
+      this.#activePlugins.delete(plugin.id);
+      throw new SceneEditorError(
+        SceneErrorCode.Lifecycle,
+        `Plugin install failed: ${plugin.id}`,
+        { cause: err },
+      );
+    }
+  }
+
+  #disposePlugin(entry: ActivePlugin): void {
+    for (const off of entry.offs.splice(0)) {
+      try {
+        off();
+      } catch {
+        // listener off must not block teardown
+      }
+    }
+    try {
+      entry.uninstall?.();
+    } catch (err) {
+      this.#emitError(SceneErrorCode.Lifecycle, "Plugin uninstall failed", err);
+    }
+    for (const dispose of entry.disposers.splice(0)) {
+      try {
+        dispose();
+      } catch (err) {
+        this.#emitError(SceneErrorCode.Lifecycle, "Plugin disposer failed", err);
+      }
+    }
+  }
+
+  #teardownAllPlugins(): void {
+    for (const entry of this.#activePlugins.values()) {
+      this.#disposePlugin(entry);
+    }
+    this.#activePlugins.clear();
+    this.#pendingPlugins.length = 0;
   }
 
   async loadDocument(doc: unknown): Promise<void> {
@@ -158,7 +324,10 @@ export class SceneEditorElement extends HTMLElement {
       canvas.style.height = "100%";
       canvas.style.display = "block";
       this.appendChild(canvas);
-      const runtime = SceneEditorElement.runtimeFactory(canvas);
+      const runtime = SceneEditorElement.runtimeFactory(
+        canvas,
+        this.assetResolver ? { assetResolver: this.assetResolver } : {},
+      );
       const controller = new EditorController(runtime);
       this.#controller = controller;
 
@@ -209,6 +378,20 @@ export class SceneEditorElement extends HTMLElement {
 
       this.dispatchEvent(new CustomEvent("scene-ready"));
       this.#resolveReady();
+
+      // flush plugins queued before init (use() before connect)
+      const queued = this.#pendingPlugins.splice(0);
+      for (const plugin of queued) {
+        try {
+          this.#installPlugin(plugin);
+        } catch (err) {
+          this.#emitError(
+            SceneErrorCode.Lifecycle,
+            err instanceof Error ? err.message : "Plugin install failed",
+            err,
+          );
+        }
+      }
     } catch (err) {
       const se =
         err instanceof SceneEditorError

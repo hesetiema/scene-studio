@@ -1,11 +1,12 @@
 import * as THREE from "three";
-import type { SceneDocument } from "../core/document/schema";
-import type { RuntimeContract, Transform } from "../runtime/runtime-contract";
+import type { SceneDocument, SceneObjectDTO } from "../core/document/schema";
+import type { RuntimeContract, RuntimeEventMap, Transform } from "../runtime/runtime-contract";
 import { TypedEventBus } from "../runtime/typed-event-bus";
 import { DisposerStack } from "../runtime/disposer-stack";
 import { createRenderer } from "./create-renderer";
 import type { RendererHandle } from "./renderer-handle";
 import { createTransformControlsBinding, type TransformControlsLike } from "./transform-controls-binding";
+import type { AssetCache } from "../assets/asset-cache";
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
@@ -26,6 +27,8 @@ export interface ThreeRuntimeOptions {
   ) => TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D };
   /** Disable viewport controls (headless / unit tests). */
   enableControls?: boolean;
+  /** Optional asset cache for assetId-based mesh loading (D11/D12). */
+  assetCache?: AssetCache;
 }
 
 /**
@@ -49,9 +52,11 @@ export class ThreeRuntime implements RuntimeContract {
   #transformControls: (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D }) | null = null;
   #controlsReady: Promise<void>;
   #resolveControlsReady!: () => void;
+  #assetCache: AssetCache | null;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
+    this.#assetCache = options.assetCache ?? null;
     this.#controlsReady = new Promise<void>((resolve) => {
       this.#resolveControlsReady = resolve;
     });
@@ -173,22 +178,76 @@ export class ThreeRuntime implements RuntimeContract {
     this.#disposeSceneObjects();
     for (const dto of doc.objects) {
       if (dto.type !== "mesh") continue;
-      const geometry = new THREE.BoxGeometry(1, 1, 1);
-      const material = new THREE.MeshStandardMaterial({ color: 0x4f8ef7 });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.userData.objectId = dto.id;
-      mesh.position.set(dto.position[0], dto.position[1], dto.position[2]);
-      mesh.rotation.set(dto.rotation[0], dto.rotation[1], dto.rotation[2]);
-      mesh.scale.set(dto.scale[0], dto.scale[1], dto.scale[2]);
-      this.#objects.set(dto.id, mesh);
-      this.scene.add(mesh);
-      this.#objectDisposers.add(() => {
-        this.scene.remove(mesh);
-        geometry.dispose();
-        material.dispose();
-      });
+      if (dto.assetId && this.#assetCache) {
+        try {
+          await this.#materializeAsset(dto);
+        } catch (err) {
+          this.#emitAssetError(err, dto);
+          // partial success: skip failed object, keep loading others
+        }
+      } else {
+        this.#addPlaceholderBox(dto);
+      }
     }
     this.#render();
+  }
+
+  async #materializeAsset(dto: SceneObjectDTO): Promise<void> {
+    const assetId = dto.assetId!;
+    const loaded = await this.#assetCache!.retain(assetId);
+    const root = loaded.scene as {
+      clone?: (recursive?: boolean) => unknown;
+      userData?: Record<string, unknown>;
+      traverse?: (fn: (o: unknown) => void) => void;
+    };
+    const instance =
+      typeof root.clone === "function" ? (root.clone(true) as typeof root) : root;
+    instance.userData = { ...(instance.userData ?? {}), objectId: dto.id };
+    instance.traverse?.((child) => {
+      const c = child as { userData?: Record<string, unknown> };
+      if (c.userData) c.userData.objectId = dto.id;
+    });
+    const obj3d = instance as unknown as THREE.Object3D;
+    obj3d.position.set(dto.position[0], dto.position[1], dto.position[2]);
+    obj3d.rotation.set(dto.rotation[0], dto.rotation[1], dto.rotation[2]);
+    obj3d.scale.set(dto.scale[0], dto.scale[1], dto.scale[2]);
+    this.#objects.set(dto.id, obj3d);
+    this.scene.add(obj3d);
+    this.#objectDisposers.add(() => {
+      // release first: removal failure must never leak a refcount (D12)
+      this.#assetCache?.release(assetId);
+      this.scene.remove(obj3d);
+    });
+  }
+
+  #addPlaceholderBox(dto: SceneObjectDTO): void {
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshStandardMaterial({ color: 0x4f8ef7 });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.userData.objectId = dto.id;
+    mesh.position.set(dto.position[0], dto.position[1], dto.position[2]);
+    mesh.rotation.set(dto.rotation[0], dto.rotation[1], dto.rotation[2]);
+    mesh.scale.set(dto.scale[0], dto.scale[1], dto.scale[2]);
+    this.#objects.set(dto.id, mesh);
+    this.scene.add(mesh);
+    this.#objectDisposers.add(() => {
+      this.scene.remove(mesh);
+      geometry.dispose();
+      material.dispose();
+    });
+  }
+
+  #emitAssetError(err: unknown, dto: SceneObjectDTO): void {
+    const code =
+      (err as { code?: string }).code === "asset-resolve-failed"
+        ? "asset-resolve-failed"
+        : "asset-load-failed";
+    this.events.emit("error", {
+      code,
+      message: err instanceof Error ? err.message : String(err),
+      cause: err,
+      detail: { objectId: dto.id, assetId: dto.assetId },
+    } as RuntimeEventMap["error"]);
   }
 
   applyTransform(id: string, t: Transform): void {

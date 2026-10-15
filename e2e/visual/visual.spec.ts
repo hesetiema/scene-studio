@@ -31,7 +31,7 @@ test.describe("visual regression", () => {
     await page.setViewportSize(VIEWPORT);
   });
 
-  test("initial scene: grid + two boxes", async ({ page }) => {
+  test("initial scene: grid + boxes + asset gem", async ({ page }) => {
     await page.goto("/");
     await waitForBoot(page);
     await expect(page).toHaveScreenshot("initial-scene.png", {
@@ -79,6 +79,6 @@ test.describe("visual regression", () => {
     const count = await page.evaluate(
       () => window.__editor.getDocument().objects.length,
     );
-    expect(count).toBe(2);
+    expect(count).toBe(3); // box-1, box-2, gem-1 (assetId)
   });
 });

@@ -10,4 +10,8 @@ export {
   type TransformSnapshot,
 } from "./three/transform-controls-binding";
 export { createPicker, type Picker, type PickerOptions, type RaycastHit } from "./three/picker";
+export {
+  createSelectionHighlightPlugin,
+  type SelectionHighlightOptions,
+} from "./three/selection-highlight-plugin";
 

@@ -20,6 +20,16 @@ export {
   type GltfAssetLoaderOptions,
   type MinimalGltfLoader,
 } from "./assets/gltf-asset-loader";
+export {
+  createResolverAssetLoader,
+  type AssetResolver,
+  type ResolverAssetLoaderOptions,
+} from "./assets/resolver-asset-loader";
+export type {
+  SceneEditorPlugin,
+  PluginContext,
+  PluginEditorApi,
+} from "./plugins/plugin";
 export { CommandHistory, type Command, type HistoryState } from "./core/history/command-history";
 export { TransformCommand } from "./core/commands/transform-command";
 export { EditorController } from "./runtime/editor-controller";

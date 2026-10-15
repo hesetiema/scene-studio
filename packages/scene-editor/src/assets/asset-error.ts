@@ -1,5 +1,6 @@
 export enum AssetErrorCode {
   NotFound = "asset-not-found",
+  ResolveFailed = "asset-resolve-failed",
   LoadFailed = "asset-load-failed",
   UnsupportedFormat = "asset-unsupported-format",
   Disposed = "asset-disposed",

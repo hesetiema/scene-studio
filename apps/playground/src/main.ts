@@ -1,7 +1,29 @@
 import { defineSceneEditor, SceneEditorElement } from "@your-scope/scene-editor/element";
-import type { SceneDocument } from "@your-scope/scene-editor";
+import type { SceneDocument, AssetLoader } from "@your-scope/scene-editor";
+import { AssetCache } from "@your-scope/scene-editor";
+import { ThreeRuntime, createSelectionHighlightPlugin } from "@your-scope/scene-editor/three";
+import * as THREE from "three";
 
 defineSceneEditor();
+
+/** Programmatic demo assets — deterministic, no network (stage-3 asset path). */
+const DEMO_ASSETS: Record<string, () => THREE.Object3D> = {
+  gem: () => new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.7),
+    new THREE.MeshStandardMaterial({ color: 0xe0b040, flatShading: true }),
+  ),
+};
+
+const demoAssetLoader: AssetLoader = async (assetId) => {
+  const factory = DEMO_ASSETS[assetId];
+  if (!factory) throw new Error(`unknown demo asset: ${assetId}`);
+  const root = new THREE.Group();
+  root.add(factory());
+  return { scene: root };
+};
+
+SceneEditorElement.runtimeFactory = (canvas) =>
+  new ThreeRuntime({ canvas, assetCache: new AssetCache(demoAssetLoader) });
 
 const doc: SceneDocument = {
   schemaVersion: 1,
@@ -21,6 +43,15 @@ const doc: SceneDocument = {
       type: "mesh",
       name: "Box2",
       position: [2, 0.5, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+    {
+      id: "gem-1",
+      type: "mesh",
+      name: "Gem",
+      assetId: "gem",
+      position: [-2, 0.7, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
     },
@@ -84,6 +115,10 @@ el.addEventListener("save-conflict", () => {
 });
 
 document.body.dataset.boot = "pending";
+
+// stage-3 plugin demo: selection highlight (install context API)
+el.use(createSelectionHighlightPlugin());
+
 void el.ready.then(async () => {
   await el.loadDocument(doc);
 
