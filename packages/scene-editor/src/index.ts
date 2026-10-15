@@ -33,6 +33,13 @@ export type {
 export { CommandHistory, type Command, type HistoryState } from "./core/history/command-history";
 export { TransformCommand } from "./core/commands/transform-command";
 export { EditorController } from "./runtime/editor-controller";
+export {
+  createSceneEditor,
+  type SceneEditor,
+  type SceneEditorEventMap,
+  type CreateSceneEditorOptions,
+} from "./runtime/create-scene-editor";
+export { handleEditorKeyCommand, type KeyboardLike } from "./runtime/keyboard";
 export { FakeRuntime } from "./runtime/fake-runtime";
 export { DisposerStack } from "./runtime/disposer-stack";
 export { SelectionManager } from "./runtime/selection-manager";
