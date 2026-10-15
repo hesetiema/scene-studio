@@ -31,6 +31,7 @@ export default defineConfig({
       input: {
         main: html("index.html"),
         webgpu: html("webgpu.html"),
+        perf: html("perf.html"),
       },
     },
   },

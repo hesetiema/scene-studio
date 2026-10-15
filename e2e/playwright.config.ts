@@ -14,6 +14,15 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
+      // perf measures exclusive GPU/CPU frame time — contention from parallel
+      // workers inflates p95 ~2x, so it runs alone in its own project below
+      testIgnore: "perf.spec.ts",
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "perf",
+      dependencies: ["chromium"],
+      testMatch: "perf.spec.ts",
       use: { ...devices["Desktop Chrome"] },
     },
   ],
@@ -21,9 +30,9 @@ export default defineConfig({
     command: "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort",
     cwd: "../playground",
     url: "http://127.0.0.1:4173",
-    // On this Windows host Playwright's cmd.exe spawn is unreliable — reuse the
-    // long-lived playground dev server started outside the test runner.
-    reuseExistingServer: true,
+    // Local Windows host: Playwright's cmd.exe spawn is unreliable — reuse the
+    // long-lived playground dev server. CI always spawns its own.
+    reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },
 });

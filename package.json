@@ -6,6 +6,8 @@
     "test": "pnpm -r test",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:visual": "playwright test --config e2e/playwright.config.ts visual",
+    "test:perf": "playwright test --config e2e/playwright.config.ts --project=perf --no-deps",
+    "test:pack": "node scripts/pack-smoke.mjs",
     "typecheck": "pnpm -r typecheck",
     "build": "pnpm -r build"
   },

@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "feat/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # D14: peer range lock + floor vs latest two-version matrix.
+  # "latest" resolves whatever npm serves that day (0.186.x today); when three
+  # ships 0.187 this leg goes red early — that is the point of the matrix.
+  unit-matrix:
+    name: "unit+build (three ${{ matrix.three }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        three: ["0.186.0", "latest"] # 0.186.0 = peer floor (packages/scene-editor)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: "Override three to ${{ matrix.three }} (pnpm.overrides)"
+        env:
+          THREE_VERSION: ${{ matrix.three }}
+        run: |
+          node -e "
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const v = process.env.THREE_VERSION;
+          p.pnpm = { ...(p.pnpm || {}), overrides: { three: v, '@types/three': v } };
+          fs.writeFileSync('package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          pnpm install --no-frozen-lockfile
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+
+  # Critical user flows + D10 perf gate. Visual regression is deliberately NOT
+  # run here: baselines are local-GPU captures and SwiftShader pixels drift —
+  # visual stays a local gate (pnpm test:e2e:visual). WebGPU eval is opt-in
+  # (RUN_WEBGPU_EVAL) and self-skips without it.
+  e2e:
+    name: e2e (critical-flows + perf)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Critical flows
+        run: pnpm test:e2e --project=chromium critical-flows.spec.ts
+      - name: "Perf gate (relaxed budgets for SwiftShader)"
+        # Software rendering is ~10-50× slower than a real GPU; budgets stay
+        # loose enough to only catch order-of-magnitude regressions, while the
+        # unload-zero assertions remain exact. Local gate: pnpm test:perf.
+        env:
+          PERF_FIRST_MS: 15000
+          PERF_FRAME_MS: 500
+        run: pnpm test:perf
+      - name: Upload perf report (trend artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-report
+          path: e2e/perf-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # D9 consumption test: pack the tarball, install it into a throwaway
+  # consumer, verify exports/types/CSS/SSR-import against the peer floor.
+  pack-smoke:
+    name: tarball consumption
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Pack + consume
+        run: pnpm test:pack
