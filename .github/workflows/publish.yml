@@ -1,0 +1,51 @@
+name: Publish
+
+# Tag-driven release: pushing a tag that equals packages/scene-editor's version
+# publishes to npm. Prerelease versions (containing "-") go to the `next` tag;
+# stable versions go to `latest`. Requires the NPM_TOKEN repository secret.
+on:
+  push:
+    tags: ["0.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Verify tag matches package version
+        run: |
+          PKG=$(node -p "require('./packages/scene-editor/package.json').version")
+          if [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != packages/scene-editor version ${PKG}"
+            exit 1
+          fi
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Unit tests
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+      - name: Publish
+        working-directory: packages/scene-editor
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in
+            *-*) TAG="next" ;;
+            *)   TAG="latest" ;;
+          esac
+          npm publish --access public --tag "$TAG"
