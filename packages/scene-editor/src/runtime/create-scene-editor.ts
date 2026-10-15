@@ -96,7 +96,9 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
   constructor(options: CreateSceneEditorOptions) {
     this.runtime = options.runtime;
     this.#controller = new EditorController(options.runtime);
-    this.#plugins = new PluginHost(options.runtime, this);
+    this.#plugins = new PluginHost(options.runtime, this, (code, message, cause) => {
+      this.#emit("error", { code, message, cause });
+    });
 
     this.runtime.events.on("selection-change", (payload) => {
       this.#emit("selection-change", { ids: [...payload.ids] });

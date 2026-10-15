@@ -240,3 +240,69 @@ describe("SceneEditorElement API and events (D18)", () => {
     expect(el.getAttribute("tabindex")).toBe("0");
   });
 });
+
+describe("SceneEditorElement thin shell (0.2 — delegates to the headless facade)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  it("executeCommand enters the shared history and is undoable via the element", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    let counter = 0;
+    el.executeCommand({
+      label: "host:increment",
+      execute: () => {
+        counter = 1;
+      },
+      undo: () => {
+        counter = 0;
+      },
+    });
+    expect(counter).toBe(1);
+    el.undo();
+    expect(counter).toBe(0);
+  });
+
+  it("loadDocument failure rejects and surfaces an error event (facade bridge)", async () => {
+    const { el } = makeElement();
+    const errorSpy = vi.fn();
+    el.addEventListener("error", errorSpy);
+    await connected(el);
+    await expect(el.loadDocument({ schemaVersion: 1 })).rejects.toBeInstanceOf(SceneEditorError);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect((errorSpy.mock.calls[0]![0] as CustomEvent).detail).toMatchObject({
+      code: "validation",
+    });
+  });
+
+  it("plugin teardown failure surfaces through the shared PluginHost as an error event", async () => {
+    const { el } = makeElement();
+    const errorSpy = vi.fn();
+    el.addEventListener("error", errorSpy);
+    await connected(el);
+    el.use({
+      id: "bad-disposer",
+      install: (ctx) => {
+        ctx.addDisposer(() => {
+          throw new Error("boom");
+        });
+      },
+    });
+    el.unuse("bad-disposer");
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect((errorSpy.mock.calls[0]![0] as CustomEvent).detail).toMatchObject({
+      message: "Plugin disposer failed",
+    });
+  });
+
+  it("disconnect performs full runtime teardown (flushDisposers)", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+    el.remove();
+    await nextTick();
+    expect(fake.calls.flushDisposers).toBeGreaterThanOrEqual(1);
+  });
+});

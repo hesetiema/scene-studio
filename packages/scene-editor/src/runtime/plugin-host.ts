@@ -32,9 +32,14 @@ interface ActivePlugin {
 }
 
 /**
- * Headless plugin install/unuse — same install(context) contract as
- * SceneEditorElement, without DOM. Element keeps its own copy until the
- * 0.2 thin-shell consolidation.
+ * Reports plugin teardown failures (uninstall/disposer) so the owner can
+ * surface them without the host swallowing errors silently.
+ */
+export type PluginErrorReporter = (code: string, message: string, cause?: unknown) => void;
+
+/**
+ * Headless plugin install/unuse — the single install(context) contract shared
+ * by SceneEditorElement and the headless facade (0.2 thin-shell consolidation).
  */
 export class PluginHost {
   readonly #active = new Map<string, ActivePlugin>();
@@ -44,6 +49,7 @@ export class PluginHost {
   constructor(
     private readonly runtime: RuntimeContract,
     private readonly editor: PluginHostEditor,
+    private readonly onError?: PluginErrorReporter,
   ) {}
 
   /** Queue until flushPending(); after that, installs immediately. */
@@ -151,14 +157,14 @@ export class PluginHost {
     }
     try {
       entry.uninstall?.();
-    } catch {
-      // uninstall errors must not block remaining teardown
+    } catch (err) {
+      this.onError?.(SceneErrorCode.Lifecycle, "Plugin uninstall failed", err);
     }
     for (const dispose of entry.disposers.splice(0)) {
       try {
         dispose();
-      } catch {
-        // disposer errors must not block remaining teardown
+      } catch (err) {
+        this.onError?.(SceneErrorCode.Lifecycle, "Plugin disposer failed", err);
       }
     }
   }
