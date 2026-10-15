@@ -10,7 +10,13 @@ import type { AssetCache } from "../assets/asset-cache";
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
-  /** Injectable seam for tests; defaults to real WebGLRenderer via createRenderer (D1). */
+  /**
+   * Injectable seam: defaults to real WebGLRenderer via createRenderer (D1).
+   * Documented WebGPU opt-in (evaluated viable 2026-10): create a WebGPURenderer,
+   * `await renderer.init()` BEFORE constructing the runtime (the constructor renders),
+   * then `rendererFactory: () => renderer`. Detect silent fallback via
+   * `renderer.backend.isWebGPUBackend === true`. Reference: apps/playground/webgpu.html.
+   */
   rendererFactory?: (canvas: HTMLCanvasElement) => RendererHandle;
   /** Injectable seam: defaults to real three OrbitControls. */
   orbitControlsFactory?: (
@@ -300,7 +306,8 @@ export class ThreeRuntime implements RuntimeContract {
       -((clientY - rect.top) / rect.height) * 2 + 1,
     );
     this.#raycaster.setFromCamera(this.#pointer, this.camera);
-    const hits = this.#raycaster.intersectObjects([...this.#objects.values()], false);
+    // recursive: asset objects are Group roots — their meshes live one level down (D1 eval)
+    const hits = this.#raycaster.intersectObjects([...this.#objects.values()], true);
     const id = hits[0]?.object?.userData?.objectId;
     return typeof id === "string" ? id : null;
   }

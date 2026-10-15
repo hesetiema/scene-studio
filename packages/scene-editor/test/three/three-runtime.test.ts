@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
+import * as THREE from "three";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import type { RendererHandle } from "../../src/three/renderer-handle";
 import type { SceneDocument } from "../../src/core/document/schema";
+import { AssetCache } from "../../src/assets/asset-cache";
 
 function stubRenderer(): RendererHandle & { disposed: boolean; renders: number } {
   return {
@@ -133,5 +135,44 @@ describe("ThreeRuntime", () => {
     });
     runtime.clearSelection();
     expect(detach).toHaveBeenCalled();
+  });
+
+  it("pick hits meshes inside an asset Group root (recursive raycast)", async () => {
+    const rect = { left: 0, top: 0, width: 800, height: 600 } as DOMRect;
+    const renderer = stubRenderer();
+    (renderer as RendererHandle & { domElement?: HTMLCanvasElement }).domElement = {
+      getBoundingClientRect: () => rect,
+    } as HTMLCanvasElement;
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)));
+    const runtime = new ThreeRuntime({
+      canvas: document.createElement("canvas"),
+      rendererFactory: () => renderer,
+      enableControls: false,
+      assetCache: new AssetCache(async () => ({ scene: group })),
+    });
+    await runtime.loadDocument({
+      schemaVersion: 1,
+      sceneId: "s-pick",
+      revision: 0,
+      objects: [
+        {
+          id: "asset-1",
+          type: "mesh",
+          name: "Asset",
+          assetId: "tri",
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    });
+    // stub renderer never updates matrices — do what a real renderer would
+    runtime.camera.updateMatrixWorld(true);
+    const world = runtime.getObjectById("asset-1")!.getWorldPosition(new THREE.Vector3());
+    const ndc = world.clone().project(runtime.camera);
+    const clientX = ((ndc.x + 1) / 2) * rect.width;
+    const clientY = ((1 - ndc.y) / 2) * rect.height;
+    expect(runtime.pick(clientX, clientY)).toBe("asset-1");
   });
 });
