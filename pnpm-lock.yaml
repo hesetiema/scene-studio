@@ -17,12 +17,12 @@ importers:
 
   apps/playground:
     devDependencies:
+      '@scenio/scene-editor':
+        specifier: workspace:*
+        version: link:../../packages/scene-editor
       '@types/three':
         specifier: ^0.186.0
         version: 0.186.0
-      '@your-scope/scene-editor':
-        specifier: workspace:*
-        version: link:../../packages/scene-editor
       three:
         specifier: ^0.186.0
         version: 0.186.1
@@ -35,7 +35,7 @@ importers:
 
   apps/ssr-demo:
     devDependencies:
-      '@your-scope/scene-editor':
+      '@scenio/scene-editor':
         specifier: workspace:*
         version: link:../../packages/scene-editor
       three:

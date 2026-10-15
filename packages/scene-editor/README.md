@@ -1,17 +1,17 @@
-# @your-scope/scene-editor
+# @scenio/scene-editor
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
 **Status:** `0.1.0-alpha` — API surface is locked for the v0.1 line but may still adjust before `0.1.0`. `three` is a peer dependency you install yourself.
 
-> Package scope (`@your-scope`) is a placeholder until the npm org name is chosen — see TODOS.md.
+> Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
 ## Install
 
 ```bash
-npm install @your-scope/scene-editor three
+npm install @scenio/scene-editor three
 # or
-pnpm add @your-scope/scene-editor three
+pnpm add @scenio/scene-editor three
 ```
 
 Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
@@ -20,8 +20,8 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 
 ```html
 <script type="module">
-  import { defineSceneEditor } from "@your-scope/scene-editor/element";
-  import "@your-scope/scene-editor/style.css";
+  import { defineSceneEditor } from "@scenio/scene-editor/element";
+  import "@scenio/scene-editor/style.css";
 
   defineSceneEditor(); // idempotent, SSR-safe (no top-level side effects)
 
@@ -55,8 +55,8 @@ In this page you can orbit (drag), zoom (wheel), click an object to select it, d
 No DOM, no canvas, no CustomEvent — bring your own UI (and, if you want pixels, your own runtime):
 
 ```ts
-import { createSceneEditor } from "@your-scope/scene-editor";
-import { FakeRuntime } from "@your-scope/scene-editor"; // tests; production: ThreeRuntime or your own
+import { createSceneEditor } from "@scenio/scene-editor";
+import { FakeRuntime } from "@scenio/scene-editor"; // tests; production: ThreeRuntime or your own
 
 const editor = createSceneEditor({ runtime: new FakeRuntime() }); // runtime is required
 
@@ -101,10 +101,10 @@ Mental model if you know the PlayCanvas Editor API: our `history` / `selection` 
 
 | Import | What you get | When to use |
 |---|---|---|
-| `@your-scope/scene-editor/element` | `<scene-editor>` custom element + `defineSceneEditor()` | Most integrations — recommended |
-| `@your-scope/scene-editor` | Core: `createSceneEditor()` headless facade, schema, commands, controller, errors, assets, plugin types | Headless editing, custom runtimes, server-side validation |
-| `@your-scope/scene-editor/three` | `ThreeRuntime`, picker, controls bindings, example plugin | Advanced: custom renderer, custom scene graph wiring |
-| `@your-scope/scene-editor/style.css` | Minimal editor chrome styles | Pair with the element entry |
+| `@scenio/scene-editor/element` | `<scene-editor>` custom element + `defineSceneEditor()` | Most integrations — recommended |
+| `@scenio/scene-editor` | Core: `createSceneEditor()` headless facade, schema, commands, controller, errors, assets, plugin types | Headless editing, custom runtimes, server-side validation |
+| `@scenio/scene-editor/three` | `ThreeRuntime`, picker, controls bindings, example plugin | Advanced: custom renderer, custom scene graph wiring |
+| `@scenio/scene-editor/style.css` | Minimal editor chrome styles | Pair with the element entry |
 
 The element creates its canvas and a default `ThreeRuntime` (WebGL2) for you. Override `SceneEditorElement.runtimeFactory` before the element connects if you need a custom runtime (assets, WebGPU, tests).
 
@@ -180,8 +180,8 @@ The SDK never talks to your backend. Persistence is host-driven (D17/D18):
 Objects can reference assets by `assetId`. The SDK resolves and caches them; you own the URLs and transport:
 
 ```ts
-import { AssetCache } from "@your-scope/scene-editor";
-import { createResolverAssetLoader } from "@your-scope/scene-editor"; // or via element
+import { AssetCache } from "@scenio/scene-editor";
+import { createResolverAssetLoader } from "@scenio/scene-editor"; // or via element
 
 // Element path — simplest:
 el.assetResolver = {
@@ -223,7 +223,7 @@ el.addEventListener("error", (e) => {
 Plugins are plain objects with an `install(context)` function — no framework, no lifecycle registry:
 
 ```ts
-import type { SceneEditorPlugin } from "@your-scope/scene-editor";
+import type { SceneEditorPlugin } from "@scenio/scene-editor";
 
 const logger: SceneEditorPlugin = {
   id: "logger",
@@ -245,7 +245,7 @@ Context: `runtime` (RuntimeContract — events + methods, no THREE internals), `
 Default renderer is WebGL2 (`createRenderer`). WebGPU is viable via the documented `rendererFactory` seam:
 
 ```ts
-import { ThreeRuntime } from "@your-scope/scene-editor/three";
+import { ThreeRuntime } from "@scenio/scene-editor/three";
 import { WebGPURenderer } from "three/webgpu";
 
 SceneEditorElement.runtimeFactory = async (canvas) => {

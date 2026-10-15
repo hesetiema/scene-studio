@@ -1,10 +1,10 @@
-# API reference — @your-scope/scene-editor
+# API reference — @scenio/scene-editor
 
 Version: `0.1.0-alpha.3`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
 ---
 
-## Core entry — `@your-scope/scene-editor`
+## Core entry — `@scenio/scene-editor`
 
 Headless surface: `createSceneEditor()` facade, document model, validation, history, errors, assets, plugin types, controller. No DOM, no three imports.
 
@@ -164,9 +164,9 @@ No THREE or GPU internals are exposed to plugins — only the contract + editor 
 
 ---
 
-## Element entry — `@your-scope/scene-editor/element`
+## Element entry — `@scenio/scene-editor/element`
 
-Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-exported as `@your-scope/scene-editor/style.css`).
+Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-exported as `@scenio/scene-editor/style.css`).
 
 | Export | Description |
 |---|---|
@@ -207,7 +207,7 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 
 ---
 
-## Three entry — `@your-scope/scene-editor/three`
+## Three entry — `@scenio/scene-editor/three`
 
 Advanced integration only. All three.js imports live behind this layer (D14) — Core/Element never import three.
 
@@ -263,7 +263,7 @@ Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resiz
 
 ---
 
-## Style entry — `@your-scope/scene-editor/style.css`
+## Style entry — `@scenio/scene-editor/style.css`
 
 Minimal chrome for the custom element (layout of canvas host). Import once in the page that uses `<scene-editor>`; already imported by the element entry.
 

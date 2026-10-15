@@ -90,8 +90,8 @@ writeFileSync(
     join(consumer, "smoke-node.mjs"),
     [
       `import assert from "node:assert/strict";`,
-      `import { SCENE_EDITOR_VERSION, SceneDocumentSchema, FakeRuntime, AssetCache, createResolverAssetLoader } from "@your-scope/scene-editor";`,
-      `import { ThreeRuntime, createRenderer } from "@your-scope/scene-editor/three";`,
+      `import { SCENE_EDITOR_VERSION, SceneDocumentSchema, FakeRuntime, AssetCache, createResolverAssetLoader } from "@scenio/scene-editor";`,
+      `import { ThreeRuntime, createRenderer } from "@scenio/scene-editor/three";`,
       `assert.equal(SCENE_EDITOR_VERSION, ${JSON.stringify(pkg.version)});`,
       `assert.equal(typeof SceneDocumentSchema.parse({ schemaVersion: 1, sceneId: "t", revision: 0, objects: [] }).sceneId, "string");`,
       `assert.throws(() => SceneDocumentSchema.parse({ schemaVersion: 1 }));`,
@@ -129,9 +129,9 @@ writeFileSync(
   writeFileSync(
     join(consumer, "smoke.ts"),
     [
-      `import { SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@your-scope/scene-editor";`,
-      `import { ThreeRuntime, type ThreeRuntimeOptions } from "@your-scope/scene-editor/three";`,
-      `import { defineSceneEditor, SceneEditorElement } from "@your-scope/scene-editor/element";`,
+      `import { SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@scenio/scene-editor";`,
+      `import { ThreeRuntime, type ThreeRuntimeOptions } from "@scenio/scene-editor/three";`,
+      `import { defineSceneEditor, SceneEditorElement } from "@scenio/scene-editor/element";`,
       `const doc = SceneDocumentSchema.parse({ schemaVersion: 1, sceneId: "t", revision: 0, objects: [] }) satisfies SceneDocument;`,
       `const _opts: Partial<ThreeRuntimeOptions> = { enableControls: false };`,
       `const _rt: typeof ThreeRuntime = ThreeRuntime;`,
@@ -145,7 +145,7 @@ writeFileSync(
   step("consumer: vite build (element entry + CSS through a bundler)");
   writeFileSync(
     join(consumer, "element-smoke.ts"),
-    `import { defineSceneEditor } from "@your-scope/scene-editor/element";\nconsole.log(typeof defineSceneEditor);\n`,
+    `import { defineSceneEditor } from "@scenio/scene-editor/element";\nconsole.log(typeof defineSceneEditor);\n`,
   );
   writeFileSync(
     join(consumer, "vite.config.js"),

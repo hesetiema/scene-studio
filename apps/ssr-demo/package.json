@@ -1,5 +1,5 @@
 {
-  "name": "@your-scope/ssr-demo",
+  "name": "@scenio/ssr-demo",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +8,7 @@
     "build": "vite build"
   },
   "devDependencies": {
-    "@your-scope/scene-editor": "workspace:*",
+    "@scenio/scene-editor": "workspace:*",
     "three": "^0.186.0",
     "typescript": "^5.9.3",
     "vite": "^8.3.4"

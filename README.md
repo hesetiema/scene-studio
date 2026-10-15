@@ -1,6 +1,6 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK monorepo. Ships as npm package `@your-scope/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.1.0-alpha.3`.
+Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.1.0-alpha.3`.
 
 ## What this is
 

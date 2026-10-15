@@ -1,7 +1,7 @@
-import { defineSceneEditor, SceneEditorElement } from "@your-scope/scene-editor/element";
-import type { SceneDocument, AssetLoader } from "@your-scope/scene-editor";
-import { AssetCache } from "@your-scope/scene-editor";
-import { ThreeRuntime, createSelectionHighlightPlugin } from "@your-scope/scene-editor/three";
+import { defineSceneEditor, SceneEditorElement } from "@scenio/scene-editor/element";
+import type { SceneDocument, AssetLoader } from "@scenio/scene-editor";
+import { AssetCache } from "@scenio/scene-editor";
+import { ThreeRuntime, createSelectionHighlightPlugin } from "@scenio/scene-editor/three";
 import * as THREE from "three";
 
 defineSceneEditor();

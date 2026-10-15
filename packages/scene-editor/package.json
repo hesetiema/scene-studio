@@ -1,5 +1,5 @@
 {
-  "name": "@your-scope/scene-editor",
+  "name": "@scenio/scene-editor",
   "version": "0.1.0-alpha.3",
   "type": "module",
   "exports": {

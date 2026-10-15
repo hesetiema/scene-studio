@@ -22,8 +22,8 @@ import {
   AssetCache,
   createResolverAssetLoader,
   type SceneDocument,
-} from "@your-scope/scene-editor";
-import { ThreeRuntime } from "@your-scope/scene-editor/three";
+} from "@scenio/scene-editor";
+import { ThreeRuntime } from "@scenio/scene-editor/three";
 
 interface FrameStats {
   samples: number;

@@ -10,9 +10,9 @@ export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)
     alias: [
-      { find: "@your-scope/scene-editor/element", replacement: pkg("element-entry.ts") },
-      { find: "@your-scope/scene-editor/three", replacement: pkg("three-entry.ts") },
-      { find: "@your-scope/scene-editor", replacement: pkg("index.ts") },
+      { find: "@scenio/scene-editor/element", replacement: pkg("element-entry.ts") },
+      { find: "@scenio/scene-editor/three", replacement: pkg("three-entry.ts") },
+      { find: "@scenio/scene-editor", replacement: pkg("index.ts") },
     ],
   },
   // one optimizer run for all three.js subpaths keeps three.core shared
