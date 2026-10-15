@@ -14,19 +14,11 @@
 
 **Depends on / blocked by:** 阶段 2 完成后 SceneDocument schema 稳定；zod schemaVersion 迁移机制（D7）经过至少一次真实迁移验证。
 
-## 相机 / 灯光 / 环境入 SceneDocument
+## ~~相机 / 灯光 / 环境入 SceneDocument~~ → 已决策 D22（实施中）
 
-**What:** 把 defaultCamera（position/target/fov）、环境光/方向光、背景等写入持久化 schema，刷新后恢复完整工作区视角。
+2026-10-15 评审通过：文档新增 `view` 段（相机/灯光/环境），`schemaVersion` → 2；视角变化置脏但**不进撤销栈**；文档视角**仅在新 sceneId 时应用**；通用迁移注册表（D7）随本项首次落地；`background: null` 保持透明以保全视觉基线。
 
-**Why:** 用户直觉期望“回到我刚才的工作状态”，目前 D3 决策刷新后视角丢失，是被主动推迟的体验项。
-
-**Pros:** 产品完整感；演示/固定机位场景是刚需。
-
-**Cons:** schema、命令、测试面扩大；需 schemaVersion+1 迁移。
-
-**Context:** 2026-10-13 设计评审 D3：旋转已锁弧度制 Euler XYZ，相机/灯光暂不入档（属 UI 状态），DTO 已留 `metadata?: Record<string, unknown>` 扩展位。实施入口：zod schema 加字段 + 迁移函数（D7 约定迁移与 schema 并列可测）。
-
-**Depends on / blocked by:** 阶段 2 后 schema 稳定；zod 迁移机制已验证。
+设计文档：`docs/specs/2026-10-15-view-state-persistence-design.md`。
 
 ## 插件体系 install(context)
 
