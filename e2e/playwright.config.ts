@@ -28,7 +28,7 @@ export default defineConfig({
   ],
   webServer: {
     command: "node ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort",
-    cwd: "../playground",
+    cwd: "../apps/playground",
     url: "http://127.0.0.1:4173",
     // Local Windows host: Playwright's cmd.exe spawn is unreliable — reuse the
     // long-lived playground dev server. CI always spawns its own.
