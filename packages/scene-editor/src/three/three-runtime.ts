@@ -59,6 +59,7 @@ export class ThreeRuntime implements RuntimeContract {
   #controlsReady: Promise<void>;
   #resolveControlsReady!: () => void;
   #assetCache: AssetCache | null;
+  #rendering = false;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
@@ -334,8 +335,19 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   #render(): void {
-    this.#orbit?.update?.();
-    this.renderer.render(this.scene, this.camera);
+    // Re-entrancy guard: OrbitControls dispatches "change" from update(), and the
+    // change listener below calls #render() again — without this guard an
+    // externally mutated camera (e.g. camera.lookAt before first update) makes
+    // update→change→render→update recurse until the stack overflows (found by
+    // the D10 perf bench).
+    if (this.#rendering) return;
+    this.#rendering = true;
+    try {
+      this.#orbit?.update?.();
+      this.renderer.render(this.scene, this.camera);
+    } finally {
+      this.#rendering = false;
+    }
   }
 
   #disposeSceneObjects(): void {

@@ -102,6 +102,30 @@ describe("ThreeRuntime", () => {
     expect(renderer.disposed).toBe(true);
   });
 
+  it("render is re-entrancy safe when orbit update re-triggers render (OrbitControls change loop)", () => {
+    // Regression: real OrbitControls dispatches "change" from update(), and the
+    // runtime wires that back to render() — an unguarded loop overflows the stack
+    // (caught by the D10 perf bench with an externally mutated camera).
+    let runtimeRef: ThreeRuntime | null = null;
+    const { runtime, renderer } = makeRuntime({
+      enableControls: true,
+      orbitControlsFactory: () => ({
+        update: () => runtimeRef?.render(),
+        dispose: () => {},
+      }),
+      transformControlsFactory: () => ({
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        detach: () => {},
+        attach: () => {},
+      }),
+    });
+    runtimeRef = runtime;
+    const rendersBefore = renderer.renders;
+    expect(() => runtime.render()).not.toThrow();
+    expect(renderer.renders).toBe(rendersBefore + 1);
+  });
+
   it("select attaches transform controls to selected object; drag emits transform-commit", async () => {
     const listeners = new Map<string, (e: never) => void>();
     const detach = vi.fn();
