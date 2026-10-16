@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  SCHEMA_VERSION,
   SceneDocumentSchema,
-  type SceneDocument,
+  ViewStateSchema,
   type SceneObjectDTO,
 } from "../../src/core/document/schema";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 
 const validObject: SceneObjectDTO = {
   id: "obj-1",
@@ -14,12 +16,52 @@ const validObject: SceneObjectDTO = {
   scale: [1, 1, 1],
 };
 
-const validDoc: SceneDocument = {
-  schemaVersion: 1,
+const validDoc = {
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "scene-1",
   revision: 0,
   objects: [validObject],
+  view: createDefaultViewState(),
 };
+
+describe("ViewStateSchema", () => {
+  it("accepts the engine defaults", () => {
+    expect(ViewStateSchema.safeParse(createDefaultViewState()).success).toBe(true);
+  });
+
+  it("accepts a custom view", () => {
+    const view = {
+      camera: { position: [-2, 8, 3], target: [1, 0, -1], fov: 45 },
+      lights: {
+        ambient: { color: "#ff00aa", intensity: 0.2 },
+        directional: { color: "#00ff00", intensity: 2, position: [0, 5, 0] },
+      },
+      environment: { background: "#101010", gridVisible: false },
+    };
+    expect(ViewStateSchema.safeParse(view).success).toBe(true);
+  });
+
+  it("requires #rrggbb colours", () => {
+    const bad = createDefaultViewState();
+    bad.lights.ambient.color = "white";
+    expect(ViewStateSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("rejects non-positive fov and negative intensity", () => {
+    const zeroFov = createDefaultViewState();
+    zeroFov.camera.fov = 0;
+    expect(ViewStateSchema.safeParse(zeroFov).success).toBe(false);
+
+    const negative = createDefaultViewState();
+    negative.lights.ambient.intensity = -1;
+    expect(ViewStateSchema.safeParse(negative).success).toBe(false);
+  });
+
+  it("rejects unknown keys inside the view (strict)", () => {
+    const bad = { ...createDefaultViewState(), near: 0.1 };
+    expect(ViewStateSchema.safeParse(bad).success).toBe(false);
+  });
+});
 
 describe("SceneDocumentSchema", () => {
   it("accepts a minimal valid document", () => {
@@ -75,5 +117,14 @@ describe("SceneDocumentSchema", () => {
       objects: [{ ...validObject, metadata: "nope" }],
     });
     expect(bad.success).toBe(false);
+  });
+
+  it("requires the view section (v2 is fully explicit)", () => {
+    const { view: _view, ...withoutView } = validDoc;
+    expect(SceneDocumentSchema.safeParse(withoutView).success).toBe(false);
+  });
+
+  it("rejects the previous schema version literal", () => {
+    expect(SceneDocumentSchema.safeParse({ ...validDoc, schemaVersion: 1 }).success).toBe(false);
   });
 });

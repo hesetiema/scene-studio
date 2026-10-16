@@ -32,6 +32,22 @@ const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
 const threeFloor = (pkg.peerDependencies?.three ?? "").replace(/^[\^~]/, "");
 if (!threeFloor) throw new Error("peerDependencies.three missing");
 
+/** Schema v2 document literal (D22) — inlined so the smoke stays dependency-free. */
+const V2_SMOKE_DOC = JSON.stringify({
+  schemaVersion: 2,
+  sceneId: "t",
+  revision: 0,
+  objects: [],
+  view: {
+    camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
+    lights: {
+      ambient: { color: "#ffffff", intensity: 0.55 },
+      directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
+    },
+    environment: { background: null, gridVisible: true },
+  },
+});
+
 step(`build ${pkg.name}@${pkg.version} (three floor ${threeFloor})`);
 run("pnpm", ["--filter", pkg.name, "build"], root);
 
@@ -93,7 +109,7 @@ writeFileSync(
       `import { SCENE_EDITOR_VERSION, SceneDocumentSchema, FakeRuntime, AssetCache, createResolverAssetLoader } from "@scenio/scene-editor";`,
       `import { ThreeRuntime, createRenderer } from "@scenio/scene-editor/three";`,
       `assert.equal(SCENE_EDITOR_VERSION, ${JSON.stringify(pkg.version)});`,
-      `assert.equal(typeof SceneDocumentSchema.parse({ schemaVersion: 1, sceneId: "t", revision: 0, objects: [] }).sceneId, "string");`,
+      `assert.equal(typeof SceneDocumentSchema.parse(${V2_SMOKE_DOC}).sceneId, "string");`,
       `assert.throws(() => SceneDocumentSchema.parse({ schemaVersion: 1 }));`,
       `assert.equal(typeof FakeRuntime, "function");`,
       `assert.equal(typeof AssetCache, "function");`,
@@ -132,7 +148,7 @@ writeFileSync(
       `import { SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@scenio/scene-editor";`,
       `import { ThreeRuntime, type ThreeRuntimeOptions } from "@scenio/scene-editor/three";`,
       `import { defineSceneEditor, SceneEditorElement } from "@scenio/scene-editor/element";`,
-      `const doc = SceneDocumentSchema.parse({ schemaVersion: 1, sceneId: "t", revision: 0, objects: [] }) satisfies SceneDocument;`,
+      `const doc = SceneDocumentSchema.parse(${V2_SMOKE_DOC}) satisfies SceneDocument;`,
       `const _opts: Partial<ThreeRuntimeOptions> = { enableControls: false };`,
       `const _rt: typeof ThreeRuntime = ThreeRuntime;`,
       `const _el: typeof SceneEditorElement = SceneEditorElement;`,

@@ -1,5 +1,5 @@
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
-import type { SceneDocument } from "../core/document/schema";
+import type { SceneDocument, ViewState } from "../core/document/schema";
 import { EditorController } from "./editor-controller";
 import type { Command } from "../core/history/command-history";
 import { PluginHost, type PluginHostEditor } from "./plugin-host";
@@ -24,6 +24,11 @@ export type SceneEditorEventMap = {
     document: SceneDocument;
     revision: number;
   };
+  /**
+   * Viewport view changed (D22). source: "interaction" (user gesture),
+   * "api" (host called setViewState), "load" (documented view applied for a new scene).
+   */
+  "view-change": { view: ViewState; source: "interaction" | "api" | "load" };
   error: { code: string; message: string; cause?: unknown };
 };
 
@@ -61,6 +66,11 @@ export interface SceneEditor {
   redo(): boolean;
 
   requestSave(): void;
+
+  /** Current runtime viewport view (live truth; the document is the last recorded one, D22). */
+  getViewState(): ViewState;
+  /** Explicitly record + apply a view. Marks dirty without entering the undo stack (D22). */
+  setViewState(view: ViewState): void;
 
   readonly canUndo: boolean;
   readonly canRedo: boolean;
@@ -110,16 +120,25 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
         this.#emit("document-dirty", { dirty: payload.dirty });
       }
     });
+    // The controller records the view on the document; the facade attributes the source.
+    this.runtime.events.on("view-change", ({ view }) => {
+      this.#emit("view-change", { view, source: "interaction" });
+    });
     this.#plugins.flushPending();
   }
 
   async loadDocument(doc: unknown): Promise<void> {
     this.#assertLive();
+    const previousSceneId = this.#controller.getSceneId();
     try {
       await this.#controller.loadDocument(doc);
     } catch (err) {
       this.#emitError(err);
       throw err;
+    }
+    const current = this.#controller.getDocument();
+    if (current.sceneId !== previousSceneId) {
+      this.#emit("view-change", { view: current.view, source: "load" });
     }
   }
 
@@ -197,6 +216,17 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
       document,
       revision: document.revision,
     });
+  }
+
+  getViewState(): ViewState {
+    this.#assertLive();
+    return this.#controller.getViewState();
+  }
+
+  setViewState(view: ViewState): void {
+    this.#assertLive();
+    this.#controller.setViewState(view);
+    this.#emit("view-change", { view: this.#controller.getDocument().view, source: "api" });
   }
 
   get canUndo(): boolean {

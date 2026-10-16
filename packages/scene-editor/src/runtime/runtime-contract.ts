@@ -1,4 +1,4 @@
-import type { SceneDocument } from "../core/document/schema";
+import type { SceneDocument, ViewState } from "../core/document/schema";
 
 export interface Transform {
   position: readonly [number, number, number];
@@ -20,6 +20,8 @@ export type RuntimeEventMap = {
     from: Transform;
     to: Transform;
   };
+  /** Interaction-driven viewport change (never emitted by applyViewState, D22). */
+  "view-change": { view: ViewState };
   error: { code: string; message: string; cause?: unknown };
 };
 
@@ -39,5 +41,9 @@ export interface RuntimeContract {
   select(ids: string[]): void;
   pick(clientX: number, clientY: number): string | null;
   flushDisposers(): void;
+  /** Current camera/lights/environment as a persistable snapshot (D22). */
+  getViewState(): ViewState;
+  /** Apply a persisted view without raising view-change (D22). */
+  applyViewState(view: ViewState): void;
   readonly events: RuntimeEventBus;
 }

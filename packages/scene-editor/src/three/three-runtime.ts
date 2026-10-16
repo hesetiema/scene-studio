@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { SceneDocument, SceneObjectDTO } from "../core/document/schema";
+import type { SceneDocument, SceneObjectDTO, ViewState } from "../core/document/schema";
+import { createDefaultViewState } from "../core/document/default-view";
 import type { RuntimeContract, RuntimeEventMap, Transform } from "../runtime/runtime-contract";
 import { TypedEventBus } from "../runtime/typed-event-bus";
 import { DisposerStack } from "../runtime/disposer-stack";
@@ -7,6 +8,19 @@ import { createRenderer } from "./create-renderer";
 import type { RendererHandle } from "./renderer-handle";
 import { createTransformControlsBinding, type TransformControlsLike } from "./transform-controls-binding";
 import type { AssetCache } from "../assets/asset-cache";
+
+/** Minimal OrbitControls surface the runtime needs (real or injected, D22). */
+export interface OrbitControlsLike {
+  update: () => void;
+  dispose: () => void;
+  target?: THREE.Vector3;
+  addEventListener?: (type: string, handler: () => void) => void;
+}
+
+function toHex(color: THREE.Color): string {
+  return `#${color.getHexString()}`;
+}
+
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
@@ -22,10 +36,7 @@ export interface ThreeRuntimeOptions {
   orbitControlsFactory?: (
     camera: THREE.Camera,
     domElement: HTMLElement,
-  ) => {
-    update: () => void;
-    dispose: () => void;
-  } | null;
+  ) => OrbitControlsLike | null;
   /** Injectable seam: defaults to real three TransformControls. */
   transformControlsFactory?: (
     camera: THREE.Camera,
@@ -47,13 +58,20 @@ export class ThreeRuntime implements RuntimeContract {
   readonly camera: THREE.PerspectiveCamera;
   readonly renderer: RendererHandle;
   readonly #canvas: HTMLCanvasElement;
+  readonly #ambient: THREE.AmbientLight;
+  readonly #directional: THREE.DirectionalLight;
+  readonly #grid: THREE.GridHelper;
 
   #objects = new Map<string, THREE.Object3D>();
   #selectedIds: string[] = [];
   #objectDisposers = new DisposerStack();
   #raycaster = new THREE.Raycaster();
   #pointer = new THREE.Vector2();
-  #orbit: { update: () => void; dispose: () => void } | null = null;
+  #orbit: OrbitControlsLike | null = null;
+  /** Target remembered when no OrbitControls exists (headless / disabled, D22). */
+  #fallbackTarget = new THREE.Vector3(0, 0, 0);
+  /** Suppresses view-change while applyViewState mutates the camera (D22). */
+  #applyingView = false;
   #transformBinding: ReturnType<typeof createTransformControlsBinding> | null = null;
   #transformControls: (TransformControlsLike & { update?: () => void; getHelper?: () => THREE.Object3D }) | null = null;
   #controlsReady: Promise<void>;
@@ -67,15 +85,31 @@ export class ThreeRuntime implements RuntimeContract {
     this.#controlsReady = new Promise<void>((resolve) => {
       this.#resolveControlsReady = resolve;
     });
-    this.camera = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
-    this.camera.position.set(6, 5, 10);
+    const initial = createDefaultViewState();
+    this.camera = new THREE.PerspectiveCamera(initial.camera.fov, 4 / 3, 0.1, 1000);
+    this.camera.position.set(
+      initial.camera.position[0],
+      initial.camera.position[1],
+      initial.camera.position[2],
+    );
     this.camera.lookAt(0, 0, 0);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.55);
-    const directional = new THREE.DirectionalLight(0xffffff, 1);
-    directional.position.set(5, 10, 7);
-    const grid = new THREE.GridHelper(10, 10);
-    this.scene.add(ambient, directional, grid);
+    this.#ambient = new THREE.AmbientLight(
+      new THREE.Color(initial.lights.ambient.color),
+      initial.lights.ambient.intensity,
+    );
+    this.#directional = new THREE.DirectionalLight(
+      new THREE.Color(initial.lights.directional.color),
+      initial.lights.directional.intensity,
+    );
+    this.#directional.position.set(
+      initial.lights.directional.position[0],
+      initial.lights.directional.position[1],
+      initial.lights.directional.position[2],
+    );
+    this.#grid = new THREE.GridHelper(10, 10);
+    this.#grid.visible = initial.environment.gridVisible;
+    this.scene.add(this.#ambient, this.#directional, this.#grid);
 
     const factory = options.rendererFactory ?? createRenderer;
     this.renderer = factory(options.canvas);
@@ -98,16 +132,19 @@ export class ThreeRuntime implements RuntimeContract {
     const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? this.#canvas;
     try {
       if (options.orbitControlsFactory) {
-        this.#orbit = options.orbitControlsFactory(this.camera, dom);
+        const orbit = options.orbitControlsFactory(this.camera, dom);
+        orbit?.addEventListener?.("end", () => this.#emitViewChange());
+        this.#orbit = orbit;
       } else {
         // Lazy require keeps unit tests (no WebGL) free of examples/jsm side effects.
         void import("three/examples/jsm/controls/OrbitControls.js").then(({ OrbitControls }) => {
-          const controls = new OrbitControls(this.camera, dom) as unknown as {
-            update: () => void;
-            dispose: () => void;
-            addEventListener?: (type: string, fn: () => void) => void;
-          };
+          const controls = new OrbitControls(
+            this.camera,
+            dom,
+          ) as unknown as OrbitControlsLike;
           controls.addEventListener?.("change", () => this.#render());
+          // A user gesture ends → the view is worth persisting (D22).
+          controls.addEventListener?.("end", () => this.#emitViewChange());
           this.#orbit = controls;
         });
       }
@@ -255,6 +292,82 @@ export class ThreeRuntime implements RuntimeContract {
       cause: err,
       detail: { objectId: dto.id, assetId: dto.assetId },
     } as RuntimeEventMap["error"]);
+  }
+
+  /** Current camera/lights/environment as a persistable snapshot (D22). */
+  getViewState(): ViewState {
+    const target = this.#orbit?.target ?? this.#fallbackTarget;
+    return {
+      camera: {
+        position: [
+          this.camera.position.x,
+          this.camera.position.y,
+          this.camera.position.z,
+        ],
+        target: [target.x, target.y, target.z],
+        fov: this.camera.fov,
+      },
+      lights: {
+        ambient: {
+          color: toHex(this.#ambient.color),
+          intensity: this.#ambient.intensity,
+        },
+        directional: {
+          color: toHex(this.#directional.color),
+          intensity: this.#directional.intensity,
+          position: [
+            this.#directional.position.x,
+            this.#directional.position.y,
+            this.#directional.position.z,
+          ],
+        },
+      },
+      environment: {
+        background:
+          this.scene.background instanceof THREE.Color
+            ? toHex(this.scene.background)
+            : null,
+        gridVisible: this.#grid.visible,
+      },
+    };
+  }
+
+  /** Apply a persisted view. Never emits view-change (that is user input only, D22). */
+  applyViewState(view: ViewState): void {
+    this.#applyingView = true;
+    try {
+      const { camera, lights, environment } = view;
+      const target = camera.target;
+      this.camera.position.set(camera.position[0], camera.position[1], camera.position[2]);
+      this.camera.fov = camera.fov;
+      this.camera.lookAt(target[0], target[1], target[2]);
+      this.camera.updateProjectionMatrix();
+      this.#fallbackTarget.set(target[0], target[1], target[2]);
+      this.#orbit?.target?.set(target[0], target[1], target[2]);
+
+      this.#ambient.color.set(lights.ambient.color);
+      this.#ambient.intensity = lights.ambient.intensity;
+      this.#directional.color.set(lights.directional.color);
+      this.#directional.intensity = lights.directional.intensity;
+      this.#directional.position.set(
+        lights.directional.position[0],
+        lights.directional.position[1],
+        lights.directional.position[2],
+      );
+
+      this.scene.background =
+        environment.background === null ? null : new THREE.Color(environment.background);
+      this.#grid.visible = environment.gridVisible;
+
+      this.#render();
+    } finally {
+      this.#applyingView = false;
+    }
+  }
+
+  #emitViewChange(): void {
+    if (this.#applyingView) return;
+    this.events.emit("view-change", { view: this.getViewState() });
   }
 
   applyTransform(id: string, t: Transform): void {

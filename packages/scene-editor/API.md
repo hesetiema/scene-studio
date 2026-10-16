@@ -31,13 +31,15 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `executeCommand` | `(command: Command) => void` | **First-class entry** for host-defined undoable actions (compare PlayCanvas `history.add`) |
 | `undo` / `redo` | `() => boolean` | Whether an action ran |
 | `requestSave` | `() => void` | Emits `save-request` with `{ reason: "manual", document, revision }` |
+| `getViewState` | `() => ViewState` | Live viewport view (D22) |
+| `setViewState` | `(view: ViewState) => void` | Record + apply a view; marks dirty, never undoable (D22) |
 | `on(type, handler)` | returns `() => void` | Typed subscription; call the returned function to unsubscribe |
 | `use` / `unuse` | `(plugin) => void` / `(id: string) => void` | Same `install(context)` contract as the element; duplicate id throws |
 | `handleKeyDown` | `(event: KeyboardLike) => boolean` | Pure key mapping (Ctrl/Cmd+Z undo, +Shift/Z or Y redo, reserved G/R/S). Returns `true` when consumed. Focus-domain policy stays with the DOM owner |
 | getters | `canUndo` `canRedo` `dirty` `revision` `selectedIds` `runtime` | |
 | `destroy` | `() => void` | Idempotent: tears down plugins, flushes controller + runtime disposers, clears handlers. Later calls throw `lifecycle` |
 
-**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `error` `{code, message, cause?}`.
+**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` (D22) · `error` `{code, message, cause?}`.
 
 Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping function, for hosts that keep their own controller.
 
@@ -52,15 +54,17 @@ Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping f
 
 | Export | Kind | Description |
 |---|---|---|
-| `SceneDocumentSchema` | `z.ZodType<SceneDocument>` | Strict object: `schemaVersion`, `sceneId`, `revision`, `objects[]` |
+| `SceneDocumentSchema` | `z.ZodType<SceneDocument>` | Strict object: `schemaVersion` (literal 2), `sceneId`, `revision`, `objects[]`, `view` |
+| `ViewStateSchema` | `z.ZodType<ViewState>` | Strict `view` section (D22): `camera`, `lights`, `environment` |
 | `SceneObjectSchema` | `z.ZodType<SceneObjectDTO>` | Strict object: `id`, `type` (`"mesh" \| "group"`), `name`, optional `assetId` / `parentId` / `metadata`, required `position` / `rotation` / `scale` tuples |
-| `SceneDocument` | type | Infer of document schema |
-| `SceneObjectDTO` | type | Infer of object schema |
+| `SceneDocument`, `ViewState` | type | Infer of document / view-state schema |
 | `Vec3` / `EulerXYZ` | type | `readonly [number, number, number]`; rotation is Euler XYZ in **radians** (D3) |
 
 | Function | Signature | Description |
 |---|---|---|
-| `parseSceneDocument` | `(input: unknown) => SceneDocument` | zod parse; throws `SceneEditorError("validation")` on invalid input |
+| `parseSceneDocument` | `(input: unknown, opts?: ParseSceneDocumentOptions) => SceneDocument` | Migrations run first, then zod parse; throws `SceneEditorError("validation")` on invalid input |
+| `migrateSceneDocument` | `(doc: unknown) => MigrationResult` | Generic migration registry (D7): upgrades v1 → v2, reports `applied` |
+| `createDefaultViewState` | `() => ViewState` | Engine-default `view` (D22) |
 | `validateHierarchy` | `(doc: SceneDocument) => void` | Parent references must resolve; throws `SceneEditorError("validation")` |
 
 ### Errors (D6)
@@ -86,6 +90,8 @@ interface RuntimeContract {
   clearSelection(): void;
   pick(clientX: number, clientY: number): string | null;
   flushDisposers(): void;
+  getViewState(): ViewState;
+  applyViewState(view: ViewState): void;
   readonly events: RuntimeEventBus;
 }
 
@@ -104,6 +110,7 @@ type Transform = {
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` |
 | `transform-commit` | `{ id, from: Transform, to: Transform }` — one completed gizmo drag |
 | `error` | `{ code: string, message: string, cause? }` |
+| `view-change` | `{ view: ViewState }` — a **user** interaction ended; never emitted while `applyViewState` runs (D22) |
 
 | Export | Description |
 |---|---|
@@ -136,6 +143,8 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `executeCommand` / `undo` / `redo` / `markClean` / `markSaved` | as named | `markSaved(serverRevision)` adopts server revision and clears dirty (D18) |
 | `select` / `clearSelection` | `(ids) => void` / `() => void` | |
 | `canUndo` / `canRedo` / `dirty` / `selectedIds` / `revision` | getters | |
+| `getViewState` / `setViewState` / `getSceneId` | `(view?: ViewState)` / `() => ViewState` / `() => string \| null` | View state (D22); `setViewState` marks dirty without a command |
+| `handleRuntimeViewChange` | `(view: ViewState) => void` | Record a user-driven view change; wired from `runtime` `view-change` |
 | `destroy` | `() => void` | Flushes disposers |
 | `disposers` / `history` / `selection` / `runtime` | readonly fields | |
 
@@ -190,6 +199,7 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `executeCommand(cmd)` | method | Escape hatch for custom `Command`s |
 | `undo()` / `redo()` | method | Also bound to keyboard (see `CAPTURED_COMBOS`) |
 | `requestSave()` | method | Dispatches `save-request` with current document + revision |
+| `getViewState()` / `setViewState(view)` | method | View state (D22): live read / record + apply (dirty, not undoable) |
 | `use(plugin)` / `unuse(id)` | method | Plugin install/uninstall; pre-connect `use` is queued; duplicate id throws |
 | `revision` / `dirty` / `selectedIds` | getters | |
 | `connectedCallback` / `disconnectedCallback` | lifecycle | Teardown destroys runtime + all plugins |
@@ -203,6 +213,7 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command/undo/redo |
 | `document-dirty` | `{ dirty: boolean }` | Dirty crossed the boundary |
 | `save-request` | `{ reason: "manual", document, revision }` | Host should persist |
+| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed (D22) |
 | `error` | `{ code, message, cause? }` | Any SDK failure |
 
 ---

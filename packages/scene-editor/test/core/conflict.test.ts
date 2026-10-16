@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import { createConflictError } from "../../src/core/events/conflict";
 import { SceneEditorError, SceneErrorCode } from "../../src/core/events/errors";
 import { EditorController } from "../../src/runtime/editor-controller";
@@ -6,7 +7,8 @@ import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import type { SceneDocument } from "../../src/core/document/schema";
 
 const base: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  view: createDefaultViewState(),
   sceneId: "s1",
   revision: 3,
   objects: [],

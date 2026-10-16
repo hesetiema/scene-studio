@@ -2,15 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { EditorController } from "../../src/runtime/editor-controller";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import { TransformCommand } from "../../src/core/commands/transform-command";
-import type { SceneDocument } from "../../src/core/document/schema";
 import type { Transform } from "../../src/runtime/runtime-contract";
+import { sceneDocument } from "../support/documents";
 
-const emptyDoc: SceneDocument = {
-  schemaVersion: 1,
-  sceneId: "s1",
-  revision: 0,
-  objects: [],
-};
+const emptyDoc = sceneDocument({ sceneId: "s1" });
 
 const from: Transform = {
   position: [0, 0, 0],

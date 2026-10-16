@@ -90,3 +90,41 @@ describe("CommandHistory", () => {
     });
   });
 });
+
+describe("CommandHistory view dirty (D22)", () => {
+  it("markDirty raises dirty without touching the undo stack", () => {
+    const history = new CommandHistory();
+    expect(history.dirty).toBe(false);
+    history.markDirty();
+    expect(history.dirty).toBe(true);
+    expect(history.canUndo).toBe(false);
+    expect(history.canRedo).toBe(false);
+  });
+
+  it("markClean and clear both reset the external dirty flag", () => {
+    const history = new CommandHistory();
+    history.markDirty();
+    history.markClean();
+    expect(history.dirty).toBe(false);
+
+    history.markDirty();
+    history.clear();
+    expect(history.dirty).toBe(false);
+  });
+
+  it("a view dirty flag survives undo/redo bookkeeping", () => {
+    const history = new CommandHistory();
+    history.markDirty();
+    expect(history.undo()).toBe(false);
+    expect(history.redo()).toBe(false);
+    expect(history.dirty).toBe(true);
+  });
+
+  it("markDirty is idempotent and notifies only once", () => {
+    const onChange = vi.fn();
+    const history = new CommandHistory(onChange);
+    history.markDirty();
+    history.markDirty();
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+});

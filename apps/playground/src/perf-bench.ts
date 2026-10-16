@@ -186,10 +186,18 @@ function buildDoc(count: number): SceneDocument {
     };
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sceneId: "perf-bench",
     revision: 0,
     objects,
+    view: {
+      camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
+      lights: {
+        ambient: { color: "#ffffff", intensity: 0.55 },
+        directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
+      },
+      environment: { background: null, gridVisible: true },
+    },
   };
 }
 

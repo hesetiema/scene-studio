@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import { SceneEditorElement } from "../../src/element/scene-editor-element";
 import { defineSceneEditor } from "../../src/element/register";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
@@ -10,7 +11,8 @@ beforeAll(() => {
 });
 
 const doc: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  view: createDefaultViewState(),
   sceneId: "s1",
   revision: 0,
   objects: [],
