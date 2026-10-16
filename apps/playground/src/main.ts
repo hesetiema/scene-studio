@@ -4,8 +4,6 @@ import { AssetCache } from "@scenio/scene-editor";
 import { ThreeRuntime, createSelectionHighlightPlugin } from "@scenio/scene-editor/three";
 import * as THREE from "three";
 
-defineSceneEditor();
-
 /** Programmatic demo assets — deterministic, no network (stage-3 asset path). */
 const DEMO_ASSETS: Record<string, () => THREE.Object3D> = {
   gem: () => new THREE.Mesh(
@@ -24,6 +22,17 @@ const demoAssetLoader: AssetLoader = async (assetId) => {
 
 SceneEditorElement.runtimeFactory = (canvas) =>
   new ThreeRuntime({ canvas, assetCache: new AssetCache(demoAssetLoader) });
+
+// Test hook: expose the live runtime (read-only) before the element connects.
+const baseRuntimeFactory = SceneEditorElement.runtimeFactory;
+SceneEditorElement.runtimeFactory = (canvas, options) => {
+  const runtime = baseRuntimeFactory(canvas, options);
+  window.__runtime = runtime;
+  return runtime;
+};
+
+// Upgrade the element only after the runtimeFactory is fully configured.
+defineSceneEditor();
 
 const doc: SceneDocument = {
   schemaVersion: 2,
@@ -83,6 +92,11 @@ declare global {
     __host: typeof host;
     __savedDocs: SceneDocument[];
     __conflicts: unknown[];
+    /** Test-only: the runtime behind the live element. */
+    __runtime?: {
+      getViewState(): unknown;
+      camera?: { position: { x: number; y: number; z: number } };
+    };
   }
 }
 window.__editor = el;
