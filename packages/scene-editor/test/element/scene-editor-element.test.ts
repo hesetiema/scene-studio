@@ -5,24 +5,14 @@ import { defineSceneEditor } from "../../src/element/register";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import { SceneEditorError, SceneErrorCode } from "../../src/core/events/errors";
 import type { SceneDocument } from "../../src/core/document/schema";
+import { sceneDocument, sceneObject } from "../support/documents";
 
 const ORIGINAL_FACTORY = SceneEditorElement.runtimeFactory;
 
-const doc: SceneDocument = {
-  schemaVersion: 1,
+const doc = sceneDocument({
   sceneId: "s1",
-  revision: 0,
-  objects: [
-    {
-      id: "box-1",
-      type: "mesh",
-      name: "Box",
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-    },
-  ],
-};
+  objects: [sceneObject({ id: "box-1", name: "Box" })],
+});
 
 function makeElement(): { el: SceneEditorElement; fake: FakeRuntime } {
   const fake = new FakeRuntime();

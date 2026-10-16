@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import * as THREE from "three";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import { AssetCache } from "../../src/assets/asset-cache";
@@ -30,7 +31,7 @@ function makeAsset(assetId: string): LoadedAsset {
 }
 
 function makeDoc(objects: SceneDocument["objects"]): SceneDocument {
-  return { schemaVersion: 1, sceneId: "s", revision: 0, objects };
+  return { schemaVersion: 2, sceneId: "s", revision: 0, objects, view: createDefaultViewState() };
 }
 
 function assetObj(id: string, assetId: string) {

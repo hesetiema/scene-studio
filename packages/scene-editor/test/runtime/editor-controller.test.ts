@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import type { RuntimeContract } from "../../src/runtime/runtime-contract";
 import { EditorController } from "../../src/runtime/editor-controller";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import type { SceneDocument } from "../../src/core/document/schema";
 
 const doc: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  view: createDefaultViewState(),
   sceneId: "s1",
   revision: 0,
   objects: [],

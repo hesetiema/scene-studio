@@ -26,7 +26,7 @@ SceneEditorElement.runtimeFactory = (canvas) =>
   new ThreeRuntime({ canvas, assetCache: new AssetCache(demoAssetLoader) });
 
 const doc: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   sceneId: "playground",
   revision: 0,
   objects: [
@@ -56,6 +56,14 @@ const doc: SceneDocument = {
       scale: [1, 1, 1],
     },
   ],
+  view: {
+    camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
+    lights: {
+      ambient: { color: "#ffffff", intensity: 0.55 },
+      directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
+    },
+    environment: { background: null, gridVisible: true },
+  },
 };
 
 /** In-memory host store for e2e save/conflict flows (D18/D17). */

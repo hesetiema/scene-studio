@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import { SceneEditorElement } from "../../src/element/scene-editor-element";
 import { defineSceneEditor } from "../../src/element/register";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
@@ -8,7 +9,8 @@ import type { SceneDocument } from "../../src/core/document/schema";
 const ORIGINAL_FACTORY = SceneEditorElement.runtimeFactory;
 
 const doc: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  view: createDefaultViewState(),
   sceneId: "s1",
   revision: 0,
   objects: [

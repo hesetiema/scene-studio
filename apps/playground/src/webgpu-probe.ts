@@ -254,7 +254,7 @@ async function phase1(): Promise<void> {
   );
 
   const doc: SceneDocument = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sceneId: "webgpu-probe",
     revision: 0,
     objects: [
@@ -262,6 +262,14 @@ async function phase1(): Promise<void> {
       { id: "tri-1", type: "mesh", name: "Tri1", assetId: "tri", position: [2, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       { id: "tri-2", type: "mesh", name: "Tri2", assetId: "tri", position: [-2, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     ],
+    view: {
+      camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
+      lights: {
+        ambient: { color: "#ffffff", intensity: 0.55 },
+        directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
+      },
+      environment: { background: null, gridVisible: true },
+    },
   };
 
   try {

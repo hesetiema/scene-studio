@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import { EditorController } from "../../src/runtime/editor-controller";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import type { SceneDocument } from "../../src/core/document/schema";
@@ -6,7 +7,8 @@ import type { Transform } from "../../src/runtime/runtime-contract";
 import { SceneEditorError, SceneErrorCode } from "../../src/core/events/errors";
 
 const doc: SceneDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  view: createDefaultViewState(),
   sceneId: "s1",
   revision: 0,
   objects: [

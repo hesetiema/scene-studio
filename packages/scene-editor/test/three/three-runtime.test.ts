@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from "vitest";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 import * as THREE from "three";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import type { RendererHandle } from "../../src/three/renderer-handle";
@@ -23,7 +24,8 @@ function stubRenderer(): RendererHandle & { disposed: boolean; renders: number }
 
 function makeDoc(): SceneDocument {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    view: createDefaultViewState(),
     sceneId: "s1",
     revision: 0,
     objects: [
@@ -176,7 +178,8 @@ describe("ThreeRuntime", () => {
       assetCache: new AssetCache(async () => ({ scene: group })),
     });
     await runtime.loadDocument({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      view: createDefaultViewState(),
       sceneId: "s-pick",
       revision: 0,
       objects: [

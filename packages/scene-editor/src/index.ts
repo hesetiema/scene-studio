@@ -1,14 +1,25 @@
 // Core public surface (D4): domain model, schema, commands, errors, controller.
 export { SCENE_EDITOR_VERSION } from "./bootstrap-version";
 export {
+  SCHEMA_VERSION,
   SceneDocumentSchema,
   SceneObjectSchema,
+  ViewStateSchema,
   type SceneDocument,
   type SceneObjectDTO,
+  type ViewState,
   type EulerXYZ,
   type Vec3,
 } from "./core/document/schema";
-export { parseSceneDocument } from "./core/document/parse";
+export { createDefaultViewState } from "./core/document/default-view";
+export {
+  migrateSceneDocument,
+  migrations,
+  type Migration,
+  type MigrationReport,
+  type MigrationResult,
+} from "./core/document/migrations";
+export { parseSceneDocument, type ParseSceneDocumentOptions } from "./core/document/parse";
 export { validateHierarchy } from "./core/document/hierarchy";
 export { SceneEditorError, SceneErrorCode } from "./core/events/errors";
 export { createConflictError, type ConflictDocuments } from "./core/events/conflict";
