@@ -16,6 +16,8 @@ export class CommandHistory {
   #redoStack: Command[] = [];
   /** Depth of undoStack at the last clean point (save/load). */
   #cleanIndex = 0;
+  /** True when state changed outside the command stack (e.g. camera, D22). */
+  #externalDirty = false;
   #lastCommand: string | undefined;
 
   constructor(private readonly onChange?: (state: HistoryState) => void) {}
@@ -29,7 +31,14 @@ export class CommandHistory {
   }
 
   get dirty(): boolean {
-    return this.#undoStack.length !== this.#cleanIndex;
+    return this.#externalDirty || this.#undoStack.length !== this.#cleanIndex;
+  }
+
+  /** Mark dirty from a non-command change (camera/lights/environment, D22). */
+  markDirty(): void {
+    if (this.#externalDirty) return;
+    this.#externalDirty = true;
+    this.#notify();
   }
 
   execute(command: Command): void {
@@ -67,6 +76,7 @@ export class CommandHistory {
 
   /** Anchor the clean point at the current undo depth (after host save). */
   markClean(): void {
+    this.#externalDirty = false;
     this.#cleanIndex = this.#undoStack.length;
     this.#notify();
   }
@@ -75,6 +85,7 @@ export class CommandHistory {
     this.#undoStack = [];
     this.#redoStack = [];
     this.#cleanIndex = 0;
+    this.#externalDirty = false;
     this.#lastCommand = undefined;
     this.#notify();
   }
