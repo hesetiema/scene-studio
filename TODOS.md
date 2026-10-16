@@ -14,9 +14,11 @@
 
 **Depends on / blocked by:** 阶段 2 完成后 SceneDocument schema 稳定；zod schemaVersion 迁移机制（D7）经过至少一次真实迁移验证。
 
-## ~~相机 / 灯光 / 环境入 SceneDocument~~ → 已决策 D22（实施中）
+## ~~相机 / 灯光 / 环境入 SceneDocument~~ → 已决策 D22（已实施，0.3.0 发布）
 
 2026-10-15 评审通过：文档新增 `view` 段（相机/灯光/环境），`schemaVersion` → 2；视角变化置脏但**不进撤销栈**；文档视角**仅在新 sceneId 时应用**；通用迁移注册表（D7）随本项首次落地；`background: null` 保持透明以保全视觉基线。
+
+2026-10-16 实施完成（分支 `feat/view-state-persistence`）：schema v2 + 迁移注册表、`CommandHistory.markDirty()`、`getViewState/applyViewState`、`view-change`（interaction/api/load）、element 桥接、e2e 存读恢复；全门禁绿（单测 190 / e2e 7 / 视觉 5 / perf），版本 0.3.0。
 
 设计文档：`docs/specs/2026-10-15-view-state-persistence-design.md`。
 

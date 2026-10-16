@@ -29,7 +29,7 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
   await el.ready; // resolves on init; failures also arrive as the `error` event
 
   await el.loadDocument({
-    schemaVersion: 1,
+    schemaVersion: 2,
     sceneId: "demo",
     revision: 0,
     objects: [
@@ -42,6 +42,14 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
         scale: [1, 1, 1],
       },
     ],
+    view: {
+      camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
+      lights: {
+        ambient: { color: "#ffffff", intensity: 0.55 },
+        directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
+      },
+      environment: { background: null, gridVisible: true },
+    },
   });
 </script>
 
@@ -110,14 +118,22 @@ The element creates its canvas and a default `ThreeRuntime` (WebGL2) for you. Ov
 
 ## Document model
 
-A scene is plain JSON validated with zod (`SceneDocumentSchema`). Nothing three-specific is persisted — no camera, no lights, no GPU resources.
+A scene is plain JSON validated with zod (`SceneDocumentSchema`). Nothing GPU-specific is persisted — camera, lights and environment are plain fields (`view`, D22), GPU resources are not.
 
 ```ts
 type SceneDocument = {
-  schemaVersion: number; // positive int; currently 1
+  schemaVersion: 2; // positive int literal; currently 2 (v1 is migrated on load)
   sceneId: string;
   revision: number; // nonnegative int; host-authoritative
   objects: SceneObjectDTO[];
+  view: {
+    camera: { position: [number, number, number]; target: [number, number, number]; fov: number };
+    lights: {
+      ambient: { color: "#rrggbb"; intensity: number };
+      directional: { color: "#rrggbb"; intensity: number; position: [number, number, number] };
+    };
+    environment: { background: "#rrggbb" | null; gridVisible: boolean };
+  };
 };
 
 type SceneObjectDTO = {
@@ -135,6 +151,8 @@ type SceneObjectDTO = {
 
 Parse and validate yourself with `parseSceneDocument(input)` / `SceneDocumentSchema` when you need the same errors on the server.
 
+**View state (D22).** v1 documents load unchanged — a generic migration registry fills the engine defaults for `view`. The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
+
 ## Element API
 
 ```ts
@@ -151,6 +169,8 @@ el.requestSave();                // dispatches `save-request` with the document
 el.markSaved(serverRevision);    // host confirmed save → adopts revision, clears dirty
 el.use(plugin); el.unuse(id);   // plugins (see below)
 el.dirty; el.revision; el.selectedIds;
+const live = el.getViewState();     // live viewport view (D22)
+el.setViewState(view);           // record + apply a view; dirty, never undoable (D22)
 ```
 
 ### Events (all `CustomEvent`s)
@@ -162,6 +182,7 @@ el.dirty; el.revision; el.selectedIds;
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command executed / undo / redo |
 | `document-dirty` | `{ dirty: boolean }` | Dirty flag crossed false↔true |
 | `save-request` | `{ reason, document, revision }` | Host should persist (manual `requestSave()` today) |
+| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed (D22) |
 | `error` | `{ code, message, cause? }` | Any SDK failure — the reliable failure channel |
 
 Keyboard shortcuts captured while focus is inside the element: `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, and `G`/`R`/`S` (reserved tool modes, currently swallowed) — exported as `CAPTURED_COMBOS`.
