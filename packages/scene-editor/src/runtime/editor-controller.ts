@@ -6,7 +6,7 @@ import type { RuntimeContract, RuntimeEventMap, Transform } from "./runtime-cont
 import { parseSceneDocument } from "../core/document/parse";
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import { createConflictError } from "../core/events/conflict";
-import type { SceneDocument } from "../core/document/schema";
+import type { SceneDocument, ViewState } from "../core/document/schema";
 
 /**
  * Sits between the element and the runtime: owns the Disposer stack (D8),
@@ -36,6 +36,8 @@ export class EditorController {
     this.selection = new SelectionManager((ids) => {
       this.runtime.events.emit("selection-change", { ids: [...ids] });
     });
+    // Interaction-driven view changes are recorded (dirty, not undoable, D22).
+    this.runtime.events.on("view-change", ({ view }) => this.handleRuntimeViewChange(view));
   }
 
   get canUndo(): boolean {
@@ -56,6 +58,36 @@ export class EditorController {
 
   get revision(): number {
     return this.#doc?.revision ?? this.#baseRevision;
+  }
+
+  /** Scene id of the loaded document, or null before the first load (D22). */
+  getSceneId(): string | null {
+    return this.#doc?.sceneId ?? null;
+  }
+
+  /** Live viewport view from the runtime — never the save trigger (D22). */
+  getViewState(): ViewState {
+    return this.runtime.getViewState();
+  }
+
+  /**
+   * Explicit host-driven view update: recorded in the document, marked dirty,
+   * never part of the undo stack (D22).
+   */
+  setViewState(view: ViewState): void {
+    if (!this.#doc) {
+      throw new SceneEditorError(SceneErrorCode.Lifecycle, "No document loaded");
+    }
+    this.#doc = { ...this.#doc, view: structuredClone(view) };
+    this.runtime.applyViewState(view);
+    this.history.markDirty();
+  }
+
+  /** Runtime reported a user interaction — record it and mark dirty (D22). */
+  handleRuntimeViewChange(view: ViewState): void {
+    if (!this.#doc) return;
+    this.#doc = { ...this.#doc, view: structuredClone(view) };
+    this.history.markDirty();
   }
 
   /** Host confirmed save: adopt server revision and clear dirty (D17/D18). */
@@ -96,10 +128,12 @@ export class EditorController {
       });
     }
     return this.runtime.loadDocument(remote).then(() => {
+      const sceneChanged = this.#doc?.sceneId !== remote.sceneId;
       this.#doc = structuredClone(remote);
       this.#baseRevision = remote.revision;
       this.history.clear();
       this.selection.clear();
+      if (sceneChanged) this.runtime.applyViewState(remote.view);
     });
   }
 
@@ -142,10 +176,12 @@ export class EditorController {
   async loadDocument(input: unknown): Promise<void> {
     const doc = parseSceneDocument(input);
     await this.runtime.loadDocument(doc);
+    const sceneChanged = this.#doc?.sceneId !== doc.sceneId;
     this.#doc = structuredClone(doc);
     this.#baseRevision = doc.revision;
     this.history.clear();
     this.selection.clear();
+    if (sceneChanged) this.runtime.applyViewState(doc.view);
   }
 
   /** Read-only detached snapshot — never the save trigger (D18). */
