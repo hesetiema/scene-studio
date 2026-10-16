@@ -6,6 +6,7 @@ import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import { SceneEditorError, SceneErrorCode } from "../../src/core/events/errors";
 import type { SceneDocument } from "../../src/core/document/schema";
 import { sceneDocument, sceneObject } from "../support/documents";
+import { createDefaultViewState } from "../../src/core/document/default-view";
 
 const ORIGINAL_FACTORY = SceneEditorElement.runtimeFactory;
 
@@ -294,5 +295,24 @@ describe("SceneEditorElement thin shell (0.2 — delegates to the headless facad
     el.remove();
     await nextTick();
     expect(fake.calls.flushDisposers).toBeGreaterThanOrEqual(1);
+  });
+
+  it("bridges view-change to a DOM CustomEvent", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+    await el.loadDocument(sceneDocument());
+
+    const seen: Array<{ source: string; fov: number }> = [];
+    el.addEventListener("view-change", (event) => {
+      const detail = (event as CustomEvent<{ source: string; view: { camera: { fov: number } } }>)
+        .detail;
+      seen.push({ source: detail.source, fov: detail.view.camera.fov });
+    });
+    const view = createDefaultViewState();
+    view.camera.fov = 19;
+    fake.simulateViewChange(view);
+
+    expect(seen).toEqual([{ source: "interaction", fov: 19 }]);
+    el.remove();
   });
 });

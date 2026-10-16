@@ -277,6 +277,9 @@ export class SceneEditorElement extends HTMLElement {
       editor.on("save-request", (payload) => {
         this.dispatchEvent(new CustomEvent("save-request", { detail: payload }));
       });
+      editor.on("view-change", (payload) => {
+        this.dispatchEvent(new CustomEvent("view-change", { detail: payload }));
+      });
       editor.on("error", (payload) => {
         this.dispatchEvent(new CustomEvent("error", { detail: payload }));
       });
