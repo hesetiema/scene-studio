@@ -3,14 +3,672 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>scene-editor playground</title>
+    <title>Scene Studio</title>
+    <meta name="description" content="3D scene editor with WebGL/WebGPU runtime, custom element viewport, and transform controls." />
+    <meta property="og:title" content="Scene Studio" />
+    <meta property="og:description" content="3D scene editor with WebGL/WebGPU runtime, custom element viewport, and transform controls." />
     <style>
-      html, body { margin: 0; height: 100%; }
-      scene-editor { display: block; width: 100vw; height: 100vh; }
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #0c0e12;
+        color: #e4e6eb;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        user-select: none;
+        -webkit-font-smoothing: antialiased;
+      }
+      scene-editor {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+      }
+
+      /* HUD Framework */
+      .hud-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        pointer-events: none;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 14px 16px;
+      }
+      .hud-interactive {
+        pointer-events: auto;
+      }
+      .hud-glass {
+        background: rgba(12, 15, 20, 0.88);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid rgba(56, 226, 255, 0.18);
+        border-radius: 8px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+
+      /* Corner Reticle Brackets */
+      .hud-corner {
+        position: absolute;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 10px;
+        color: rgba(56, 226, 255, 0.65);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        pointer-events: none;
+        letter-spacing: 0.08em;
+      }
+      .hud-corner-bracket {
+        font-size: 16px;
+        font-weight: 300;
+        color: #38e2ff;
+        line-height: 1;
+      }
+      .hud-corner-tl { top: 68px; left: 18px; }
+      .hud-corner-tr { top: 68px; right: 18px; text-align: right; }
+      .hud-corner-bl { bottom: 44px; left: 18px; }
+      .hud-corner-br { bottom: 44px; right: 18px; text-align: right; }
+
+      /* Subtle Center Tactical Reticle */
+      .hud-center-reticle {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 140px;
+        height: 140px;
+        pointer-events: none;
+        opacity: 0.35;
+        transition: opacity 0.3s ease;
+      }
+      .hud-center-reticle::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        border: 1px dashed rgba(56, 226, 255, 0.6);
+        border-radius: 50%;
+      }
+      .hud-center-reticle::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 6px;
+        height: 6px;
+        background: #38e2ff;
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        box-shadow: 0 0 8px #38e2ff;
+      }
+      .reticle-axis-h, .reticle-axis-v {
+        position: absolute;
+        background: rgba(56, 226, 255, 0.4);
+      }
+      .reticle-axis-h { top: 50%; left: -10px; right: -10px; height: 1px; }
+      .reticle-axis-v { left: 50%; top: -10px; bottom: -10px; width: 1px; }
+
+      /* Top Bar */
+      .top-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 6px 14px;
+        height: 50px;
+      }
+      .brand-block {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #38e2ff;
+        box-shadow: 0 0 10px #38e2ff;
+        animation: pulse-dot 2.5s infinite;
+      }
+      @keyframes pulse-dot {
+        0%, 100% { opacity: 1; transform: scale(1); }
+        50% { opacity: 0.45; transform: scale(0.85); }
+      }
+      .brand-title {
+        font-weight: 700;
+        font-size: 13px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .brand-badge {
+        font-size: 10px;
+        background: rgba(56, 226, 255, 0.12);
+        color: #38e2ff;
+        border: 1px solid rgba(56, 226, 255, 0.35);
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+
+      /* Control groups */
+      .controls-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        color: #dce1eb;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        outline: none;
+      }
+      .btn:hover {
+        background: rgba(56, 226, 255, 0.1);
+        border-color: rgba(56, 226, 255, 0.4);
+        color: #fff;
+      }
+      .btn:active {
+        transform: translateY(1px);
+      }
+      .btn-primary {
+        background: rgba(56, 226, 255, 0.18);
+        border-color: rgba(56, 226, 255, 0.55);
+        color: #38e2ff;
+        font-weight: 600;
+      }
+      .btn-primary:hover {
+        background: rgba(56, 226, 255, 0.32);
+        border-color: #38e2ff;
+        color: #fff;
+        box-shadow: 0 0 12px rgba(56, 226, 255, 0.3);
+      }
+
+      /* Select and Option High-Contrast Dark Styling */
+      select.select-input {
+        background-color: #12151c !important;
+        color: #38e2ff !important;
+        border: 1px solid rgba(56, 226, 255, 0.45) !important;
+        padding: 6px 10px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        cursor: pointer;
+        outline: none;
+        transition: all 0.15s ease;
+      }
+      select.select-input:hover, select.select-input:focus {
+        border-color: #38e2ff !important;
+        box-shadow: 0 0 10px rgba(56, 226, 255, 0.35) !important;
+      }
+      select.select-input option {
+        background-color: #12151c !important;
+        color: #f0f3fa !important;
+        font-size: 12px;
+        padding: 8px 12px;
+      }
+      select.select-input option:checked {
+        background-color: #1d2638 !important;
+        color: #38e2ff !important;
+        font-weight: bold;
+      }
+
+      /* Mode switcher bar */
+      .mode-bar {
+        display: flex;
+        background: rgba(0, 0, 0, 0.45);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        padding: 2px;
+      }
+      .mode-tab {
+        background: transparent;
+        border: none;
+        color: #8c93a4;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: 500;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.15s ease;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      .mode-tab:hover {
+        color: #fff;
+      }
+      .mode-tab.active {
+        background: rgba(56, 226, 255, 0.22);
+        color: #38e2ff;
+        font-weight: 600;
+        box-shadow: 0 0 8px rgba(56, 226, 255, 0.25);
+      }
+
+      /* Middle Content Layout */
+      .middle-layout {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        flex: 1;
+        margin-top: 14px;
+        margin-bottom: 14px;
+        pointer-events: none;
+      }
+
+      /* Left Floating Tool Strip */
+      .left-toolbar {
+        width: 170px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-family: ui-monospace, monospace;
+      }
+      .toolbar-section-title {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #727b8c;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .tool-btn-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 4px;
+      }
+      .tool-btn {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        color: #a0a6b5;
+        padding: 5px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        cursor: pointer;
+        text-align: center;
+        transition: all 0.15s ease;
+      }
+      .tool-btn:hover {
+        background: rgba(56, 226, 255, 0.15);
+        color: #fff;
+        border-color: rgba(56, 226, 255, 0.4);
+      }
+      .tool-btn.active {
+        background: rgba(56, 226, 255, 0.25);
+        color: #38e2ff;
+        border-color: #38e2ff;
+        box-shadow: 0 0 8px rgba(56, 226, 255, 0.3);
+      }
+
+      /* Right Floating Telemetry HUD */
+      .telemetry-card {
+        padding: 12px 14px;
+        width: 290px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .telemetry-header {
+        font-size: 11px;
+        color: #727b8c;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .telemetry-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 4px;
+      }
+      .telemetry-label {
+        color: #8c93a4;
+      }
+      .telemetry-val {
+        color: #38e2ff;
+        font-weight: 600;
+      }
+
+      /* Bottom Status Bar */
+      .bottom-bar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        height: 38px;
+        padding: 0 14px;
+      }
+      .status-item {
+        font-family: ui-monospace, monospace;
+        font-size: 11px;
+        color: #8c93a4;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .toast {
+        background: rgba(12, 15, 20, 0.95);
+        border: 1px solid #38e2ff;
+        color: #38e2ff;
+        padding: 6px 14px;
+        border-radius: 6px;
+        font-size: 12px;
+        opacity: 0;
+        transition: opacity 0.25s ease;
+        pointer-events: none;
+        font-family: ui-monospace, monospace;
+        box-shadow: 0 0 16px rgba(56, 226, 255, 0.3);
+      }
+      .toast.visible {
+        opacity: 1;
+      }
+
+      /* Drag & Drop Sci-Fi Overlay */
+      .drop-overlay {
+        position: absolute;
+        inset: 20px;
+        border: 2px dashed rgba(56, 226, 255, 0.75);
+        border-radius: 12px;
+        background: rgba(10, 14, 20, 0.92);
+        backdrop-filter: blur(14px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        z-index: 100;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+      }
+      .drop-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      .drop-title {
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #38e2ff;
+        text-shadow: 0 0 16px rgba(56, 226, 255, 0.5);
+      }
+      .drop-subtitle {
+        font-size: 13px;
+        color: #8c93a4;
+        font-family: ui-monospace, monospace;
+      }
     </style>
   </head>
   <body>
+    <!-- 3D Viewport Element -->
     <scene-editor id="viewport"></scene-editor>
+
+    <!-- Tactical Center Crosshair Reticle -->
+    <div class="hud-center-reticle">
+      <div class="reticle-axis-h"></div>
+      <div class="reticle-axis-v"></div>
+    </div>
+
+    <!-- 4 Corner Aerospace HUD Brackets -->
+    <div class="hud-corner hud-corner-tl">
+      <span class="hud-corner-bracket">┌</span>
+      <span>SYS.DIAG // VIEWPORT ONLINE</span>
+    </div>
+    <div class="hud-corner hud-corner-tr">
+      <span id="hud-perf-stat">FPS: 60 · 16.6ms</span>
+      <span class="hud-corner-bracket">┐</span>
+    </div>
+    <div class="hud-corner hud-corner-bl">
+      <span class="hud-corner-bracket">└</span>
+      <span id="hud-cam-stat">CAM: PERSPECTIVE · FOV: 50°</span>
+    </div>
+    <div class="hud-corner hud-corner-br">
+      <span>GRID: 10×10m · PRECISION: HI</span>
+      <span class="hud-corner-bracket">┘</span>
+    </div>
+
+    <!-- HUD Overlay Framework -->
+    <div class="hud-layer">
+      <!-- Top Navigation & Control Bar -->
+      <header class="hud-glass top-bar hud-interactive">
+        <div class="brand-block">
+          <div class="status-dot"></div>
+          <div class="brand-title">
+            <span>Scene Studio</span>
+            <span class="brand-badge" id="version-badge">v0.3.0 CORE</span>
+          </div>
+        </div>
+
+        <!-- Model selection & File loading -->
+        <div class="controls-group">
+          <label for="model-select" style="font-size: 11px; color: #8c93a4; font-weight: 600; text-transform: uppercase;">MODEL:</label>
+          <select id="model-select" class="select-input">
+            <option value="mecha-assembly">Complete Mecha Assembly (Full Figure)</option>
+            <option value="exo-chassis">Exo-Chassis Armor Shell (.glb)</option>
+            <option value="core-torso">Internal Torso Core (.glb)</option>
+            <option value="sensor-head">Sensor Pod Optics (.glb)</option>
+            <option value="polyhedral-prism">Polyhedral Prism (.glb)</option>
+            <option value="procedural-assembly">Multi-Geometry Assembly (Box + Gem)</option>
+          </select>
+
+          <!-- Upload local model button -->
+          <button id="btn-upload" class="btn btn-primary" title="Open local 3D model (.glb, .gltf, .obj, .stl)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Open 3D File
+          </button>
+          <input type="file" id="file-input" accept=".glb,.gltf,.obj,.stl" style="display: none;" />
+
+          <!-- Load by URL -->
+          <button id="btn-url" class="btn" title="Load remote 3D model via URL">Load URL</button>
+        </div>
+
+        <!-- Shading & Display Modes -->
+        <div class="mode-bar">
+          <button class="mode-tab active" data-mode="studio" title="Studio PBR Shading [1]">Studio [1]</button>
+          <button class="mode-tab" data-mode="xray" title="Tactical X-Ray Hologram [2]">X-Ray [2]</button>
+          <button class="mode-tab" data-mode="wireframe" title="Technical CAD Wireframe [3]">Wireframe [3]</button>
+          <button class="mode-tab" data-mode="normal" title="Surface Normal Field [4]">Normal [4]</button>
+          <button class="mode-tab" data-mode="clay" title="Studio Clay Inspection [5]">Clay [5]</button>
+        </div>
+
+        <!-- Quick Camera Actions & Save -->
+        <div class="controls-group">
+          <button id="btn-frame" class="btn" title="Center & Frame Viewport on Model [F]">Frame [F]</button>
+          <button id="btn-reset-cam" class="btn" title="Reset Camera to Home [H]">Reset [H]</button>
+          <button id="btn-save" class="btn btn-primary" title="Save SceneDocument">Save</button>
+        </div>
+      </header>
+
+      <!-- Middle Floating Panels -->
+      <div class="middle-layout">
+        <!-- Left Interactive Tool Strip -->
+        <aside class="hud-glass left-toolbar hud-interactive">
+          <div class="toolbar-section-title">
+            <span>TRANSFORM [G/R/S]</span>
+          </div>
+          <div class="tool-btn-grid">
+            <button id="gizmo-t" class="tool-btn active" title="Translate Gizmo [G]">Move [G]</button>
+            <button id="gizmo-r" class="tool-btn" title="Rotate Gizmo [R]">Rotate [R]</button>
+            <button id="gizmo-s" class="tool-btn" title="Scale Gizmo [S]">Scale [S]</button>
+            <button id="gizmo-none" class="tool-btn" title="Pointer Only (Hide Gizmo)">Pointer</button>
+          </div>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>CAMERA PRESETS</span>
+          </div>
+          <div class="tool-btn-grid">
+            <button id="cam-iso" class="tool-btn active" title="Isometric Perspective">ISO</button>
+            <button id="cam-top" class="tool-btn" title="Top View [7]">Top [7]</button>
+            <button id="cam-front" class="tool-btn" title="Front View [1]">Front</button>
+            <button id="cam-side" class="tool-btn" title="Right Side View [3]">Side</button>
+          </div>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>TURNTABLE</span>
+          </div>
+          <button id="btn-turntable" class="tool-btn" style="width: 100%;" title="Toggle 360° Auto-Orbit [Space]">
+            Auto-Orbit [Space]
+          </button>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>ENVIRONMENT & GRID</span>
+          </div>
+          <button id="toggle-grid" class="tool-btn active" style="width: 100%; margin-bottom: 4px;" title="Toggle Spatial Floor Grid">
+            Floor Grid: ON
+          </button>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>BACKDROP THEME</span>
+          </div>
+          <div class="tool-btn-grid">
+            <button class="tool-btn bg-preset-btn active" data-bg="#0c0e12" title="Dark Obsidian Slate">Slate</button>
+            <button class="tool-btn bg-preset-btn" data-bg="#050608" title="OLED Pure Black">Pitch</button>
+            <button class="tool-btn bg-preset-btn" data-bg="#0a1526" title="Tactical Sci-Fi Navy">Navy</button>
+            <button class="tool-btn bg-preset-btn" data-bg="#222632" title="Clean CAD Studio Gray">Studio</button>
+          </div>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>LIGHTING PRESET</span>
+          </div>
+          <div class="tool-btn-grid">
+            <button class="tool-btn light-preset-btn active" data-light="studio">Studio</button>
+            <button class="tool-btn light-preset-btn" data-light="cyber">Cyber</button>
+            <button class="tool-btn light-preset-btn" data-light="sunset">Sunset</button>
+            <button class="tool-btn light-preset-btn" data-light="contrast">Noir</button>
+          </div>
+
+          <div class="toolbar-section-title" style="margin-top: 6px;">
+            <span>HISTORY</span>
+          </div>
+          <div class="tool-btn-grid">
+            <button id="btn-undo" class="tool-btn" title="Undo Last Command [Ctrl+Z]">Undo</button>
+            <button id="btn-redo" class="tool-btn" title="Redo Command [Ctrl+Y]">Redo</button>
+          </div>
+        </aside>
+
+        <!-- Right Model Telemetry HUD -->
+        <aside class="hud-glass telemetry-card hud-interactive">
+          <div class="telemetry-header">
+            <span>Model Telemetry</span>
+            <span id="telemetry-status" style="color: #38e2ff; font-weight: 700;">LIVE</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">ASSET:</span>
+            <span id="stat-name" class="telemetry-val">Complete Mecha Assembly</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">FORMAT:</span>
+            <span id="stat-format" class="telemetry-val">GLTF / GLB</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">MESHES:</span>
+            <span id="stat-meshes" class="telemetry-val">--</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">POLYGONS:</span>
+            <span id="stat-polys" class="telemetry-val">--</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">VERTICES:</span>
+            <span id="stat-verts" class="telemetry-val">--</span>
+          </div>
+          <div class="telemetry-row">
+            <span class="telemetry-label">BOUNDS:</span>
+            <span id="stat-bounds" class="telemetry-val">--</span>
+          </div>
+
+          <!-- Component Explode Slider -->
+          <div style="margin-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span class="telemetry-label">COMPONENT EXPLODE:</span>
+              <span id="explode-val" class="telemetry-val">0%</span>
+            </div>
+            <input type="range" id="explode-slider" min="0" max="100" value="0" style="width: 100%; accent-color: #38e2ff;" />
+          </div>
+
+          <!-- Selected Object Inspector -->
+          <div id="inspector-panel" style="margin-top: 10px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 8px;">
+            <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+              <span class="telemetry-label">SELECTION:</span>
+              <span id="inspect-id" class="telemetry-val">None (Click mesh)</span>
+            </div>
+            <div class="telemetry-row">
+              <span class="telemetry-label">POS:</span>
+              <span id="inspect-pos" style="color: #dce1eb;">[0.0, 0.0, 0.0]</span>
+            </div>
+            <div class="telemetry-row">
+              <span class="telemetry-label">ROT:</span>
+              <span id="inspect-rot" style="color: #dce1eb;">[0.0°, 0.0°, 0.0°]</span>
+            </div>
+          </div>
+
+          <!-- Quick Shortcuts -->
+          <div style="margin-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.08); padding-top: 6px;">
+            <div style="color: #727b8c; font-size: 10px; line-height: 1.45;">
+              [1-5] Shading · [F] Frame · [H] Home<br />
+              [G] Move · [R] Rotate · [S] Scale<br />
+              [Space] Turntable · [Ctrl+Z/Y] Undo/Redo<br />
+              Drag & Drop 3D files directly into viewport
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- Bottom Status Bar -->
+      <footer class="hud-glass bottom-bar hud-interactive">
+        <div class="status-item">
+          <span>REVISION: <strong id="rev-val" style="color: #fff;">0</strong></span>
+          <span style="color: rgba(255, 255, 255, 0.2);">|</span>
+          <span>STATUS: <strong id="dirty-val" style="color: #38e2ff;">CLEAN</strong></span>
+          <span style="color: rgba(255, 255, 255, 0.2);">|</span>
+          <span>OBJECTS: <strong id="obj-count-val" style="color: #fff;">3</strong></span>
+        </div>
+
+        <div id="toast" class="toast">Model Loaded</div>
+
+        <div class="status-item">
+          <button id="btn-snapshot" class="btn" style="padding: 3px 8px; font-size: 11px;" title="Capture high-resolution viewport snapshot">
+            Snapshot
+          </button>
+        </div>
+      </footer>
+    </div>
+
+    <!-- Drag & Drop visual target -->
+    <div id="drop-overlay" class="drop-overlay">
+      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#38e2ff" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      <div class="drop-title">Drop 3D Model to Deploy</div>
+      <div class="drop-subtitle">Supported formats: .glb, .gltf, .obj, .stl (with Draco & Meshopt)</div>
+    </div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

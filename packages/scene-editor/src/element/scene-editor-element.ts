@@ -1,6 +1,6 @@
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import type { RuntimeContract, Transform } from "../runtime/runtime-contract";
-import type { SceneDocument } from "../core/document/schema";
+import type { SceneDocument, ViewState } from "../core/document/schema";
 import { ThreeRuntime } from "../three/three-runtime";
 import type { SceneEditorPlugin } from "../plugins/plugin";
 import type { AssetResolver } from "../assets/resolver-asset-loader";
@@ -152,6 +152,11 @@ export class SceneEditorElement extends HTMLElement {
     }
   }
 
+  /** Live runtime (e.g. ThreeRuntime) for host-side GPU / scene access. */
+  get runtime(): RuntimeContract {
+    return this.#requireEditor().runtime;
+  }
+
   getDocument(): SceneDocument {
     return this.#requireEditor().getDocument();
   }
@@ -204,9 +209,23 @@ export class SceneEditorElement extends HTMLElement {
     this.#requireEditor().redo();
   }
 
+  clearSelection(): void {
+    this.#requireEditor().clearSelection();
+  }
+
   /** Authoritative save path (D18): hosts persist in response to this event. */
   requestSave(): void {
     this.#requireEditor().requestSave();
+  }
+
+  /** Live viewport view from the runtime (camera, lights, environment). */
+  getViewState(): ViewState {
+    return this.#requireEditor().getViewState();
+  }
+
+  /** Explicitly record + apply a view. Marks dirty, never undoable (D22). */
+  setViewState(view: ViewState): void {
+    this.#requireEditor().setViewState(view);
   }
 
   #requireEditor(): SceneEditor {

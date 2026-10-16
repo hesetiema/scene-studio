@@ -14,3 +14,6 @@ e2e/webgpu-eval-report.json
 e2e/perf-report.json
 # Local agent/planning workspace (not part of the published repo)
 .claude/
+
+# Mock data snapshot (docs/mocks) — synced locally, not committed to repo
+docs/mocks/

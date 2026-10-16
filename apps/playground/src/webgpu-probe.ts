@@ -326,12 +326,12 @@ async function phase1(): Promise<void> {
     tri1.traverse((o) => {
       if (!triMesh && (o as THREE.Mesh).isMesh) triMesh = o as THREE.Mesh;
     });
-    const attr = (triMesh as THREE.Mesh).geometry.getAttribute("position");
+    const attr = (triMesh as unknown as THREE.Mesh).geometry.getAttribute("position");
     const centroid = new THREE.Vector3();
     for (let i = 0; i < attr.count; i++) {
       centroid.add(new THREE.Vector3().fromBufferAttribute(attr, i));
     }
-    centroid.divideScalar(attr.count).applyMatrix4((triMesh as THREE.Mesh).matrixWorld);
+    centroid.divideScalar(attr.count).applyMatrix4((triMesh as unknown as THREE.Mesh).matrixWorld);
     const triPoint = toClient(centroid);
     const pickedTri = runtime.pick(triPoint.clientX, triPoint.clientY);
     setCheck(

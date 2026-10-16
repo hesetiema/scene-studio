@@ -9,7 +9,7 @@ export interface AssetResolver {
 
 export interface ResolverAssetLoaderOptions {
   resolver: AssetResolver;
-  gltfLoader: MinimalGltfLoader;
+  gltfLoader?: MinimalGltfLoader;
   dracoLoader?: unknown;
   ktx2Loader?: unknown;
 }
@@ -20,8 +20,10 @@ export interface ResolverAssetLoaderOptions {
  */
 export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
   const { resolver, gltfLoader } = options;
-  if (options.dracoLoader) gltfLoader.setDRACOLoader?.(options.dracoLoader);
-  if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
+  if (gltfLoader) {
+    if (options.dracoLoader) gltfLoader.setDRACOLoader?.(options.dracoLoader);
+    if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
+  }
 
   return async function loadResolvedAsset(assetId: string): Promise<LoadedAsset> {
     let url: string;
@@ -47,6 +49,7 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
 
     let sceneData: { scene: unknown };
     try {
+      if (!gltfLoader) throw new Error("gltfLoader not provided");
       sceneData = await gltfLoader.loadAsync(url);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {

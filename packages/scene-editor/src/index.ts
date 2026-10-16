@@ -11,7 +11,10 @@ export {
   type EulerXYZ,
   type Vec3,
 } from "./core/document/schema";
-export { createDefaultViewState } from "./core/document/default-view";
+export {
+  DEFAULT_VIEW_STATE,
+  createDefaultViewState,
+} from "./core/document/default-view";
 export {
   migrateSceneDocument,
   migrations,
@@ -36,6 +39,14 @@ export {
   type AssetResolver,
   type ResolverAssetLoaderOptions,
 } from "./assets/resolver-asset-loader";
+export {
+  createUniversalAssetLoader,
+  inspectModel,
+  UNIVERSAL_SUPPORTED_FORMATS,
+  type UniversalAssetLoaderOptions,
+  type Supported3DFormat,
+  type ModelMetadata,
+} from "./assets/universal-asset-loader";
 export type {
   SceneEditorPlugin,
   PluginContext,

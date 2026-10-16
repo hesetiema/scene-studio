@@ -5,6 +5,8 @@ export interface LoadedAsset {
   scene: unknown;
   /** Optional dispose hook owned by the loader. */
   dispose?: () => void;
+  /** Optional metadata about the asset (e.g. bounding box, polycount). */
+  metadata?: unknown;
 }
 
 export type AssetLoader = (assetId: string) => Promise<LoadedAsset>;

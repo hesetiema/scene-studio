@@ -22,6 +22,10 @@ export default defineConfig({
       "three",
       "three/webgpu",
       "three/examples/jsm/loaders/GLTFLoader.js",
+      "three/examples/jsm/loaders/DRACOLoader.js",
+      "three/examples/jsm/loaders/OBJLoader.js",
+      "three/examples/jsm/loaders/STLLoader.js",
+      "three/examples/jsm/libs/meshopt_decoder.module.js",
       "three/examples/jsm/controls/OrbitControls.js",
       "three/examples/jsm/controls/TransformControls.js",
     ],
@@ -36,6 +40,10 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
+    port: 3000,
+    strictPort: true,
+    allowedHosts: true,
     fs: { allow: ["../.."] },
   },
 });
