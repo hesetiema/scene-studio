@@ -1,5 +1,9 @@
 // Three runtime public surface (D4/D14): advanced integration only.
-export { ThreeRuntime, type ThreeRuntimeOptions } from "./three/three-runtime";
+export {
+  ThreeRuntime,
+  type ThreeRuntimeOptions,
+  type TransformMode,
+} from "./three/three-runtime";
 export { createRenderer, type CreateRendererOptions } from "./three/create-renderer";
 export type { RendererHandle } from "./three/renderer-handle";
 export {

@@ -8,7 +8,10 @@ type RuntimeHook = {
 type SavedDoc = { view?: { camera: { position: number[]; fov: number } } } & Record<string, unknown>;
 
 test("camera view survives save and reload", async ({ page }) => {
-  await page.goto("/");
+  await page.goto("/?scene=default");
+  // Wait for the boot document: `ready` only means the runtime mounted, and a
+  // view-change/save before the first document has no document to record.
+  await page.waitForFunction(() => document.body.dataset.boot === "ready");
   const el = page.locator("scene-editor");
   await el.evaluate((node) => (node as { ready: Promise<void> }).ready);
 
@@ -46,5 +49,12 @@ test("camera view survives save and reload", async ({ page }) => {
     const runtime = (window as unknown as { __runtime?: RuntimeHook }).__runtime;
     return runtime?.getViewState() as { camera: { position: number[] } } | undefined;
   });
-  expect(restored?.camera.position).toEqual(savedView!.camera.position);
+
+  // OrbitControls re-derives the camera position from spherical coordinates on
+  // the next update, so the restored value is identical to ~1e-15, not bit-equal.
+  const restoredPosition = restored!.camera.position;
+  expect(restoredPosition).toHaveLength(savedView!.camera.position.length);
+  restoredPosition.forEach((value, index) => {
+    expect(value).toBeCloseTo(savedView!.camera.position[index]!, 6);
+  });
 });

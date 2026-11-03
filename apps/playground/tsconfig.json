@@ -2,7 +2,14 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // Typecheck against SDK sources (dist is not built during `pnpm typecheck`,
+    // and the workspace package only exposes built output).
+    "paths": {
+      "@scenio/scene-editor": ["../../packages/scene-editor/src/index.ts"],
+      "@scenio/scene-editor/element": ["../../packages/scene-editor/src/element-entry.ts"],
+      "@scenio/scene-editor/three": ["../../packages/scene-editor/src/three-entry.ts"]
+    }
   },
   "include": ["src", "vite.config.ts"]
 }

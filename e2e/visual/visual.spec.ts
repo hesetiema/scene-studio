@@ -24,6 +24,9 @@ async function waitForBoot(page: Page): Promise<void> {
   await page.evaluate(
     () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))),
   );
+  // FPS/latency is wall-clock dependent — hide it so the diff only reflects
+  // scene + chrome, not how loaded the CI box is.
+  await page.addStyleTag({ content: "#hud-perf-stat { visibility: hidden; }" });
 }
 
 test.describe("visual regression", () => {
@@ -32,7 +35,7 @@ test.describe("visual regression", () => {
   });
 
   test("initial scene: grid + boxes + asset gem", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?scene=default");
     await waitForBoot(page);
     await expect(page).toHaveScreenshot("initial-scene.png", {
       maxDiffPixelRatio: 0.03,
@@ -68,7 +71,7 @@ test.describe("visual regression", () => {
   });
 
   test("canvas non-blank smoke: composited frame has scene content", async ({ page }) => {
-    await page.goto("/");
+    await page.goto("/?scene=default");
     await waitForBoot(page);
     // Capture the composited canvas (WebGL buffer itself is cleared after present).
     const png = await page.locator("scene-editor canvas").screenshot();

@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.1.0-alpha.3`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
+Version: `0.4.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
 ---
 
@@ -237,10 +237,18 @@ interface ThreeRuntimeOptions {
   transformControlsFactory?: (camera, domElement) => TransformControlsLike;
   enableControls?: boolean; // false = headless
   assetCache?: AssetCache;
+  transformMode?: TransformMode; // default: "translate"
 }
 ```
 
-Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`. Scene/camera/lights/grid are engine state — never persisted (D3).
+Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted (D3).
+
+**Gizmo mode.** `TransformMode = "translate" | "rotate" | "scale"`. `setTransformMode()` is safe before the TransformControls addon finishes loading — the mode is remembered and applied on mount, so a host toolbar can bind it during boot:
+
+```ts
+const runtime = new ThreeRuntime({ canvas });
+runtime.setTransformMode("rotate"); // remembered until the addon mounts
+```
 
 **WebGPU opt-in:** construct a `WebGPURenderer`, `await renderer.init()` **before** constructing the runtime (constructor renders once), pass `rendererFactory: () => renderer`. Detect silent fallback via `renderer.backend.isWebGPUBackend === true`. Reference: `apps/playground/webgpu.html`.
 
@@ -282,6 +290,9 @@ Minimal chrome for the custom element (layout of canvas host). Import once in th
 
 ## Related demo code
 
-- `apps/playground/src/main.ts` — full host wiring: runtimeFactory, assets, save/conflict, plugin, keyboard-ready boot
+- `apps/playground/src/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
+- `apps/playground/src/ui/studio-shell.ts` — reference chrome wiring: toolbar, gizmo mode, explode preview, presets, exports, hotkeys
+- `apps/playground/src/ui/view-mode-controller.ts` — shading modes with owned/disposed material overrides
+- `apps/playground/src/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot
 - `apps/playground/webgpu.html` — WebGPU rendererFactory pattern
 - `apps/ssr-demo` — HTMX host pattern (D2): server owns routes/auth; element is the boundary

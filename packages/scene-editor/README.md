@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.1.0-alpha` — API surface is locked for the v0.1 line but may still adjust before `0.1.0`. `three` is a peer dependency you install yourself.
+**Status:** `0.4.0` — API surface is locked for the v0.1 line but may still adjust before `1.0.0`. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
@@ -115,6 +115,8 @@ Mental model if you know the PlayCanvas Editor API: our `history` / `selection` 
 | `@scenio/scene-editor/style.css` | Minimal editor chrome styles | Pair with the element entry |
 
 The element creates its canvas and a default `ThreeRuntime` (WebGL2) for you. Override `SceneEditorElement.runtimeFactory` before the element connects if you need a custom runtime (assets, WebGPU, tests).
+
+`ThreeRuntime` also exposes `setTransformMode("translate" | "rotate" | "scale")` (and a `transformMode` getter) so a host toolbar can switch the gizmo; the call is accepted before the TransformControls addon finishes loading.
 
 ## Document model
 

@@ -1,6 +1,6 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.1.0-alpha.3`.
+Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.4.0`.
 
 ## What this is
 
@@ -15,9 +15,17 @@ A web component (`<scene-editor>`) plus a headless core that together give any h
 packages/scene-editor/   the npm package (core + element + three adapter)
 apps/playground/         interactive demo + Playwright visual/perf baselines
 apps/ssr-demo/           HTMX / server-driven host pattern (D2)
-e2e/                     Playwright configs & specs (critical flows, visual, perf)
+e2e/                     Playwright configs & specs (critical flows, studio tools, visual, perf)
 scripts/                 pack-smoke (npm pack consumer test)
 ```
+
+### Playground
+
+`apps/playground` is the reference host: model loading (GLB/GLTF/OBJ/STL), shading modes (studio / X-Ray / wireframe / normal / clay), explode preview, lighting & backdrop presets, camera presets + turntable, gizmo tool switching, snapshot and GLB/OBJ export.
+
+- `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture the e2e suites assert on; the bare URL boots the mecha showcase.
+- `?select=<id>` selects an object and (optionally) applies `&move=x,y,z&rot=x,y,z&scale=x,y,z` for reproducible screenshots.
+- Host wiring lives in `src/main.ts` (runtime factory, save/conflict store, boot); DOM chrome lives in `src/ui/studio-shell.ts` with one controller per concern (`view-mode`, `explode`, `scene-presets`, `scene-export`, `hud`, `camera`).
 
 ## Develop
 
@@ -49,12 +57,12 @@ CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.
 
 ## Versioning & release
 
-- Every completed phase tags a pre-release (`0.1.0-alpha.N`); the first stable release is `0.1.0` once the public API is locked.
+- Every completed phase bumps the minor (`0.x.0`) and tags it; the first stable release is `1.0.0` once the public API is locked.
 - Publish flow and npm scope selection: see TODOS.md (open decisions).
 - `npm pack` must stay green (`pnpm test:pack`) — it is the release gate for consumer-facing package contents.
 
 ## Status
 
-v0.1 alpha. Not yet published to npm. API may still shift before `0.1.0`; after that, semver applies.
+`0.4.0` alpha. Not yet published to npm. API may still shift before `1.0.0`; after that, semver applies.
 
-Known post-v0.1 roadmap items (TODOS.md): CRDT real-time collaboration, camera/lights into SceneDocument, full plugin marketplace-style system.
+Known roadmap items (TODOS.md): CRDT real-time collaboration, plugin `install(context)` expansion.

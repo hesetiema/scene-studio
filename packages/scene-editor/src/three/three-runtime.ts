@@ -17,6 +17,9 @@ export interface OrbitControlsLike {
   addEventListener?: (type: string, handler: () => void) => void;
 }
 
+/** Gizmo mode exposed by the three runtime (translate is the default tool). */
+export type TransformMode = "translate" | "rotate" | "scale";
+
 function toHex(color: THREE.Color): string {
   return `#${color.getHexString()}`;
 }
@@ -46,6 +49,8 @@ export interface ThreeRuntimeOptions {
   enableControls?: boolean;
   /** Optional asset cache for assetId-based mesh loading (D11/D12). */
   assetCache?: AssetCache;
+  /** Initial gizmo mode (default `"translate"`). */
+  transformMode?: TransformMode;
 }
 
 /**
@@ -78,10 +83,12 @@ export class ThreeRuntime implements RuntimeContract {
   #resolveControlsReady!: () => void;
   #assetCache: AssetCache | null;
   #rendering = false;
+  #transformMode: TransformMode;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
     this.#assetCache = options.assetCache ?? null;
+    this.#transformMode = options.transformMode ?? "translate";
     this.#controlsReady = new Promise<void>((resolve) => {
       this.#resolveControlsReady = resolve;
     });
@@ -132,20 +139,11 @@ export class ThreeRuntime implements RuntimeContract {
     const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? this.#canvas;
     try {
       if (options.orbitControlsFactory) {
-        const orbit = options.orbitControlsFactory(this.camera, dom);
-        orbit?.addEventListener?.("end", () => this.#emitViewChange());
-        this.#orbit = orbit;
+        this.#attachOrbit(options.orbitControlsFactory(this.camera, dom));
       } else {
         // Lazy require keeps unit tests (no WebGL) free of examples/jsm side effects.
         void import("three/examples/jsm/controls/OrbitControls.js").then(({ OrbitControls }) => {
-          const controls = new OrbitControls(
-            this.camera,
-            dom,
-          ) as unknown as OrbitControlsLike;
-          controls.addEventListener?.("change", () => this.#render());
-          // A user gesture ends → the view is worth persisting (D22).
-          controls.addEventListener?.("end", () => this.#emitViewChange());
-          this.#orbit = controls;
+          this.#attachOrbit(new OrbitControls(this.camera, dom) as unknown as OrbitControlsLike);
         });
       }
     } catch {
@@ -174,12 +172,35 @@ export class ThreeRuntime implements RuntimeContract {
     }
   }
 
+  /**
+   * Wire OrbitControls once it exists — eagerly injected or lazily imported.
+   *
+   * The addon may mount *after* a document applied its `view`; without re-seeding
+   * the target it would re-derive the camera around (0,0,0) and throw away the
+   * restored framing (showed up as flaky first-frame camera in the visual gate).
+   */
+  #attachOrbit(orbit: OrbitControlsLike | null): void {
+    this.#orbit = orbit;
+    if (!orbit) return;
+
+    orbit.target?.set(
+      this.#fallbackTarget.x,
+      this.#fallbackTarget.y,
+      this.#fallbackTarget.z,
+    );
+    orbit.addEventListener?.("change", () => this.#render());
+    // A user gesture ends → the view is worth persisting (D22).
+    orbit.addEventListener?.("end", () => this.#emitViewChange());
+    this.#render();
+  }
+
   #mountTransformControls(
     tc: (TransformControlsLike & { getHelper?: () => THREE.Object3D; update?: () => void }) | null | undefined,
   ): void {
     if (!tc) return;
     try {
       this.#transformControls = tc;
+      this.#applyTransformMode();
       const helper = tc.getHelper?.() ?? (tc as unknown as THREE.Object3D);
       if (helper && !this.scene.getObjectById((helper as THREE.Object3D).id)) {
         this.scene.add(helper as THREE.Object3D);
@@ -405,6 +426,25 @@ export class ThreeRuntime implements RuntimeContract {
 
   get selectedIds(): readonly string[] {
     return this.#selectedIds;
+  }
+
+  /** Current gizmo mode (translate by default). */
+  get transformMode(): TransformMode {
+    return this.#transformMode;
+  }
+
+  /**
+   * Switch the gizmo tool. Safe before the addon finishes loading: the mode is
+   * remembered and applied when TransformControls mounts.
+   */
+  setTransformMode(mode: TransformMode): void {
+    this.#transformMode = mode;
+    this.#applyTransformMode();
+    this.#render();
+  }
+
+  #applyTransformMode(): void {
+    this.#transformControls?.setMode?.(this.#transformMode);
   }
 
   getObjectById(id: string): THREE.Object3D | undefined {

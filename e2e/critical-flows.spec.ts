@@ -29,7 +29,9 @@ declare global {
 }
 
 async function bootEditor(page: Page): Promise<void> {
-  await page.goto("/");
+  // `?scene=default` pins the deterministic fixture (box-1 / box-2 / gem-1);
+  // the bare playground URL is the mecha showcase.
+  await page.goto("/?scene=default");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
   await expect(page.locator("scene-editor canvas")).toBeVisible();
 }

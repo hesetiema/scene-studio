@@ -163,6 +163,50 @@ describe("ThreeRuntime", () => {
     expect(detach).toHaveBeenCalled();
   });
 
+  it("keeps an applied view when OrbitControls mounts after load (lazy addon)", async () => {
+    // Regression: the addon is imported lazily, so a document's `view` can be
+    // applied first. A freshly constructed OrbitControls must adopt that target
+    // instead of re-deriving the camera around (0,0,0).
+    const { runtime } = makeRuntime({ enableControls: true });
+    const view = createDefaultViewState();
+    view.camera.position = [3, 4, 5];
+    view.camera.target = [0, 1, 0];
+    runtime.applyViewState(view);
+
+    // Give the dynamic import + controls construction a chance to run.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const restored = runtime.getViewState();
+    expect(restored.camera.position[0]).toBeCloseTo(3, 3);
+    expect(restored.camera.position[1]).toBeCloseTo(4, 3);
+    expect(restored.camera.position[2]).toBeCloseTo(5, 3);
+    expect(restored.camera.target[1]).toBeCloseTo(1, 3);
+  });
+
+  it("transformMode defaults to translate, applies on mount and on change", () => {
+    const setMode = vi.fn();
+    const tc = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      detach: () => {},
+      attach: () => {},
+      setMode,
+    };
+    const { runtime } = makeRuntime({
+      enableControls: true,
+      orbitControlsFactory: () => ({ update: () => {}, dispose: () => {} }),
+      transformControlsFactory: () => tc,
+    });
+
+    expect(runtime.transformMode).toBe("translate");
+    // Mount applies the remembered mode, so a host can set it before the addon loads.
+    expect(setMode).toHaveBeenCalledWith("translate");
+
+    runtime.setTransformMode("rotate");
+    expect(runtime.transformMode).toBe("rotate");
+    expect(setMode).toHaveBeenLastCalledWith("rotate");
+  });
+
   it("pick hits meshes inside an asset Group root (recursive raycast)", async () => {
     const rect = { left: 0, top: 0, width: 800, height: 600 } as DOMRect;
     const renderer = stubRenderer();

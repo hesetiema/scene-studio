@@ -28,6 +28,8 @@ export default defineConfig({
       "three/examples/jsm/libs/meshopt_decoder.module.js",
       "three/examples/jsm/controls/OrbitControls.js",
       "three/examples/jsm/controls/TransformControls.js",
+      "three/examples/jsm/exporters/GLTFExporter.js",
+      "three/examples/jsm/exporters/OBJExporter.js",
     ],
   },
   build: {

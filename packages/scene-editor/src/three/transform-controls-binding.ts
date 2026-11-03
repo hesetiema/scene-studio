@@ -12,6 +12,8 @@ export interface TransformControlsLike {
   removeEventListener?(type: string, listener?: (event: { object?: Object3D | unknown }) => void): void;
   attach(object: Object3D): void;
   detach(): void;
+  /** Optional: translate / rotate / scale tool switch (real TransformControls has it). */
+  setMode?(mode: "translate" | "rotate" | "scale"): void;
 }
 
 export interface TransformControlsBindingOptions {

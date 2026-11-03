@@ -1,235 +1,250 @@
 ﻿import * as THREE from "three";
-import { SceneEditorElement } from "@scenio/scene-editor/element";
+import type { ViewState } from "@scenio/scene-editor";
+import type { SceneEditorElement } from "@scenio/scene-editor/element";
 import type { ThreeRuntime } from "@scenio/scene-editor/three";
 
+export type CameraPreset = "iso" | "top" | "front" | "side";
+
+interface BoundingInfo {
+  center: THREE.Vector3;
+  size: THREE.Vector3;
+  distance: number;
+}
+
+const TURNTABLE_SPEED = 0.45; // rad / second
+const FLY_DURATION = 320; // ms
+
+const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
+
 /**
- * Camera controller: encapsulates camera animation, framing, turntable logic.
- * Extracted from main.ts so main.ts only handles UI event dispatch.
+ * Camera controller: framing, presets and turntable.
+ *
+ * Perf note (D22): preview frames drive `runtime.applyViewState()`, which renders
+ * without emitting `view-change`. The document is written exactly once when the
+ * gesture ends — otherwise a 300ms fly-to would fire ~18 view-change events and
+ * dirty marks instead of one.
  */
 export class CameraController {
-  private readonly el: SceneEditorElement;
-  private readonly getRuntime: () => ThreeRuntime | null;
+  readonly #el: SceneEditorElement;
+  readonly #getRuntime: () => ThreeRuntime | null;
 
-  private cancelled = false;
-  private animId: number | null = null;
-  private turntableActive = false;
-  private lastTurntableTime = 0;
+  #flyRaf: number | null = null;
+  #turntableRaf: number | null = null;
+  #turntableActive = false;
+  #lastTurntableTime = 0;
 
   constructor(el: SceneEditorElement, getRuntime: () => ThreeRuntime | null) {
-    this.el = el;
-    this.getRuntime = getRuntime;
+    this.#el = el;
+    this.#getRuntime = getRuntime;
   }
 
-  flyTo(targetPos: THREE.Vector3, targetLookAt: THREE.Vector3, duration = 320): void {
-    this.cancel();
+  get turntableActive(): boolean {
+    return this.#turntableActive;
+  }
 
-    const curView = this.el.getViewState();
-    const startPos = new THREE.Vector3(...curView.camera.position);
-    const startTarget = new THREE.Vector3(...curView.camera.target);
-    const startTime = performance.now();
+  flyTo(position: THREE.Vector3, target: THREE.Vector3, duration = FLY_DURATION): void {
+    const rt = this.#getRuntime();
+    if (!rt) return;
+    this.stopFly();
 
-    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+    const start = rt.getViewState();
+    const from = new THREE.Vector3(...start.camera.position);
+    const lookAt = new THREE.Vector3(...start.camera.target);
+    const startedAt = performance.now();
 
-    const step = (now: number) => {
-      if (this.cancelled) return;
-      const elapsed = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
+    const step = (now: number): void => {
+      const progress = duration <= 0 ? 1 : Math.min((now - startedAt) / duration, 1);
       const ease = easeOutCubic(progress);
 
-      const pos = new THREE.Vector3().lerpVectors(startPos, targetPos, ease);
-      const tgt = new THREE.Vector3().lerpVectors(startTarget, targetLookAt, ease);
-
-      const cur = this.el.getViewState();
-      this.el.setViewState({
-        ...cur,
+      this.#preview({
+        ...start,
         camera: {
-          ...cur.camera,
-          position: [pos.x, pos.y, pos.z],
-          target: [tgt.x, tgt.y, tgt.z],
+          ...start.camera,
+          position: [
+            THREE.MathUtils.lerp(from.x, position.x, ease),
+            THREE.MathUtils.lerp(from.y, position.y, ease),
+            THREE.MathUtils.lerp(from.z, position.z, ease),
+          ],
+          target: [
+            THREE.MathUtils.lerp(lookAt.x, target.x, ease),
+            THREE.MathUtils.lerp(lookAt.y, target.y, ease),
+            THREE.MathUtils.lerp(lookAt.z, target.z, ease),
+          ],
         },
       });
 
       if (progress < 1) {
-        this.animId = requestAnimationFrame(step);
-      } else {
-        this.animId = null;
-        this.cancelled = false;
+        this.#flyRaf = requestAnimationFrame(step);
+        return;
       }
+      this.#flyRaf = null;
+      this.#commit();
     };
 
-    this.animId = requestAnimationFrame(step);
+    this.#flyRaf = requestAnimationFrame(step);
   }
 
   frameScene(smooth = true): void {
-    const { center, distance } = this.getTargetBoundingInfo();
-
-    const targetCamPos = new THREE.Vector3(
-      center.x + distance * 0.55,
-      center.y + distance * 0.35,
-      center.z + distance * 0.65,
+    const { center, distance } = this.#bounds();
+    this.#moveTo(
+      new THREE.Vector3(
+        center.x + distance * 0.55,
+        center.y + distance * 0.35,
+        center.z + distance * 0.65,
+      ),
+      center,
+      smooth,
     );
-
-    if (smooth) {
-      this.flyTo(targetCamPos, center, 320);
-    } else {
-      const curView = this.el.getViewState();
-      this.el.setViewState({
-        ...curView,
-        camera: {
-          ...curView.camera,
-          position: [targetCamPos.x, targetCamPos.y, targetCamPos.z],
-          target: [center.x, center.y, center.z],
-        },
-      });
-    }
   }
 
-  setCameraPreset(preset: "iso" | "top" | "front" | "side", smooth = true): void {
-    const { center, distance } = this.getTargetBoundingInfo();
-    let newCamPos: THREE.Vector3;
-
-    if (preset === "iso") {
-      newCamPos = new THREE.Vector3(
-        center.x + distance * 0.55,
-        center.y + distance * 0.4,
-        center.z + distance * 0.65,
-      );
-    } else if (preset === "top") {
-      newCamPos = new THREE.Vector3(center.x, center.y + distance, center.z + 0.001);
-    } else if (preset === "front") {
-      newCamPos = new THREE.Vector3(center.x, center.y, center.z + distance);
-    } else if (preset === "side") {
-      newCamPos = new THREE.Vector3(center.x + distance, center.y, center.z);
-    } else {
-      newCamPos = new THREE.Vector3(
-        center.x + distance * 0.55,
-        center.y + distance * 0.4,
-        center.z + distance * 0.65,
-      );
-    }
-
-    if (smooth) {
-      this.flyTo(newCamPos, center, 320);
-    } else {
-      const curView = this.el.getViewState();
-      this.el.setViewState({
-        ...curView,
-        camera: {
-          ...curView.camera,
-          position: [newCamPos.x, newCamPos.y, newCamPos.z],
-          target: [center.x, center.y, center.z],
-        },
-      });
-    }
+  setCameraPreset(preset: CameraPreset, smooth = true): void {
+    const { center, distance } = this.#bounds();
+    const position =
+      preset === "top"
+        ? new THREE.Vector3(center.x, center.y + distance, center.z + 0.001)
+        : preset === "front"
+          ? new THREE.Vector3(center.x, center.y, center.z + distance)
+          : preset === "side"
+            ? new THREE.Vector3(center.x + distance, center.y, center.z)
+            : new THREE.Vector3(
+                center.x + distance * 0.55,
+                center.y + distance * 0.4,
+                center.z + distance * 0.65,
+              );
+    this.#moveTo(position, center, smooth);
   }
 
   resetCamera(smooth = true): void {
-    const { center, distance } = this.getTargetBoundingInfo();
-    const defaultPos = new THREE.Vector3(
-      center.x + distance * 0.55,
-      center.y + distance * 0.4,
-      center.z + distance * 0.65,
+    const { center, distance } = this.#bounds();
+    this.#moveTo(
+      new THREE.Vector3(
+        center.x + distance * 0.55,
+        center.y + distance * 0.4,
+        center.z + distance * 0.65,
+      ),
+      center,
+      smooth,
     );
-    if (smooth) {
-      this.flyTo(defaultPos, center, 320);
-    } else {
-      const curView = this.el.getViewState();
-      this.el.setViewState({
-        ...curView,
-        camera: {
-          ...curView.camera,
-          position: [defaultPos.x, defaultPos.y, defaultPos.z],
-          target: [center.x, center.y, center.z],
-        },
-      });
-    }
   }
 
-  getBoundingInfo(): { center: THREE.Vector3; size: THREE.Vector3; distance: number } {
-    return this.getTargetBoundingInfo();
+  getBoundingInfo(): BoundingInfo {
+    return this.#bounds();
   }
 
+  /** Returns the new active state. Commits the document once when stopping. */
   toggleTurntable(): boolean {
-    this.turntableActive = !this.turntableActive;
-
-    if (this.turntableActive) {
-      this.lastTurntableTime = performance.now();
-      const orbitSpeed = 0.45; // rad per second
-
-      const spin = (time: number) => {
-        if (!this.turntableActive) return;
-        const dt = (time - this.lastTurntableTime) / 1000;
-        this.lastTurntableTime = time;
-
-        const rt = this.getRuntime();
-        if (rt) {
-          const curView = this.el.getViewState();
-          const target = new THREE.Vector3(...curView.camera.target);
-          const camPos = new THREE.Vector3(...curView.camera.position);
-
-          const rel = camPos.sub(target);
-          const angle = orbitSpeed * dt;
-          const newX = rel.x * Math.cos(angle) - rel.z * Math.sin(angle);
-          const newZ = rel.x * Math.sin(angle) + rel.z * Math.cos(angle);
-
-          this.el.setViewState({
-            ...curView,
-            camera: {
-              ...curView.camera,
-              position: [target.x + newX, curView.camera.position[1], target.z + newZ],
-            },
-          });
-        }
-        this.animId = requestAnimationFrame(spin);
-      };
-      this.animId = requestAnimationFrame(spin);
-    } else {
-      if (this.animId) cancelAnimationFrame(this.animId);
-      this.animId = null;
+    if (this.#turntableActive) {
+      this.stopTurntable();
+      return false;
     }
 
-    return this.turntableActive;
+    const rt = this.#getRuntime();
+    if (!rt) return false;
+
+    this.stopFly();
+    this.#turntableActive = true;
+    this.#lastTurntableTime = performance.now();
+
+    const spin = (now: number): void => {
+      if (!this.#turntableActive) return;
+      const runtime = this.#getRuntime();
+      // Cap dt so a backgrounded tab does not teleport the camera.
+      const dt = Math.min((now - this.#lastTurntableTime) / 1000, 0.1);
+      this.#lastTurntableTime = now;
+
+      if (runtime) {
+        const view = runtime.getViewState();
+        const [tx, ty, tz] = view.camera.target;
+        const [px, , pz] = view.camera.position;
+        const dx = px - tx;
+        const dz = pz - tz;
+        const angle = TURNTABLE_SPEED * dt;
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        this.#preview({
+          ...view,
+          camera: {
+            ...view.camera,
+            position: [tx + dx * cos - dz * sin, view.camera.position[1], tz + dx * sin + dz * cos],
+          },
+        });
+      }
+      this.#turntableRaf = requestAnimationFrame(spin);
+    };
+
+    this.#turntableRaf = requestAnimationFrame(spin);
+    return true;
   }
 
   stopTurntable(): void {
-    this.turntableActive = false;
-    if (this.animId) cancelAnimationFrame(this.animId);
-    this.animId = null;
+    if (!this.#turntableActive) return;
+    this.#turntableActive = false;
+    if (this.#turntableRaf !== null) {
+      cancelAnimationFrame(this.#turntableRaf);
+      this.#turntableRaf = null;
+    }
+    this.#commit();
   }
 
-  cancel(): void {
-    this.cancelled = true;
-    if (this.animId) cancelAnimationFrame(this.animId);
-    this.animId = null;
-    this.cancelled = false;
+  stopFly(): void {
+    if (this.#flyRaf !== null) {
+      cancelAnimationFrame(this.#flyRaf);
+      this.#flyRaf = null;
+    }
   }
 
   destroy(): void {
-    this.stopTurntable();
-    this.cancel();
+    this.stopFly();
+    this.#turntableActive = false;
+    if (this.#turntableRaf !== null) {
+      cancelAnimationFrame(this.#turntableRaf);
+      this.#turntableRaf = null;
+    }
   }
 
-  private getTargetBoundingInfo(): {
-    center: THREE.Vector3;
-    size: THREE.Vector3;
-    distance: number;
-  } {
-    const rt = this.getRuntime();
-    const curDoc = this.el.getDocument();
+  #moveTo(position: THREE.Vector3, target: THREE.Vector3, smooth: boolean): void {
+    if (smooth) {
+      this.flyTo(position, target);
+      return;
+    }
+    const rt = this.#getRuntime();
+    if (!rt) return;
+    this.stopFly();
+    const view = rt.getViewState();
+    this.#preview({
+      ...view,
+      camera: {
+        ...view.camera,
+        position: [position.x, position.y, position.z],
+        target: [target.x, target.y, target.z],
+      },
+    });
+    this.#commit();
+  }
+
+  #preview(view: ViewState): void {
+    this.#getRuntime()?.applyViewState(view);
+  }
+
+  #commit(): void {
+    const rt = this.#getRuntime();
+    if (!rt) return;
+    this.#el.setViewState(rt.getViewState());
+  }
+
+  #bounds(): BoundingInfo {
+    const rt = this.#getRuntime();
+    const doc = this.#el.getDocument();
     const box = new THREE.Box3();
-    let found = false;
 
     if (rt) {
-      for (const objDto of curDoc.objects) {
-        const o3d = rt.getObjectById(objDto.id);
-        if (o3d) {
-          box.expandByObject(o3d);
-          found = true;
-        }
+      for (const dto of doc.objects) {
+        const obj = rt.getObjectById(dto.id);
+        if (obj) box.expandByObject(obj);
       }
     }
 
-    if (!found || box.isEmpty()) {
+    if (box.isEmpty()) {
       return {
         center: new THREE.Vector3(0, 1.35, 0),
         size: new THREE.Vector3(1.4, 2.7, 1.1),
@@ -240,8 +255,7 @@ export class CameraController {
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 0.5);
-    const fov = (rt?.camera.fov ?? 48) * (Math.PI / 180);
-
+    const fov = ((rt?.camera.fov ?? 48) * Math.PI) / 180;
     const distance = Math.max(Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 2.2, 5.8);
 
     return { center, size, distance };
