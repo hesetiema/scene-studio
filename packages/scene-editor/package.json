@@ -38,7 +38,8 @@
     "./style.css": "./dist/scene-editor.css"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.zh-CN.md"
   ],
   "sideEffects": [
     "**/*.css"

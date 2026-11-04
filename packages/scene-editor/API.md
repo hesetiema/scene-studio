@@ -2,6 +2,8 @@
 
 Version: `0.5.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
+Docs: [English README](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.md)
+
 ---
 
 ## Core entry — `@scenio/scene-editor`
@@ -22,7 +24,7 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `loadDocument` | `(input: unknown) => Promise<void>` | zod-validated; emits `error` and rethrows on failure. Serialized: overlapping calls run in call order |
 | `getDocument` | `() => SceneDocument` | Deep-clone snapshot |
 | `markSaved` | `(serverRevision: number) => void` | Host confirmed save; adopts revision, clears dirty |
-| `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward or throw structured conflict (D17) |
+| `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward or throw structured conflict |
 | `select` | `(ids: string[]) => void` | Set semantics |
 | `add` / `remove` | `(ids: string[]) => void` | Compose selection (shift/ctrl multi-select) |
 | `toggle` | `(id: string) => void` | Flip membership |
@@ -31,15 +33,15 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `executeCommand` | `(command: Command) => void` | **First-class entry** for host-defined undoable actions (compare PlayCanvas `history.add`) |
 | `undo` / `redo` | `() => boolean` | Whether an action ran |
 | `requestSave` | `() => void` | Emits `save-request` with `{ reason: "manual", document, revision }` |
-| `getViewState` | `() => ViewState` | Live viewport view (D22) |
-| `setViewState` | `(view: ViewState) => void` | Record + apply a view; marks dirty, never undoable (D22) |
+| `getViewState` | `() => ViewState` | Live viewport view |
+| `setViewState` | `(view: ViewState) => void` | Record + apply a view; marks dirty, never undoable |
 | `on(type, handler)` | returns `() => void` | Typed subscription; call the returned function to unsubscribe |
 | `use` / `unuse` | `(plugin) => void` / `(id: string) => void` | Same `install(context)` contract as the element; duplicate id throws |
 | `handleKeyDown` | `(event: KeyboardLike) => boolean` | Pure key mapping (Ctrl/Cmd+Z undo, +Shift/Z or Y redo, reserved G/R/S). Returns `true` when consumed. Focus-domain policy stays with the DOM owner |
 | getters | `canUndo` `canRedo` `dirty` `revision` `selectedIds` `runtime` | |
 | `destroy` | `() => void` | Idempotent: tears down plugins, flushes controller + runtime disposers, clears handlers. Later calls throw `lifecycle` |
 
-**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` (D22) · `error` `{code, message, cause?}`.
+**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `error` `{code, message, cause?}`.
 
 Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping function, for hosts that keep their own controller.
 
@@ -48,26 +50,26 @@ Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping f
 | Export | Type | Description |
 |---|---|---|
 | `SCENE_EDITOR_VERSION` | `string` | Package version string, mirrors `package.json` |
-| `SUPPORTED_ASSET_FORMATS` | `readonly ["glb", "gltf"]` | Formats the built-in loaders accept (D16) |
+| `SUPPORTED_ASSET_FORMATS` | `readonly ["glb", "gltf"]` | Formats the built-in loaders accept |
 
-### Document schema (zod, D7)
+### Document schema (zod)
 
 | Export | Kind | Description |
 |---|---|---|
 | `SceneDocumentSchema` | `z.ZodType<SceneDocument>` | Strict object: `schemaVersion` (literal 2), `sceneId`, `revision`, `objects[]`, `view` |
-| `ViewStateSchema` | `z.ZodType<ViewState>` | Strict `view` section (D22): `camera`, `lights`, `environment` |
+| `ViewStateSchema` | `z.ZodType<ViewState>` | Strict `view` section: `camera`, `lights`, `environment` |
 | `SceneObjectSchema` | `z.ZodType<SceneObjectDTO>` | Strict object: `id`, `type` (`"mesh" \| "group"`), `name`, optional `assetId` / `parentId` / `metadata`, required `position` / `rotation` / `scale` tuples |
 | `SceneDocument`, `ViewState` | type | Infer of document / view-state schema |
-| `Vec3` / `EulerXYZ` | type | `readonly [number, number, number]`; rotation is Euler XYZ in **radians** (D3) |
+| `Vec3` / `EulerXYZ` | type | `readonly [number, number, number]`; rotation is Euler XYZ in **radians** |
 
 | Function | Signature | Description |
 |---|---|---|
 | `parseSceneDocument` | `(input: unknown, opts?: ParseSceneDocumentOptions) => SceneDocument` | Migrations run first, then zod parse; throws `SceneEditorError("validation")` on invalid input |
-| `migrateSceneDocument` | `(doc: unknown) => MigrationResult` | Generic migration registry (D7): upgrades v1 → v2, reports `applied` |
-| `createDefaultViewState` | `() => ViewState` | Engine-default `view` (D22) |
+| `migrateSceneDocument` | `(doc: unknown) => MigrationResult` | Generic migration registry: upgrades v1 → v2, reports `applied` |
+| `createDefaultViewState` | `() => ViewState` | Engine-default `view` |
 | `validateHierarchy` | `(doc: SceneDocument) => void` | Parent references must resolve; throws `SceneEditorError("validation")` |
 
-### Errors (D6)
+### Errors
 
 | Export | Description |
 |---|---|
@@ -78,7 +80,7 @@ Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping f
 
 `AssetError` / `AssetErrorCode` (from assets below) are separate classes; both surface through the element `error` event with string codes.
 
-### Runtime contract (D5)
+### Runtime contract
 
 The only seam between Core/Element and any concrete runtime.
 
@@ -110,14 +112,14 @@ type Transform = {
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` |
 | `transform-commit` | `{ id, from: Transform, to: Transform }` — one completed gizmo drag |
 | `error` | `{ code: string, message: string, cause? }` |
-| `view-change` | `{ view: ViewState }` — a **user** interaction ended; never emitted while `applyViewState` runs (D22) |
+| `view-change` | `{ view: ViewState }` — a **user** interaction ended; never emitted while `applyViewState` runs |
 
 | Export | Description |
 |---|---|
 | `RuntimeContract`, `RuntimeEventBus`, `RuntimeEventMap`, `Transform` | types above |
 | `TypedEventBus` | Default `RuntimeEventBus` implementation |
 | `FakeRuntime` | In-memory `RuntimeContract` for unit tests (no GPU) |
-| `DisposerStack` | Ordered cleanup stack (D8); `add(fn)`, `flush()` |
+| `DisposerStack` | Ordered cleanup stack; `add(fn)`, `flush()` |
 | `SelectionManager` | Single/multi selection set; notifies on change |
 
 ### History & commands
@@ -139,16 +141,16 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `loadDocument` | `(input: unknown) => Promise<void>` | Parse + hand to runtime; clears history & selection. Serialized — call order decides the final document |
 | `getDocument` | `() => SceneDocument` | Deep clone snapshot; throws `lifecycle` if nothing loaded |
 | `applyTransform` | `(id, from, to) => void` | One undoable command updating runtime + stored doc |
-| `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward only if clean and `revision === baseRevision + 1`; otherwise throws structured `conflict` (D17 — never auto-merges) |
-| `executeCommand` / `undo` / `redo` / `markClean` / `markSaved` | as named | `markSaved(serverRevision)` adopts server revision and clears dirty (D18) |
+| `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward only if clean and `revision === baseRevision + 1`; otherwise throws structured `conflict` (never auto-merges) |
+| `executeCommand` / `undo` / `redo` / `markClean` / `markSaved` | as named | `markSaved(serverRevision)` adopts server revision and clears dirty |
 | `select` / `clearSelection` | `(ids) => void` / `() => void` | |
 | `canUndo` / `canRedo` / `dirty` / `selectedIds` / `revision` | getters | |
-| `getViewState` / `setViewState` / `getSceneId` | `(view?: ViewState)` / `() => ViewState` / `() => string \| null` | View state (D22); `setViewState` marks dirty without a command |
+| `getViewState` / `setViewState` / `getSceneId` | `(view?: ViewState)` / `() => ViewState` / `() => string \| null` | View state; `setViewState` marks dirty without a command |
 | `handleRuntimeViewChange` | `(view: ViewState) => void` | Record a user-driven view change; wired from `runtime` `view-change` |
 | `destroy` | `() => void` | Flushes disposers |
 | `disposers` / `history` / `selection` / `runtime` | readonly fields | |
 
-### Assets (D11/D12/D16)
+### Assets
 
 | Export | Description |
 |---|---|
@@ -161,7 +163,7 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `AssetResolver` | type: `{ resolve(assetId): Promise<string \| URL> }` — host owns URLs |
 | `MinimalGltfLoader` | Structural type: `loadAsync(url)`, optional `setDRACOLoader` / `setKTX2Loader` |
 
-### Plugins (design §5)
+### Plugins
 
 | Export | Description |
 |---|---|
@@ -179,9 +181,9 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 
 | Export | Description |
 |---|---|
-| `defineSceneEditor()` | Registers `<scene-editor>`; idempotent; call at runtime (SSR-safe, D20) |
+| `defineSceneEditor()` | Registers `<scene-editor>`; idempotent; call at runtime (SSR-safe) |
 | `SceneEditorElement` | The custom element class |
-| `CAPTURED_COMBOS` | `readonly ["ctrl+z", "ctrl+shift+z", "ctrl+y", "g", "r", "s"]` — keyboard capture list (D20) |
+| `CAPTURED_COMBOS` | `readonly ["ctrl+z", "ctrl+shift+z", "ctrl+y", "g", "r", "s"]` — keyboard capture list |
 
 ### `SceneEditorElement` properties & methods
 
@@ -189,20 +191,20 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 |---|---|---|
 | `runtimeFactory` | **static** | `(canvas, options?) => RuntimeContract`. Defaults to `ThreeRuntime` + lazy GLTF. Override before connect to inject assets / WebGPU / test fakes |
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
-| `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the必发面 |
+| `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the reliable failure channel |
 | `controlsReady` | promise | Resolves when gizmo mounted; non-three runtimes resolve immediately |
 | `loadDocument(doc)` | method | Validated load; throws/rejects with typed errors. Overlapping calls are serialized (call order wins) |
 | `getDocument()` | method | Detached deep-clone snapshot — never the save trigger |
-| `markSaved(revision)` | method | Host confirmed save (D18) |
+| `markSaved(revision)` | method | Host confirmed save |
 | `selectObject(id)` | method | Single-id convenience |
 | `select(ids)` | method | Set the selection to exactly `ids` (multi-select) |
 | `addToSelection(ids)` / `removeFromSelection(ids)` / `toggleSelection(id)` | method | Compose the current selection (parity with the facade's `add` / `remove` / `toggle`) |
 | `applyTransform(id, from, to)` | method | One undoable command |
-| `applyRemote(input, { baseRevision })` | method | Inbound remote update: fast-forward or throw structured `conflict` (D17) |
+| `applyRemote(input, { baseRevision })` | method | Inbound remote update: fast-forward or throw structured `conflict` |
 | `executeCommand(cmd)` | method | Escape hatch for custom `Command`s |
 | `undo()` / `redo()` | method | Also bound to keyboard (see `CAPTURED_COMBOS`) |
 | `requestSave()` | method | Dispatches `save-request` with current document + revision |
-| `getViewState()` / `setViewState(view)` | method | View state (D22): live read / record + apply (dirty, not undoable) |
+| `getViewState()` / `setViewState(view)` | method | View state: live read / record + apply (dirty, not undoable) |
 | `use(plugin)` / `unuse(id)` | method | Plugin install/uninstall; pre-connect `use` is queued; duplicate id throws |
 | `revision` / `dirty` / `selectedIds` | getters | |
 | `connectedCallback` / `disconnectedCallback` | lifecycle | Teardown destroys runtime + all plugins |
@@ -216,14 +218,14 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command/undo/redo |
 | `document-dirty` | `{ dirty: boolean }` | Dirty crossed the boundary |
 | `save-request` | `{ reason: "manual", document, revision }` | Host should persist |
-| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed (D22) |
+| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed |
 | `error` | `{ code, message, cause? }` | Any SDK failure, including runtime/asset errors (`AssetErrorCode` values are forwarded verbatim) |
 
 ---
 
 ## Three entry — `@scenio/scene-editor/three`
 
-Advanced integration only. All three.js imports live behind this layer (D14) — Core/Element never import three.
+Advanced integration only. All three.js imports live behind this layer — Core/Element never import three.
 
 ### ThreeRuntime
 
@@ -244,7 +246,7 @@ interface ThreeRuntimeOptions {
 }
 ```
 
-Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted (D3).
+Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted.
 
 **Gizmo mode.** `TransformMode = "translate" | "rotate" | "scale"`. `setTransformMode()` is safe before the TransformControls addon finishes loading — the mode is remembered and applied on mount, so a host toolbar can bind it during boot:
 

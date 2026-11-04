@@ -102,9 +102,19 @@ if (/License\s*\n\s*\nTBD/i.test(packageReadme)) {
   fail("packages/scene-editor/README.md still has a TBD license section");
 }
 
+const packageReadmeZh = read("packages/scene-editor/README.zh-CN.md");
+if (!packageReadmeZh.includes(`仓库内为 \`${version}\``)) {
+  fail(`packages/scene-editor/README.zh-CN.md must declare 仓库内为 \`${version}\``);
+}
+
 const rootReadme = read("README.md");
 if (!rootReadme.includes(`This repo tracks \`${version}\``)) {
   fail(`README.md must declare This repo tracks \`${version}\``);
+}
+
+const rootReadmeZh = read("README.zh-CN.md");
+if (!rootReadmeZh.includes(`仓库当前版本为 \`${version}\``)) {
+  fail(`README.zh-CN.md must declare 仓库当前版本为 \`${version}\``);
 }
 if (!/^## License$/m.test(rootReadme)) {
   fail("README.md is missing a ## License section");

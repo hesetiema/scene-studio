@@ -8,6 +8,10 @@ Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into
 
 Repository: <https://github.com/hesetiema/scene-studio> · Issues: <https://github.com/hesetiema/scene-studio/issues>
 
+**Docs:** English (this page) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [API reference](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.zh-CN.md)
+
+**Editing scope:** transforms and view state. Object creation/deletion/reparenting, material persistence, morph targets and HDR environments are not in the document API yet.
+
 ## Install
 
 ```bash
@@ -137,7 +141,7 @@ Internally the runtime is a thin orchestrator over the rigs exported from this e
 
 ## Document model
 
-A scene is plain JSON validated with zod (`SceneDocumentSchema`). Nothing GPU-specific is persisted — camera, lights and environment are plain fields (`view`, D22), GPU resources are not.
+A scene is plain JSON validated with zod (`SceneDocumentSchema`). Nothing GPU-specific is persisted — camera, lights and environment are plain fields (`view`), GPU resources are not.
 
 ```ts
 type SceneDocument = {
@@ -166,7 +170,7 @@ type SceneObjectDTO = {
   assetId?: string; // loads via AssetCache / AssetResolver (glTF)
   parentId?: string;
   position: [number, number, number];
-  rotation: [number, number, number]; // Euler XYZ, radians (D3)
+  rotation: [number, number, number]; // Euler XYZ, radians
   scale: [number, number, number];
   metadata?: Record<string, unknown>;
 };
@@ -174,7 +178,7 @@ type SceneObjectDTO = {
 
 Parse and validate yourself with `parseSceneDocument(input)` / `SceneDocumentSchema` when you need the same errors on the server.
 
-**View state (D22).** v1 documents load unchanged — a generic migration registry fills the engine defaults for `view`. The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
+**View state.** v1 documents load unchanged — a generic migration registry fills the engine defaults for `view`. The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
 
 **Image-based lighting.** `environment.iblIntensity` drives a PMREM-prefiltered built-in studio environment (`RoomEnvironment` — no network assets, no decoder). `0` turns it off and leaves the analytic ambient/directional lights as the only illumination; the key is optional and defaults to `1`, so v2 documents written before IBL still load and simply pick up the default. WebGPU renderers and GPU-less test runtimes skip IBL silently (`scene.environment` stays `null`). Metals and glass depend on it: with analytic lights alone they render nearly black.
 
@@ -191,15 +195,15 @@ el.selectObject("box-1");
 el.select(["box-1", "box-2"]);   // multi-select set
 el.addToSelection(["gem-1"]);    // compose: add / remove / toggle
 el.toggleSelection("box-2");
-el.applyRemote(serverDoc, { baseRevision: el.revision }); // inbound update (D17)
+el.applyRemote(serverDoc, { baseRevision: el.revision }); // inbound update
 el.applyTransform(id, from, to); // one undoable command
 el.undo(); el.redo();
 el.requestSave();                // dispatches `save-request` with the document
 el.markSaved(serverRevision);    // host confirmed save → adopts revision, clears dirty
 el.use(plugin); el.unuse(id);   // plugins (see below)
 el.dirty; el.revision; el.selectedIds;
-const live = el.getViewState();     // live viewport view (D22)
-el.setViewState(view);           // record + apply a view; dirty, never undoable (D22)
+const live = el.getViewState();     // live viewport view
+el.setViewState(view);           // record + apply a view; dirty, never undoable
 ```
 
 ### Events (all `CustomEvent`s)
@@ -211,14 +215,14 @@ el.setViewState(view);           // record + apply a view; dirty, never undoable
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command executed / undo / redo |
 | `document-dirty` | `{ dirty: boolean }` | Dirty flag crossed false↔true |
 | `save-request` | `{ reason, document, revision }` | Host should persist (manual `requestSave()` today) |
-| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed (D22) |
+| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed |
 | `error` | `{ code, message, cause? }` | Any SDK failure — the reliable failure channel |
 
 Keyboard shortcuts captured while focus is inside the element: `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, and `G`/`R`/`S` (reserved tool modes, currently swallowed) — exported as `CAPTURED_COMBOS`.
 
 ### Save & conflict flow
 
-The SDK never talks to your backend. Persistence is host-driven (D17/D18):
+The SDK never talks to your backend. Persistence is host-driven:
 
 1. User edits → `dirty: true` → your UI enables Save.
 2. You call `el.requestSave()` (or react to `save-request`) → PUT `el.getDocument()` to your API.
@@ -316,7 +320,7 @@ WebGL2 remains the default and the CI-tested path; the seam is the only supporte
 
 | Axis | Supported | How verified |
 |---|---|---|
-| `three` | `^0.186.0` (peer) | CI matrix pins `0.186.0` and `latest` within the range (D14) |
+| `three` | `^0.186.0` (peer) | CI matrix pins `0.186.0` and `latest` within the range |
 | Renderer | WebGL2 (default), WebGPU via `rendererFactory` | WebGL2 is CI-tested; WebGPU is opt-in, host-owned |
 | Formats | `.glb`, `.gltf` | Unit tests + e2e; Draco/KTX2 optional inject |
 | Browsers | Any browser with WebGL2 + ES modules | Playwright e2e (Chromium in CI; visual baselines under SwiftShader); other engines best-effort |
@@ -325,7 +329,7 @@ WebGL2 remains the default and the CI-tested path; the seam is the only supporte
 
 When `three@0.187` lands, the CI `latest` leg goes red on purpose — that is the early-warning system for the peer range, not a broken build.
 
-## Adopt vs. build (D21)
+## Adopt vs. build
 
 What this SDK deliberately reuses vs. owns — so nobody rebuilds the same wheel:
 
@@ -337,8 +341,8 @@ What this SDK deliberately reuses vs. owns — so nobody rebuilds the same wheel
 | glTF load/export | **Adopt** three `GLTFLoader` | Exporter not wired in v0.1 |
 | Schema validation | **Adopt** zod | `SceneDocumentSchema` |
 | SceneDocument, command history, element contract | **Build** | The product core |
-| Caching, lifecycle, conflict rules | **Build** | Refcount cache, disposers, host-driven D17 |
-| three addon integration | **Build** (adapter layer) | All three imports live under `three/` (D14) |
+| Caching, lifecycle, conflict rules | **Build** | Refcount cache, disposers, host-driven save/conflict flow |
+| three addon integration | **Build** (adapter layer) | All three imports live under `three/` |
 
 ## Development (monorepo)
 
@@ -352,7 +356,7 @@ pnpm test:release       # package/README/LICENSE/repository consistency
 pnpm build              # dist for every package
 pnpm test:e2e           # Playwright suite (critical + visual + perf)
 pnpm test:e2e:visual    # visual regression only (SwiftShader, canvas-only)
-pnpm test:perf          # frame-time + first-interactive gate (D10)
+pnpm test:perf          # frame-time + first-interactive gate
 pnpm test:pack          # npm pack → fresh consumer install smoke
 ```
 

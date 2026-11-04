@@ -20,7 +20,7 @@ pnpm --filter @scenio/playground typecheck
 | `src/viewer/history-coordinator.ts` | Unified undo/redo across viewer settings and document commands (most-recent-first), plus the capture-phase Ctrl+Z/Ctrl+Y binding |
 | `src/viewer/viewer-controller.ts` | State → engine: display mode, skeleton overlay, backdrop/grid, lighting preset + intensity/colour tuning, camera-follow light, exposure/tone mapping, turntable, animation transport |
 | `src/viewer/display-modes.ts` | Studio / X-Ray / wireframe / normal / clay shading; owns and disposes its material overrides |
-| `src/viewer/presets.ts` | Lighting, backdrop and grid presets — persisted through `view` (D22), applied idempotently |
+| `src/viewer/presets.ts` | Lighting, backdrop and grid presets — persisted through `view`, applied idempotently |
 | `src/camera/camera-controller.ts` | Frame / preset / turntable. Preview frames go through `runtime.applyViewState()`; the document is written once per gesture |
 | `src/ui/studio-shell.ts` | Composes panels, hotkeys, explode preview, drag & drop; `onDocumentLoaded()` re-sync hook |
 | `src/ui/panel.ts` | `BasePanel`: listener collection + single destroy path for every HUD panel |
@@ -31,13 +31,13 @@ pnpm --filter @scenio/playground typecheck
 | `src/ui/material-controller.ts` | Selected-part material override (colour / opacity / metalness / roughness); snapshots originals for restore, never touches the document |
 | `src/ui/scene-export.ts` | GLB / OBJ export from document transforms + PNG snapshot |
 | `src/ui/hud-controller.ts` | Telemetry panel, selection inspector, dirty state, toasts, FPS meter |
-| `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element, D20) |
+| `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element) |
 | `src/styles/{base,controls,hud}.css` | HUD styling extracted from the 680-line inline `<style>` block |
 | `src/demos/*.ts` | Focused SDK demos — one API surface per page (see below) |
 | `src/demos/shared.ts` | Demo plumbing: DOM lookups, log panel, fixture document, transform helper |
 | `minimal.html` + `src/minimal.ts` | Smallest end-to-end integration (element + load + save loop) |
 
-Additional entries: `perf.html` (D10 bench) and `demos/` (SDK coverage pages).
+Additional entries: `perf.html` (performance bench) and `demos/` (SDK coverage pages).
 
 ## SDK coverage demos
 
