@@ -15,9 +15,29 @@ export default defineConfig({
     {
       name: "chromium",
       // perf measures exclusive GPU/CPU frame time — contention from parallel
-      // workers inflates p95 ~2x, so it runs alone in its own project below
-      testIgnore: "perf.spec.ts",
+      // workers inflates p95 ~2x, so it runs alone in its own project below.
+      // Visual baselines live in the dedicated `visual` project.
+      testIgnore: ["perf.spec.ts", "visual/**"],
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      // Baselines must be reproducible on any machine and in CI: force software
+      // rasterization (SwiftShader) and capture the canvas only, so host GPU,
+      // driver and font differences cannot leak into the diff.
+      name: "visual",
+      testMatch: "visual/**/*.spec.ts",
+      use: {
+        ...devices["Desktop Chrome"],
+        deviceScaleFactor: 1,
+        launchOptions: {
+          args: [
+            "--use-gl=angle",
+            "--use-angle=swiftshader",
+            "--enable-unsafe-swiftshader",
+            "--force-color-profile=srgb",
+          ],
+        },
+      },
     },
     {
       name: "perf",

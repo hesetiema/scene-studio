@@ -1,4 +1,4 @@
-﻿import type { SceneDocument } from "@scenio/scene-editor";
+﻿import { SCENE_EDITOR_VERSION, type SceneDocument } from "@scenio/scene-editor";
 import { SceneEditorElement, defineSceneEditor } from "@scenio/scene-editor/element";
 import { ThreeRuntime, createSelectionHighlightPlugin } from "@scenio/scene-editor/three";
 import { ModelLoader } from "./assets/model-loader";
@@ -45,6 +45,10 @@ SceneEditorElement.runtimeFactory = (canvas) => {
 };
 
 defineSceneEditor();
+
+// Keep the visible badge tied to the package version instead of a hardcoded HTML string.
+const versionBadge = document.querySelector("#version-badge");
+if (versionBadge) versionBadge.textContent = `v${SCENE_EDITOR_VERSION}`;
 
 const el = document.querySelector("scene-editor") as SceneEditorElement;
 const getRuntime = (): ThreeRuntime | null =>

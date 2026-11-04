@@ -2,11 +2,20 @@
   "name": "scene-studio",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hesetiema/scene-studio.git"
+  },
+  "homepage": "https://github.com/hesetiema/scene-studio#readme",
+  "bugs": {
+    "url": "https://github.com/hesetiema/scene-studio/issues"
+  },
   "packageManager": "pnpm@11.1.1",
   "scripts": {
     "test": "pnpm -r test",
+    "test:release": "node scripts/check-release-consistency.mjs",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
-    "test:e2e:visual": "playwright test --config e2e/playwright.config.ts visual",
+    "test:e2e:visual": "playwright test --config e2e/playwright.config.ts --project=visual",
     "test:perf": "playwright test --config e2e/playwright.config.ts --project=perf --no-deps",
     "test:pack": "node scripts/pack-smoke.mjs",
     "typecheck": "pnpm -r typecheck",

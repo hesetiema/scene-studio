@@ -2,9 +2,11 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.5.0` — API surface is locked for the v0.1 line but may still adjust before `1.0.0`. `three` is a peer dependency you install yourself.
+**Status:** `0.5.0` alpha in this repo. The latest version on npm is `0.3.0`; `0.4.0`/`0.5.0` are unreleased. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
+
+Repository: <https://github.com/hesetiema/scene-studio> · Issues: <https://github.com/hesetiema/scene-studio/issues>
 
 ## Install
 
@@ -15,6 +17,8 @@ pnpm add @scenio/scene-editor three
 ```
 
 Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
+
+> This README tracks the repo (`0.5.0`). `npm install` currently resolves `0.3.0`; to try unreleased features, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
 
 ## Quick start
 
@@ -315,7 +319,7 @@ WebGL2 remains the default and the CI-tested path; the seam is the only supporte
 | `three` | `^0.186.0` (peer) | CI matrix pins `0.186.0` and `latest` within the range (D14) |
 | Renderer | WebGL2 (default), WebGPU via `rendererFactory` | WebGL2 is CI-tested; WebGPU is opt-in, host-owned |
 | Formats | `.glb`, `.gltf` | Unit tests + e2e; Draco/KTX2 optional inject |
-| Browsers | Any browser with WebGL2 + ES modules | Playwright e2e (Chromium in CI); other engines best-effort |
+| Browsers | Any browser with WebGL2 + ES modules | Playwright e2e (Chromium in CI; visual baselines under SwiftShader); other engines best-effort |
 | Module | ESM only (`"type": "module"`) | `npm pack` consumption test (`pnpm test:pack`) |
 | SSR | Element is lazy — `defineSceneEditor()` at runtime, never at import | Core entry has no DOM side effects |
 
@@ -344,8 +348,10 @@ This package lives in a pnpm workspace. From the repo root:
 pnpm install
 pnpm typecheck          # all packages
 pnpm test               # vitest unit tests
+pnpm test:release       # package/README/LICENSE/repository consistency
 pnpm build              # dist for every package
-pnpm test:e2e           # Playwright critical flows (dev server auto-managed)
+pnpm test:e2e           # Playwright suite (critical + visual + perf)
+pnpm test:e2e:visual    # visual regression only (SwiftShader, canvas-only)
 pnpm test:perf          # frame-time + first-interactive gate (D10)
 pnpm test:pack          # npm pack → fresh consumer install smoke
 ```
@@ -354,4 +360,4 @@ Playground app: `apps/playground` (full editor + visual baselines).
 
 ## License
 
-TBD (set before first public publish).
+MIT — see [LICENSE](LICENSE).

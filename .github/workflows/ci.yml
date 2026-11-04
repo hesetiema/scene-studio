@@ -54,10 +54,10 @@ jobs:
       - name: Build
         run: pnpm build
 
-  # Critical user flows + D10 perf gate. Visual regression is deliberately NOT
-  # run here: baselines are local-GPU captures and SwiftShader pixels drift —
-  # visual stays a local gate (pnpm test:e2e:visual). WebGPU eval is opt-in
-  # (RUN_WEBGPU_EVAL) and self-skips without it.
+  # Critical user flows + D10 perf gate. Visual regression runs in its own job
+  # below (SwiftShader, canvas-only baselines) so GPU contention cannot skew
+  # frame-time measurements. WebGPU eval is opt-in (RUN_WEBGPU_EVAL) and
+  # self-skips without it.
   e2e:
     name: e2e (critical-flows + perf)
     runs-on: ubuntu-latest
@@ -92,6 +92,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # Visual gate: baselines are canvas-only captures rendered with SwiftShader,
+  # so ubuntu-latest can reproduce them without a GPU runner. Refresh them with
+  # `pnpm test:e2e:visual --update-snapshots` and commit the PNGs.
+  visual:
+    name: visual regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Visual regression (SwiftShader, canvas only)
+        run: pnpm test:e2e:visual
+      - name: Upload visual diff
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-diff
+          path: |
+            e2e/visual/__screenshots__
+            e2e/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
   # D9 consumption test: pack the tarball, install it into a throwaway
   # consumer, verify exports/types/CSS/SSR-import against the peer floor.
   pack-smoke:
@@ -107,5 +138,7 @@ jobs:
           cache: pnpm
       - name: Install (lockfile)
         run: pnpm install --frozen-lockfile
+      - name: Release metadata
+        run: pnpm test:release
       - name: Pack + consume
         run: pnpm test:pack

@@ -1,8 +1,27 @@
 {
   "name": "@scenio/scene-editor",
   "version": "0.5.0",
+  "description": "Embeddable 3D scene editor SDK: document model, selection, transform gizmos, undo/redo, and host-driven save/conflict flows.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hesetiema/scene-studio.git",
+    "directory": "packages/scene-editor"
+  },
+  "homepage": "https://github.com/hesetiema/scene-studio/tree/main/packages/scene-editor#readme",
+  "bugs": {
+    "url": "https://github.com/hesetiema/scene-studio/issues"
+  },
+  "keywords": [
+    "3d",
+    "editor",
+    "gltf",
+    "webgl",
+    "three.js",
+    "web-components",
+    "scene-editor"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

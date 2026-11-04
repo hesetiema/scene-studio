@@ -32,6 +32,8 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} != packages/scene-editor version ${PKG}"
             exit 1
           fi
+      - name: Release metadata
+        run: pnpm test:release
       - name: Typecheck
         run: pnpm typecheck
       - name: Unit tests
