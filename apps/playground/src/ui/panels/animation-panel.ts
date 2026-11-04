@@ -69,7 +69,7 @@ export class AnimationPanel extends BasePanel {
       if (clips.length === 0) {
         const option = document.createElement("option");
         option.value = "";
-        option.textContent = "No animations";
+        option.textContent = "无动画";
         select.append(option);
         select.disabled = true;
       } else {
@@ -129,7 +129,7 @@ export class AnimationPanel extends BasePanel {
     }
 
     this.syncActive("#anim-play", state.animation.playing);
-    this.syncText("#anim-play", state.animation.playing ? "Pause" : "Play");
+    this.syncText("#anim-play", state.animation.playing ? "暂停" : "播放");
 
     const speed = document.querySelector<HTMLInputElement>("#anim-speed");
     if (speed && document.activeElement !== speed) speed.value = String(state.animation.speed);

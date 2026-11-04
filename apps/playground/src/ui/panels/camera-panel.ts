@@ -10,6 +10,13 @@ const PRESET_BUTTONS: Record<CameraPreset, string> = {
   side: "#cam-side",
 };
 
+const PRESET_LABELS: Record<CameraPreset, string> = {
+  iso: "等轴",
+  top: "顶视",
+  front: "前视",
+  side: "侧视",
+};
+
 export interface CameraPanelOptions {
   camera: CameraController;
   hud: HUDController;
@@ -29,12 +36,12 @@ export class CameraPanel extends BasePanel {
   mount(): void {
     this.click("#btn-frame", () => {
       this.#options.camera.frameScene(true);
-      this.#options.hud.showToast("Frame: scene centered");
+      this.#options.hud.showToast("已聚焦模型");
     });
 
     this.click("#btn-reset-cam", () => {
       this.#options.camera.resetCamera(true);
-      this.#options.hud.showToast("Camera Reset [H]");
+      this.#options.hud.showToast("相机已复位 [H]");
     });
 
     // State-driven: ViewerController owns the actual turntable toggle.
@@ -56,12 +63,12 @@ export class CameraPanel extends BasePanel {
     this.#options.camera.setCameraPreset(preset, true);
 
     const { distance } = this.#options.camera.getBoundingInfo();
-    this.syncText("#hud-cam-stat", `CAM: ${preset.toUpperCase()} · DIST: ${distance.toFixed(1)}m`);
+    this.syncText("#hud-cam-stat", `相机 ${PRESET_LABELS[preset]} · 距离 ${distance.toFixed(1)}`);
 
     for (const [id, selector] of Object.entries(PRESET_BUTTONS)) {
       this.syncActive(selector, id === preset);
     }
-    this.#options.hud.showToast(`Camera: ${preset.toUpperCase()}`);
+    this.#options.hud.showToast(`视角：${PRESET_LABELS[preset]}`);
   }
 
   syncTurntable(active: boolean): void {

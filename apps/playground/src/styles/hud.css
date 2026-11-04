@@ -1,245 +1,506 @@
-/* Chrome-specific layout: top bar, tool strip, telemetry card, footer, overlays. */
+/* 布局层：顶部栏、右侧控制面板（分组 / 行 / 值）、拖拽浮层。
+   视觉参考 three.js glTF Viewer：扁平深灰、细分割线、紧凑小字号。 */
 
-/* Top bar */
-.top-bar {
+/* ---------------------------------------------------------------- 顶部栏 */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 12px;
+  background: var(--header-bg);
+  border-bottom: 1px solid #000;
+}
+
+.app-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.app-name {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: #e6e6e6;
+}
+
+.app-version {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: #7d7d7d;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+body[data-conflict="true"] .app-header {
+  border-bottom-color: #8a4b3a;
+}
+
+/* ---------------------------------------------------------------- 控制面板 */
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel-bg);
+  border-left: 1px solid #000;
+}
+
+/* 面板标题栏：标题 + 收起按钮（对应参考里的 Close Controls） */
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 8px 0 12px;
+  background: #202020;
+  border-bottom: 1px solid #2c2c2c;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 500;
+  color: #dedede;
+}
+
+.panel-hint {
+  margin-left: auto;
+  color: #6f6f6f;
+  font-size: 10.5px;
+}
+
+.icon-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #b0b0b0;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: #2e2e2e;
+  border-color: #3a3a3a;
+  color: var(--text-strong);
+}
+
+/* 面板级工具（撤销/重做、快捷键）用同一套图标按钮，弱化存在感 */
+#btn-undo,
+#btn-redo {
+  font-size: 16px;
+}
+
+#btn-shortcuts {
+  font-size: 13px;
+}
+
+/*
+ * 快捷键提示：面板标题栏里的键盘图标，hover / 聚焦时浮出；
+ * 替代原先塞在「文件与导出」底部的一长串文字。
+ */
+
+.tip-wrap {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+}
+
+.tip {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: -4px;
+  z-index: 30;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  width: max-content;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid #343434;
+  border-radius: 4px;
+  background: #1b1b1b;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
+  color: #b8b8b8;
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: default;
+}
+
+.tip-wrap:hover .tip,
+.tip-wrap:focus-within .tip {
+  display: flex;
+}
+
+.tip-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 14px;
-  height: 50px;
+  white-space: nowrap;
 }
 
-.brand-block {
-  display: flex;
+.tip .keys {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 3px;
+  color: #8a8a8a;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #38e2ff;
-  box-shadow: 0 0 10px #38e2ff;
-  animation: pulse-dot 2.5s infinite;
-}
-
-@keyframes pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.45;
-    transform: scale(0.85);
-  }
-}
-
-.brand-title {
-  font-weight: 700;
-  font-size: 13px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #fff;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.brand-badge {
-  font-size: 10px;
-  background: rgba(56, 226, 255, 0.12);
-  color: #38e2ff;
-  border: 1px solid rgba(56, 226, 255, 0.35);
-  padding: 2px 7px;
-  border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-/* Left floating tool strip */
-.left-toolbar {
-  width: 190px;
-  padding: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  font-family: ui-monospace, monospace;
-  max-height: calc(100vh - 180px);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(56, 226, 255, 0.35) transparent;
-}
-
-.toolbar-section-title {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: #727b8c;
-  margin-bottom: 2px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-/* Right floating telemetry HUD */
-.telemetry-card {
-  padding: 12px 14px;
-  width: 290px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
+.tip-note {
+  margin-top: 2px;
+  padding-top: 6px;
+  border-top: 1px solid #2c2c2c;
+  color: #7f8f99;
+  font-size: 10.5px;
   line-height: 1.5;
 }
 
-.telemetry-header {
-  font-size: 11px;
-  color: #727b8c;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
-  margin-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding-bottom: 6px;
+kbd {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  border: 1px solid #3a3a3a;
+  border-radius: 3px;
+  background: #262626;
+  color: #cfe6f3;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 15px;
+  text-align: center;
+}
+
+.panel-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: 8px;
+  /* 预留滚动条宽度，避免右侧数值/胶囊被滚动条压住 */
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #3f3f3f transparent;
+}
+
+.panel-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.panel-scroll::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border-radius: 4px;
+}
+
+/* 分组（原生 <details>，无需 JS） */
+
+.group {
+  border-bottom: 1px solid #262626;
+}
+
+.group-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  background: #141414;
+  font-size: 12px;
+  color: #cfcfcf;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
 }
 
-.telemetry-row {
+.group-title::-webkit-details-marker,
+.group-title::marker {
+  display: none;
+  content: "";
+}
+
+.group-title::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-left: 4px solid #7a7a7a;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  transition: transform 0.12s ease;
+}
+
+.group[open] > .group-title::before {
+  transform: rotate(90deg);
+}
+
+.group-title:hover {
+  background: #232323;
+  color: var(--text-strong);
+}
+
+.group-body {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 4px;
+  flex-direction: column;
+  gap: 2px;
+  padding: 2px 12px 10px;
 }
 
-.telemetry-label {
-  color: #8c93a4;
-}
+/* 行：左标签 / 右数值 */
 
-.telemetry-val {
-  color: #38e2ff;
-  font-weight: 600;
-}
-
-.telemetry-divider {
-  margin-top: 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 8px;
-}
-
-/* Bottom status bar */
-.bottom-bar {
+.row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  height: 38px;
-  padding: 0 14px;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 22px;
+  font-size: 12px;
 }
 
-.status-item {
-  font-family: ui-monospace, monospace;
+label.row {
+  cursor: pointer;
+}
+
+.row-label {
+  color: #a3a3a3;
+  white-space: nowrap;
+}
+
+.row-value {
+  color: #dcdcdc;
+  font-family: var(--font-mono);
   font-size: 11px;
-  color: #8c93a4;
+  text-align: right;
+  max-width: 158px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-value.mono {
+  letter-spacing: 0;
+}
+
+/* 数值胶囊：参考 glTF Viewer 里滑块右侧的数值框 */
+.row-value.pill {
+  padding: 0 5px;
+  border: 1px solid #363636;
+  border-radius: 2px;
+  background: #262626;
+  color: #9fd0ea;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-slider {
+  margin-top: 4px;
+}
+
+/* 颜色/选项胶囊组：色块 + 名称，右侧显示当前色值 */
+.chips {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 2px;
+}
+
+.chip {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #333;
+  border-radius: 3px;
+  background: #202020;
+  color: #a3a3a3;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
 }
 
-.toast {
-  background: rgba(12, 15, 20, 0.95);
-  border: 1px solid #38e2ff;
-  color: #38e2ff;
-  padding: 6px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  opacity: 0;
-  transition: opacity 0.25s ease;
-  pointer-events: none;
-  font-family: ui-monospace, monospace;
-  box-shadow: 0 0 16px rgba(56, 226, 255, 0.3);
+.chip:hover {
+  background: #2e2e2e;
+  color: var(--text-strong);
 }
 
-.toast.visible {
-  opacity: 1;
+.chip.active {
+  border-color: #4a6d80;
+  background: #26333a;
+  color: #a9d8ef;
 }
 
-/* Drag & drop sci-fi overlay */
+/* 自定义取色：输入框本身就是色块 */
+.chip-color {
+  cursor: pointer;
+}
+
+.color-input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 10px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 2px;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 1px;
+}
+
+.color-input::-moz-color-swatch {
+  border: none;
+  border-radius: 1px;
+}
+
+/* 组内「更多设置」：低频参数默认收起，点开才展示 */
+.more {
+  margin-top: 6px;
+  border-top: 1px solid #262626;
+}
+
+.more-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0 2px;
+  color: #8a8a8a;
+  font-size: 11px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.more-title::-webkit-details-marker,
+.more-title::marker {
+  display: none;
+  content: "";
+}
+
+.more-title::before {
+  content: "＋";
+  font-size: 10px;
+  color: #6f6f6f;
+}
+
+.more[open] > .more-title::before {
+  content: "−";
+}
+
+.more-title:hover {
+  color: var(--text-strong);
+}
+
+.more-body {
+  padding-top: 2px;
+}
+
+.hint {
+  margin: 8px 0 0;
+  color: #8a9aa4;
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+/* 分组开头的提示行（如「已选中 1 个网格」） */
+.hint-inline {
+  margin: 0 0 6px;
+}
+
+.hint.muted {
+  color: #6f6f6f;
+}
+
+/* 行内控件组合：色板 + 色值 */
+.row-inline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- 拖拽浮层 */
+
 .drop-overlay {
   position: absolute;
-  inset: 20px;
-  border: 2px dashed rgba(56, 226, 255, 0.75);
-  border-radius: 12px;
-  background: rgba(10, 14, 20, 0.92);
-  backdrop-filter: blur(14px);
+  inset: 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 14px;
-  z-index: 100;
+  gap: 8px;
+  border: 2px dashed #3f6172;
+  border-radius: 6px;
+  background: rgba(10, 10, 10, 0.86);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity 0.15s ease;
+  z-index: 20;
 }
 
 .drop-overlay.visible {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .drop-title {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #38e2ff;
-  text-shadow: 0 0 16px rgba(56, 226, 255, 0.5);
+  font-size: 15px;
+  color: #e6e6e6;
 }
 
 .drop-subtitle {
-  font-size: 13px;
-  color: #8c93a4;
-  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  color: #8a8a8a;
+  font-family: var(--font-mono);
 }
 
-/* Animation transport */
-.anim-select {
-  width: 100%;
-  margin-bottom: 4px;
-}
+/* ---------------------------------------------------------------- 窄屏 */
 
-.anim-progress {
-  display: flex;
-  justify-content: space-between;
-  font-size: 10px;
-  color: #8c93a4;
-  margin-top: 2px;
-}
+@media (max-width: 860px) {
+  .app-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 
-/* Small layout utilities used by the HUD markup (no inline styles) */
-.section-gap {
-  margin-top: 6px;
-}
+  .panel {
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    width: var(--panel-w);
+    z-index: 20;
+    box-shadow: -8px 0 24px rgba(0, 0, 0, 0.55);
+  }
 
-.tool-btn-full {
-  width: 100%;
+  body.panel-collapsed .panel {
+    display: none;
+  }
 }
-
-.btn-compact {
-  padding: 3px 8px;
-  font-size: 11px;
-}
-
-.telemetry-inline {
-  color: #dce1eb;
-}
-
-.shortcut-note {
-  color: #727b8c;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.status-sep {
-  color: rgba(255, 255, 255, 0.2);
-}
-

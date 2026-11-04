@@ -1,17 +1,22 @@
 import type { SceneEditorElement } from "@scenio/scene-editor/element";
 import type { ThreeRuntime } from "@scenio/scene-editor/three";
 import type { CameraController } from "../camera/camera-controller";
+import type { HistoryCoordinator } from "../viewer/history-coordinator";
 import type { ViewerController } from "../viewer/viewer-controller";
 import type { DisplayMode, ViewerStore } from "../viewer/viewer-state";
 import { bindHotkeys } from "../interaction/hotkeys";
 import { DropZone } from "./drop-zone";
 import type { HUDController } from "./hud-controller";
 import { ExplodeController } from "./explode-controller";
+import { MaterialController } from "./material-controller";
 import { AnimationPanel } from "./panels/animation-panel";
+import { BackgroundPanel } from "./panels/background-panel";
 import { CameraPanel } from "./panels/camera-panel";
+import { ChromePanel } from "./panels/chrome-panel";
 import { DisplayPanel } from "./panels/display-panel";
 import { DocumentPanel } from "./panels/document-panel";
 import { LightingPanel } from "./panels/lighting-panel";
+import { MaterialPanel } from "./panels/material-panel";
 import { ModelPanel } from "./panels/model-panel";
 import { TransformPanel } from "./panels/transform-panel";
 import type { Panel } from "./panel";
@@ -23,6 +28,8 @@ export interface StudioShellOptions {
   camera: CameraController;
   store: ViewerStore;
   viewer: ViewerController;
+  /** 统一撤销/重做（面板设置 + 文档命令）。 */
+  history: HistoryCoordinator;
   /** Load a built-in preset by `<select>` value. */
   loadPreset: (value: string) => Promise<void>;
   /** Load a local file / remote URL. */
@@ -48,13 +55,17 @@ const MODE_BY_SHORTCUT: Record<string, DisplayMode> = {
  */
 export class StudioShell {
   readonly explode: ExplodeController;
+  readonly material: MaterialController;
   readonly model: ModelPanel;
   readonly transform: TransformPanel;
   readonly cameraPanel: CameraPanel;
+  readonly background: BackgroundPanel;
   readonly display: DisplayPanel;
   readonly lighting: LightingPanel;
+  readonly materialPanel: MaterialPanel;
   readonly animation: AnimationPanel;
   readonly document: DocumentPanel;
+  readonly chrome: ChromePanel;
 
   readonly #options: StudioShellOptions;
   readonly #panels: Panel[];
@@ -82,8 +93,15 @@ export class StudioShell {
       store: options.store,
     });
 
+    this.background = new BackgroundPanel({ store: options.store });
     this.display = new DisplayPanel({ store: options.store, explode: this.explode });
     this.lighting = new LightingPanel({ store: options.store });
+
+    this.material = new MaterialController(options.el, options.getRuntime);
+    this.materialPanel = new MaterialPanel({
+      el: options.el,
+      material: this.material,
+    });
 
     this.animation = new AnimationPanel({
       store: options.store,
@@ -95,16 +113,22 @@ export class StudioShell {
       el: options.el,
       getRuntime: options.getRuntime,
       hud: options.hud,
+      history: options.history,
     });
+
+    this.chrome = new ChromePanel();
 
     this.#panels = [
       this.model,
       this.transform,
       this.cameraPanel,
+      this.background,
       this.display,
       this.lighting,
+      this.materialPanel,
       this.animation,
       this.document,
+      this.chrome,
     ];
 
     this.#dropZone = new DropZone({
@@ -121,14 +145,21 @@ export class StudioShell {
     this.#bindKeys();
 
     this.#options.hud.startFpsCounter();
+    // Imported assets range from millimetres to hundreds of metres — keep the
+    // clip planes tied to the live camera distance so zoom never cuts geometry.
+    this.#options.camera.startClipSync();
     this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
   }
 
   /** Re-sync the viewer after `loadDocument()` — clips, explode baseline, presets. */
   onDocumentLoaded(): void {
     this.explode.reset();
+    this.material.reset();
+    this.#options.camera.invalidateBounds();
     this.#options.viewer.syncFromDocument();
     this.animation.refresh();
+    this.materialPanel.refreshHint();
+    this.background.sync(this.#options.store.state);
     this.lighting.sync(this.#options.store.state);
     this.display.sync(this.#options.store.state);
     this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
@@ -143,6 +174,7 @@ export class StudioShell {
     for (const dispose of this.#disposers.splice(0)) dispose();
     this.#dropZone.destroy();
     this.#options.camera.stopTurntable();
+    this.#options.camera.destroy();
     for (const panel of this.#panels) panel.destroy();
     this.#options.hud.destroy();
   }
@@ -163,7 +195,7 @@ export class StudioShell {
       f: () => camera.frameScene(true),
       h: () => {
         camera.resetCamera(true);
-        hud.showToast("Camera Reset [H]");
+        hud.showToast("相机已复位 [H]");
       },
       "7": () => this.cameraPanel.setPreset("top"),
       space: () => store.patch({ autoRotate: !store.state.autoRotate }),

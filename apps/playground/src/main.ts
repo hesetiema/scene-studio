@@ -5,6 +5,7 @@ import { ModelLoader } from "./assets/model-loader";
 import { CameraController } from "./camera/camera-controller";
 import { HUDController } from "./ui/hud-controller";
 import { StudioShell } from "./ui/studio-shell";
+import { bindHistoryHotkeys, HistoryCoordinator } from "./viewer/history-coordinator";
 import { createViewerStore, type ViewerStore } from "./viewer/viewer-state";
 import { ViewerController } from "./viewer/viewer-controller";
 import { defaultMultiDoc, mechaAssemblyDoc } from "./bootstrap";
@@ -18,6 +19,7 @@ declare global {
     __runtime?: ThreeRuntime;
     __viewer?: ViewerController;
     __store?: ViewerStore;
+    __history?: HistoryCoordinator;
     loadCustomModel: (urlOrFile: string | File, name?: string) => Promise<void>;
     loadCustomFiles: (files: File[]) => Promise<void>;
   }
@@ -54,6 +56,9 @@ const store = createViewerStore();
 const viewer = new ViewerController({ store, el, getRuntime, camera });
 viewer.mount();
 
+/** 撤销/重做覆盖面板设置（valtio 快照）与文档命令（SDK 历史）。 */
+const history = new HistoryCoordinator(el, store);
+
 /** In-memory host store for e2e save/conflict flows (D18/D17). */
 const host = {
   serverDoc: structuredClone(mechaAssemblyDoc),
@@ -73,6 +78,7 @@ const shell = new StudioShell({
   camera,
   store,
   viewer,
+  history,
   loadPreset: loadModelByOption,
   loadCustom: loadCustomModel,
   loadFiles: loadFilesModel,
@@ -90,14 +96,18 @@ async function applyDocument(
   option?: string,
 ): Promise<void> {
   await el.loadDocument(doc);
-  host.serverDoc = structuredClone(doc);
 
   shell.onDocumentLoaded();
   shell.selectModelOption(option ?? null);
   hud.updateTelemetry(telemetryName, telemetryFormat);
-  hud.updateDirtyUI();
 
   if (frame) camera.frameScene(false);
+
+  // 打开文档时的自动取景属于「载入」而不是用户编辑：把它作为新的干净基线，
+  // 否则状态栏会在刚载入时就显示「已修改」。
+  host.serverDoc = structuredClone(el.getDocument());
+  el.markSaved(el.revision);
+  hud.updateDirtyUI();
 }
 
 async function loadModelByOption(value: string): Promise<void> {
@@ -110,9 +120,9 @@ async function loadCustomModel(urlOrFile: string | File, customName?: string): P
   try {
     const { doc, filename, format } = await modelLoader.createCustomModelDoc(urlOrFile, customName);
     await applyDocument(doc, filename, format, true);
-    hud.showToast(`Loaded ${filename}`);
+    hud.showToast(`已载入 ${filename}`);
   } catch (error) {
-    hud.showToast(error instanceof Error ? `加载失败: ${error.message}` : "3D 模型加载失败");
+    hud.showToast(error instanceof Error ? `加载失败：${error.message}` : "3D 模型加载失败");
   }
 }
 
@@ -121,9 +131,9 @@ async function loadFilesModel(files: File[]): Promise<void> {
   try {
     const { doc, filename, format } = await modelLoader.createFilesModelDoc(files);
     await applyDocument(doc, filename, format, true);
-    hud.showToast(`Loaded ${filename}`);
+    hud.showToast(`已载入 ${filename}`);
   } catch (error) {
-    hud.showToast(error instanceof Error ? `加载失败: ${error.message}` : "3D 模型加载失败");
+    hud.showToast(error instanceof Error ? `加载失败：${error.message}` : "3D 模型加载失败");
   }
 }
 
@@ -159,7 +169,7 @@ el.addEventListener("save-request", () => {
   window.__savedDocs.push(structuredClone(next));
   el.markSaved(next.revision);
   hud.updateDirtyUI();
-  hud.showToast(`Saved Revision ${next.revision}`);
+  hud.showToast(`已保存 修订 ${next.revision}`);
 });
 
 function pushConflict(conflict: { base: SceneDocument; incoming: SceneDocument; local: SceneDocument }): void {
@@ -169,14 +179,14 @@ function pushConflict(conflict: { base: SceneDocument; incoming: SceneDocument; 
 
 el.addEventListener("save-conflict", () => {
   document.body.dataset.conflict = "true";
-  hud.showToast("Save conflict detected!");
+  hud.showToast("检测到保存冲突，请先合并远端版本");
 });
 
 el.addEventListener("history-change", () => hud.updateDirtyUI());
 el.addEventListener("selection-change", () => hud.updateSelectionUI());
 el.addEventListener("error", (event) => {
   const detail = (event as unknown as CustomEvent<{ message?: string }>).detail;
-  hud.showToast(detail?.message ?? "SDK error");
+  hud.showToast(detail?.message ?? "SDK 异常");
 });
 
 // ---------------------------------------------------------------------------
@@ -198,11 +208,15 @@ void el.ready.then(async () => {
   const doc = useFixture ? defaultMultiDoc : mechaAssemblyDoc;
   await applyDocument(
     doc,
-    useFixture ? "Geometric Unit Assembly" : "Complete Mecha Assembly",
-    useFixture ? "Default Scene" : "GLTF / GLB (Multi-Part)",
+    useFixture ? "几何体组合场景" : "机甲总装",
+    useFixture ? "默认场景" : "GLTF / GLB（多部件）",
     false,
     useFixture ? "procedural-assembly" : "mecha-assembly",
   );
+
+  // 首次加载后一次性适配视口：预设资产的尺度从毫米到数百米不等，
+  // 写死在文档里的相机距离无法保证模型完整可见（只移动相机，不改文档）。
+  camera.frameScene(false, false);
 
   if (selectId) {
     el.selectObject(selectId);
@@ -242,3 +256,7 @@ function applyTransformFromQuery(id: string, params: URLSearchParams): void {
 
 window.__viewer = viewer;
 window.__store = store;
+window.__history = history;
+
+// 宿主接管 Ctrl+Z / Ctrl+Y：焦点在视口内时也不会和元素内置的撤销重复执行。
+bindHistoryHotkeys(history);

@@ -1,324 +1,628 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Scene Studio</title>
+    <title>场景查看器 · Scene Studio</title>
     <meta
       name="description"
-      content="3D scene editor with WebGL/WebGPU runtime, custom element viewport, and transform controls."
+      content="基于 WebGL / WebGPU 的 3D 场景查看器：模型加载、着色模式、光照、相机与动画控制。"
     />
-    <meta property="og:title" content="Scene Studio" />
+    <meta property="og:title" content="场景查看器 · Scene Studio" />
     <meta
       property="og:description"
-      content="3D scene editor with WebGL/WebGPU runtime, custom element viewport, and transform controls."
+      content="基于 WebGL / WebGPU 的 3D 场景查看器：模型加载、着色模式、光照、相机与动画控制。"
     />
     <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles/controls.css" />
     <link rel="stylesheet" href="/src/styles/hud.css" />
   </head>
   <body>
-    <!-- 3D viewport element -->
-    <scene-editor id="viewport"></scene-editor>
-
-    <!-- Tactical center crosshair reticle -->
-    <div class="hud-center-reticle">
-      <div class="reticle-axis-h"></div>
-      <div class="reticle-axis-v"></div>
-    </div>
-
-    <!-- 4 corner aerospace HUD brackets -->
-    <div class="hud-corner hud-corner-tl">
-      <span class="hud-corner-bracket">┌</span>
-      <span>SYS.DIAG // VIEWPORT ONLINE</span>
-    </div>
-    <div class="hud-corner hud-corner-tr">
-      <span id="hud-perf-stat">FPS: 60 · 16.6ms</span>
-      <span class="hud-corner-bracket">┐</span>
-    </div>
-    <div class="hud-corner hud-corner-bl">
-      <span class="hud-corner-bracket">└</span>
-      <span id="hud-cam-stat">CAM: PERSPECTIVE · FOV: 50°</span>
-    </div>
-    <div class="hud-corner hud-corner-br">
-      <span>GRID: 10×10m · PRECISION: HI</span>
-      <span class="hud-corner-bracket">┘</span>
-    </div>
-
-    <!-- HUD overlay framework -->
-    <div class="hud-layer">
-      <!-- Top navigation & control bar -->
-      <header class="hud-glass top-bar hud-interactive">
-        <div class="brand-block">
-          <div class="status-dot"></div>
-          <div class="brand-title">
-            <span>Scene Studio</span>
-            <span class="brand-badge" id="version-badge">v0.5.0 VIEWER</span>
-          </div>
+    <div class="app">
+      <!-- 顶部栏：标题 + 模型来源 + 保存 -->
+      <header class="app-header">
+        <div class="app-title">
+          <span class="app-name">场景查看器</span>
+          <span class="app-version" id="version-badge">v0.5.0</span>
         </div>
 
-        <!-- Model selection & file loading -->
-        <div class="controls-group">
-          <label for="model-select" class="field-label">MODEL:</label>
-          <select id="model-select" class="select-input">
-            <option value="mecha-assembly">Complete Mecha Assembly (Full Figure)</option>
-            <option value="exo-chassis">Exo-Chassis Armor Shell (.glb)</option>
-            <option value="core-torso">Internal Torso Core (.glb)</option>
-            <option value="sensor-head">Sensor Pod Optics (.glb)</option>
-            <option value="polyhedral-prism">Polyhedral Prism (.glb)</option>
-            <option value="procedural-assembly">Multi-Geometry Assembly (Box + Gem)</option>
-            <option value="kinetic-orb">Kinetic Orb (Animated Demo)</option>
+        <div class="header-actions">
+          <select id="model-select" class="select" title="选择内置模型">
+            <option value="mecha-assembly">机甲总装（完整）</option>
+            <option value="exo-chassis">外骨骼装甲外壳（.glb）</option>
+            <option value="core-torso">躯干内部核心（.glb）</option>
+            <option value="sensor-head">传感头部件（.glb）</option>
+            <option value="polyhedral-prism">多面棱柱（.glb）</option>
+            <option value="procedural-assembly">多几何体组合（立方体 + 宝石）</option>
+            <option value="kinetic-orb">动感球体（含动画）</option>
           </select>
-
-          <button
-            id="btn-upload"
-            class="btn btn-primary"
-            title="Open local 3D model (.glb, .gltf, .obj, .stl)"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-              <polyline points="17 8 12 3 7 8" />
-              <line x1="12" y1="3" x2="12" y2="15" />
-            </svg>
-            Open File
+          <button id="btn-upload" class="btn" title="打开本地模型（.glb / .gltf / .obj / .stl）">
+            打开文件
+          </button>
+          <button id="btn-url" class="btn" title="通过 URL 加载远程模型">载入 URL</button>
+          <button id="btn-save" class="btn" title="保存当前场景">保存</button>
+          <button id="btn-show-panel" class="btn" title="展开右侧控制面板" hidden>
+            显示面板
           </button>
           <input type="file" id="file-input" accept=".glb,.gltf,.obj,.stl" hidden />
-
-          <button id="btn-url" class="btn" title="Load remote 3D model via URL">Load URL</button>
-        </div>
-
-        <!-- Shading & display modes -->
-        <div class="mode-bar">
-          <button class="mode-tab active" data-mode="studio" title="Studio PBR Shading [1]">Studio [1]</button>
-          <button class="mode-tab" data-mode="xray" title="Tactical X-Ray Hologram [2]">X-Ray [2]</button>
-          <button class="mode-tab" data-mode="wireframe" title="Technical CAD Wireframe [3]">Wireframe [3]</button>
-          <button class="mode-tab" data-mode="normal" title="Surface Normal Field [4]">Normal [4]</button>
-          <button class="mode-tab" data-mode="clay" title="Studio Clay Inspection [5]">Clay [5]</button>
-        </div>
-
-        <!-- Quick camera actions & save -->
-        <div class="controls-group">
-          <button id="btn-frame" class="btn" title="Center & frame viewport on model [F]">Frame [F]</button>
-          <button id="btn-reset-cam" class="btn" title="Reset camera to home [H]">Reset [H]</button>
-          <button id="btn-save" class="btn btn-primary" title="Save SceneDocument">Save</button>
         </div>
       </header>
 
-      <!-- Middle floating panels -->
-      <div class="middle-layout">
-        <!-- Left interactive tool strip -->
-        <aside class="hud-glass left-toolbar hud-interactive">
-          <div class="toolbar-section-title">
-            <span>TRANSFORM [G/R/S]</span>
-          </div>
-          <div class="tool-btn-grid">
-            <button id="gizmo-t" class="tool-btn active" title="Translate gizmo [G]">Move [G]</button>
-            <button id="gizmo-r" class="tool-btn" title="Rotate gizmo [R]">Rotate [R]</button>
-            <button id="gizmo-s" class="tool-btn" title="Scale gizmo [S]">Scale [S]</button>
-            <button id="gizmo-none" class="tool-btn" title="Pointer only (hide gizmo)">Pointer</button>
-          </div>
+      <main class="app-main">
+        <!-- 3D 视口 -->
+        <section class="stage">
+          <scene-editor id="viewport"></scene-editor>
 
-          <div class="toolbar-section-title section-gap">
-            <span>CAMERA PRESETS</span>
-          </div>
-          <div class="tool-btn-grid">
-            <button id="cam-iso" class="tool-btn active" title="Isometric perspective">ISO</button>
-            <button id="cam-top" class="tool-btn" title="Top view [7]">Top [7]</button>
-            <button id="cam-front" class="tool-btn" title="Front view">Front</button>
-            <button id="cam-side" class="tool-btn" title="Right side view">Side</button>
-          </div>
+          <div id="toast" class="toast"></div>
 
-          <div class="toolbar-section-title section-gap">
-            <span>TURNTABLE</span>
+          <div id="drop-overlay" class="drop-overlay">
+            <div class="drop-title">松开即可载入模型</div>
+            <div class="drop-subtitle">
+              .glb / .gltf / .obj / .stl —— .gltf 可连同 .bin 与贴图一起拖入
+            </div>
           </div>
-          <button id="btn-turntable" class="tool-btn tool-btn-full" title="Toggle 360° auto-orbit [Space]">
-            Auto-Orbit [Space]
-          </button>
+        </section>
 
-          <div class="toolbar-section-title section-gap">
-            <span>DISPLAY</span>
-          </div>
-          <button id="toggle-grid" class="tool-btn tool-btn-full active" title="Toggle spatial floor grid">
-            Floor Grid: ON
-          </button>
-          <button id="toggle-skeleton" class="tool-btn tool-btn-full" title="Toggle skeleton overlays">
-            Skeleton: OFF
-          </button>
+        <!-- 右侧控制面板 -->
+        <aside class="panel" id="control-panel">
+          <header class="panel-header">
+            <span class="panel-title">控制面板</span>
+            <span class="panel-hint">改动实时生效</span>
+            <!-- 全局操作：撤销/重做作用于所有分组，常驻标题栏，不随分组折叠 -->
+            <button id="btn-undo" class="icon-btn" title="撤销 [Ctrl+Z]" aria-label="撤销">
+              ↶
+            </button>
+            <button id="btn-redo" class="icon-btn" title="重做 [Ctrl+Y]" aria-label="重做">
+              ↷
+            </button>
+            <span class="tip-wrap">
+              <button
+                id="btn-shortcuts"
+                class="icon-btn"
+                title="快捷键"
+                aria-label="快捷键"
+                aria-describedby="shortcut-tip"
+              >
+                ?
+              </button>
+              <span class="tip" id="shortcut-tip" role="tooltip">
+                <span class="tip-row">
+                  <span>着色模式</span><span class="keys"><kbd>1</kbd>–<kbd>5</kbd></span>
+                </span>
+                <span class="tip-row">
+                  <span>聚焦 / 复位视角</span
+                  ><span class="keys"><kbd>F</kbd><kbd>H</kbd></span>
+                </span>
+                <span class="tip-row">
+                  <span>移动 / 旋转 / 缩放</span
+                  ><span class="keys"><kbd>G</kbd><kbd>R</kbd><kbd>S</kbd></span>
+                </span>
+                <span class="tip-row">
+                  <span>自动环绕</span><span class="keys"><kbd>空格</kbd></span>
+                </span>
+                <span class="tip-row">
+                  <span>播放 / 暂停</span><span class="keys"><kbd>P</kbd></span>
+                </span>
+                <span class="tip-row">
+                  <span>撤销 / 重做</span
+                  ><span class="keys"><kbd>Ctrl</kbd>+<kbd>Z</kbd><kbd>Y</kbd></span>
+                </span>
+                <span class="tip-note">任意位置拖入模型文件即可载入</span>
+              </span>
+            </span>
+            <button id="btn-toggle-panel" class="icon-btn" title="收起面板" aria-label="收起面板">
+              −
+            </button>
+          </header>
 
-          <div class="toolbar-section-title section-gap">
-            <span>BACKDROP THEME</span>
-          </div>
-          <div class="tool-btn-grid">
-            <button class="tool-btn bg-preset-btn active" data-bg="#0c0e12" title="Dark obsidian slate">Slate</button>
-            <button class="tool-btn bg-preset-btn" data-bg="#050608" title="OLED pure black">Pitch</button>
-            <button class="tool-btn bg-preset-btn" data-bg="#0a1526" title="Tactical sci-fi navy">Navy</button>
-            <button class="tool-btn bg-preset-btn" data-bg="#222632" title="Clean CAD studio gray">Studio</button>
-          </div>
+          <div class="panel-scroll">
+            <details class="group" id="group-lighting" open>
+              <summary class="group-title" title="场景灯光：决定模型的明暗、阴影与整体氛围">
+                灯光
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span
+                    class="row-label"
+                    title="成套的光照方案，一次改变光源颜色、强度与方向"
+                    >环境预设</span
+                  >
+                </div>
+                <div class="seg">
+                  <button
+                    class="light-preset-btn active"
+                    data-light="studio"
+                    title="中性白光，接近产品摄影棚"
+                  >
+                    影棚
+                  </button>
+                  <button
+                    class="light-preset-btn"
+                    data-light="cyber"
+                    title="冷蓝主光 + 品红补光，偏科幻风格"
+                  >
+                    赛博
+                  </button>
+                  <button
+                    class="light-preset-btn"
+                    data-light="sunset"
+                    title="暖橙色低角度光，模拟黄昏"
+                  >
+                    日落
+                  </button>
+                  <button
+                    class="light-preset-btn"
+                    data-light="contrast"
+                    title="对比更强、阴影更硬，便于检查轮廓"
+                  >
+                    高反差
+                  </button>
+                </div>
 
-          <div class="toolbar-section-title section-gap">
-            <span>LIGHTING PRESET</span>
-          </div>
-          <div class="tool-btn-grid">
-            <button class="tool-btn light-preset-btn active" data-light="studio">Studio</button>
-            <button class="tool-btn light-preset-btn" data-light="cyber">Cyber</button>
-            <button class="tool-btn light-preset-btn" data-light="sunset">Sunset</button>
-            <button class="tool-btn light-preset-btn" data-light="contrast">Noir</button>
-          </div>
+                <div class="row">
+                  <span class="row-label" title="环境光的颜色，影响整体色调与阴影冷暖">
+                    环境光色
+                  </span>
+                  <span class="row-inline">
+                    <input
+                      id="ambient-color"
+                      class="color-input"
+                      type="color"
+                      value="#ffffff"
+                      title="选择环境光颜色"
+                    />
+                    <span class="row-value" id="ambient-color-hex">#FFFFFF</span>
+                  </span>
+                </div>
 
-          <div class="toolbar-section-title section-gap">
-            <span>EXPOSURE</span>
-            <span id="exposure-val" class="telemetry-val">1.00</span>
-          </div>
-          <input id="exposure-slider" class="hud-range" type="range" min="0" max="2" step="0.05" value="1" />
+                <div class="row">
+                  <span class="row-label" title="主光颜色，决定高光与明暗交界处的色温">
+                    主光颜色
+                  </span>
+                  <span class="row-inline">
+                    <input
+                      id="directional-color"
+                      class="color-input"
+                      type="color"
+                      value="#eef6ff"
+                      title="选择主光颜色"
+                    />
+                    <span class="row-value" id="directional-color-hex">#EEF6FF</span>
+                  </span>
+                </div>
 
-          <div class="section-gap">
-            <select id="tone-mapping" class="select-input tool-btn-full" title="Tone mapping">
-              <option value="none">Tone Mapping: None</option>
-              <option value="linear">Tone Mapping: Linear</option>
-              <option value="aces">Tone Mapping: ACES</option>
-            </select>
-          </div>
+                <details class="more">
+                  <summary class="more-title">更多设置</summary>
+                  <div class="more-body">
+                    <div class="row row-slider">
+                      <span class="row-label" title="环境光（均匀的填充光）强度，100% 为预设原值"
+                        >环境光强度</span
+                      >
+                      <span class="row-value pill" id="ambient-scale-val">100%</span>
+                    </div>
+                    <input
+                      id="ambient-scale"
+                      class="range"
+                      type="range"
+                      min="0"
+                      max="200"
+                      step="1"
+                      value="100"
+                      title="拖动调整环境光强度"
+                    />
 
+                    <div class="row row-slider">
+                      <span class="row-label" title="主光（方向光）强度，100% 为预设原值"
+                        >主光强度</span
+                      >
+                      <span class="row-value pill" id="directional-scale-val">100%</span>
+                    </div>
+                    <input
+                      id="directional-scale"
+                      class="range"
+                      type="range"
+                      min="0"
+                      max="200"
+                      step="1"
+                      value="100"
+                      title="拖动调整主光强度"
+                    />
+
+                    <div class="row row-slider">
+                      <span class="row-label" title="整体亮度倍数，1.00 为原始曝光">曝光</span>
+                      <span class="row-value pill" id="exposure-val">1.00</span>
+                    </div>
+                    <input
+                      id="exposure-slider"
+                      class="range"
+                      type="range"
+                      min="0"
+                      max="2"
+                      step="0.05"
+                      value="1"
+                      title="拖动调整整体亮度"
+                    />
+
+                    <label class="row">
+                      <span
+                        class="row-label"
+                        title="让主光始终从当前观察方向照向模型，转视角时暗部不会消失"
+                        >主光跟随视角</span
+                      >
+                      <input type="checkbox" id="follow-camera" class="check" />
+                    </label>
+
+                    <div class="row">
+                      <span
+                        class="row-label"
+                        title="把过亮的高光压回屏幕可显示范围的方式；ACES 更接近电影画面"
+                        >色调映射</span
+                      >
+                    </div>
+                    <select
+                      id="tone-mapping"
+                      class="select select-full"
+                      title="色调映射：把高动态范围亮度映射到屏幕能显示的范围"
+                    >
+                      <option value="none">关闭</option>
+                      <option value="linear">线性</option>
+                      <option value="aces">ACES</option>
+                    </select>
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="group" id="group-background" open>
+              <summary class="group-title" title="视口背景：只影响观看效果，不改变模型本身">
+                背景
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="当前背景色值">颜色</span>
+                  <span class="row-value" id="bg-hex">#0C0E12</span>
+                </div>
+                <div class="chips">
+                  <button
+                    class="chip bg-preset-btn active"
+                    data-bg="#0c0e12"
+                    title="深色石板背景，适合浅色模型"
+                  >
+                    石板
+                  </button>
+                  <button
+                    class="chip bg-preset-btn"
+                    data-bg="#050608"
+                    title="接近纯黑，模型轮廓最突出"
+                  >
+                    纯黑
+                  </button>
+                  <button
+                    class="chip bg-preset-btn"
+                    data-bg="#0a1526"
+                    title="深蓝色背景，接近产品展示图"
+                  >
+                    深蓝
+                  </button>
+                  <label class="chip chip-color" id="bg-custom-chip" title="自定义背景颜色">
+                    <input
+                      id="bg-custom"
+                      class="color-input"
+                      type="color"
+                      value="#0c0e12"
+                      aria-label="自定义背景颜色"
+                    />
+                    自定义
+                  </label>
+                </div>
+              </div>
+            </details>
+
+            <details class="group" id="group-camera" open>
+              <summary class="group-title" title="观察角度与取景操作">相机</summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="快速切换到标准观察角度">视角预设</span>
+                </div>
+                <div class="seg">
+                  <button id="cam-iso" class="tool-btn active" title="斜 45° 观察，同时看到正面与顶面">
+                    等轴
+                  </button>
+                  <button id="cam-top" class="tool-btn" title="从正上方俯视 [7]">顶视</button>
+                  <button id="cam-front" class="tool-btn" title="从正前方平视，适合对照三视图">前视</button>
+                  <button id="cam-side" class="tool-btn" title="从右侧平视，适合对照三视图">侧视</button>
+                </div>
+                <div class="btn-row">
+                  <button id="btn-frame" class="btn" title="让模型重新填满视口 [F]">聚焦</button>
+                  <button id="btn-reset-cam" class="btn" title="回到默认观察角度 [H]">复位</button>
+                  <button id="btn-turntable" class="btn" title="相机绕模型匀速旋转，便于观察整体 [空格]">
+                    自动环绕
+                  </button>
+                </div>
+              </div>
+            </details>
+
+            <details class="group" id="group-display">
+              <summary class="group-title" title="模型在视口中的渲染方式与辅助显示">
+                显示
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="切换模型的渲染方式，便于检查拓扑、法线或轮廓"
+                    >着色模式</span
+                  >
+                </div>
+                <div class="seg">
+                  <button class="mode-tab active" data-mode="studio" title="标准 PBR 着色，按材质与灯光成像 [1]">
+                    标准
+                  </button>
+                  <button class="mode-tab" data-mode="xray" title="半透明透视，可看到内部结构 [2]">X 光</button>
+                  <button class="mode-tab" data-mode="wireframe" title="只显示三角形网格线，检查布线 [3]">线框</button>
+                  <button class="mode-tab" data-mode="normal" title="用颜色表示表面朝向，检查法线是否正确 [4]">法线</button>
+                  <button class="mode-tab" data-mode="clay" title="忽略贴图的素模，只看形体 [5]">素模</button>
+                </div>
+
+                <label class="row">
+                  <span class="row-label" title="地面参考网格，帮助判断模型尺寸与位置">地面网格</span>
+                  <input type="checkbox" id="toggle-grid" class="check" checked />
+                </label>
+                <label class="row">
+                  <span class="row-label" title="叠加显示骨骼关节结构，仅对含骨骼的模型有效"
+                    >骨骼显示</span
+                  >
+                  <input type="checkbox" id="toggle-skeleton" class="check" />
+                </label>
+              </div>
+            </details>
+
+            <details class="group" id="group-material" open>
+              <summary class="group-title" title="选中部件的材质外观：只做预览，不写入文档">
+                材质
+              </summary>
+              <div class="group-body">
+                <p class="hint hint-inline" id="material-hint">
+                  未选中部件：先在视口中点击模型
+                </p>
+
+                <div class="row">
+                  <span class="row-label" title="覆盖选中部件的表面颜色；会替换原贴图的颜色">
+                    模型颜色
+                  </span>
+                  <span class="row-inline">
+                    <input
+                      id="material-color"
+                      class="color-input"
+                      type="color"
+                      value="#d9d9d9"
+                      title="选择材质颜色"
+                    />
+                    <span class="row-value" id="material-color-hex">#D9D9D9</span>
+                  </span>
+                </div>
+
+                <div class="row row-slider">
+                  <span class="row-label" title="0% 完全透明，100% 完全不透明">透明度</span>
+                  <span class="row-value pill" id="material-opacity-val">100%</span>
+                </div>
+                <input
+                  id="material-opacity"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="100"
+                  title="拖动调整不透明度"
+                />
+
+                <div class="row row-slider">
+                  <span class="row-label" title="0% 偏塑料/布料，100% 偏金属">金属度</span>
+                  <span class="row-value pill" id="material-metalness-val">0%</span>
+                </div>
+                <input
+                  id="material-metalness"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="0"
+                  title="拖动调整金属感"
+                />
+
+                <div class="row row-slider">
+                  <span class="row-label" title="0% 像镜面一样光滑，100% 完全漫反射">粗糙度</span>
+                  <span class="row-value pill" id="material-roughness-val">100%</span>
+                </div>
+                <input
+                  id="material-roughness"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="100"
+                  title="拖动调整表面粗糙程度"
+                />
+
+                <div class="btn-row">
+                  <button id="btn-material-apply" class="btn" title="把上面的参数应用到当前选中的部件">
+                    刷新选中项
+                  </button>
+                  <button
+                    id="btn-material-reset"
+                    class="btn"
+                    title="撤销材质修改，恢复模型原始外观"
+                  >
+                    恢复原材质
+                  </button>
+                </div>
+              </div>
+            </details>
+
+            <details class="group" id="group-animation">
+              <summary class="group-title" title="模型内置的动画片段与播放控制">动画</summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="模型内置的动画片段数量">片段</span>
+                  <span class="row-value" id="anim-count">0</span>
+                </div>
+                <select id="anim-select" class="select select-full" title="选择要播放的动画片段">
+                  <option value="">无动画</option>
+                </select>
+                <div class="btn-row">
+                  <button id="anim-play" class="btn" title="开始或暂停当前片段 [P]">播放</button>
+                  <button id="anim-restart" class="btn" title="从头重新播放当前片段">重播</button>
+                </div>
+
+                <details class="more">
+                  <summary class="more-title">更多设置</summary>
+                  <div class="more-body">
+                    <div class="row row-slider">
+                      <span class="row-label" title="动画播放倍速，1.00x 为原速">速度</span>
+                      <span class="row-value pill" id="anim-speed-val">1.00x</span>
+                    </div>
+                    <input
+                      id="anim-speed"
+                      class="range"
+                      type="range"
+                      min="0.25"
+                      max="2"
+                      step="0.05"
+                      value="1"
+                      title="拖动调整播放速度"
+                    />
+                    <div class="row row-slider">
+                      <span class="row-label" title="当前播放进度，可拖动定位">时间</span>
+                      <span class="row-value pill" id="anim-time-val">0.00s</span>
+                    </div>
+                    <input
+                      id="anim-time"
+                      class="range"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value="0"
+                      title="拖动切换到指定时间点"
+                    />
+                  </div>
+                </details>
+              </div>
+            </details>
+
+            <details class="group" id="group-model">
+              <summary class="group-title" title="当前模型的部件、统计信息与选中对象">
+                模型
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="当前载入的模型名称">名称</span>
+                  <span class="row-value" id="stat-name">机甲总装</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="模型来源格式，程序化表示由代码生成">格式</span>
+                  <span class="row-value" id="stat-format">GLTF / GLB</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="模型包含的网格（mesh）数量">网格</span>
+                  <span class="row-value" id="stat-meshes">--</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="渲染用的三角形总数，越高越精细也越耗性能">三角面</span>
+                  <span class="row-value" id="stat-polys">--</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="几何体的顶点总数">顶点</span>
+                  <span class="row-value" id="stat-verts">--</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="模型整体的长 × 宽 × 高尺寸">包围盒</span>
+                  <span class="row-value" id="stat-bounds">--</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="点击视口中的部件即可选中查看">选中对象</span>
+                  <span class="row-value" id="inspect-id">未选择</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="选中部件在世界坐标中的位置">位置</span>
+                  <span class="row-value mono" id="inspect-pos">[0.00, 0.00, 0.00]</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="选中部件的旋转角度（欧拉角，单位：度）">旋转</span>
+                  <span class="row-value mono" id="inspect-rot">[0°, 0°, 0°]</span>
+                </div>
+
+                <div class="row row-slider">
+                  <span
+                    class="row-label"
+                    title="把多部件模型沿中心向外展开，只用于查看，不修改文档"
+                    >部件分解</span
+                  >
+                  <span class="row-value pill" id="explode-val">0%</span>
+                </div>
+                <input
+                  id="explode-slider"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="0"
+                  title="拖动预览各部件分离效果"
+                />
+              </div>
+            </details>
+
+            <details class="group" id="group-transform">
+              <summary class="group-title" title="选中部件后用于手动调整位置、角度与大小">
+                变换
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="选中部件时显示的操作手柄类型">操作轴</span>
+                </div>
+                <div class="seg">
+                  <button id="gizmo-t" class="tool-btn active" title="沿箭头拖动改变位置 [G]">移动</button>
+                  <button id="gizmo-r" class="tool-btn" title="沿圆环拖动改变角度 [R]">旋转</button>
+                  <button id="gizmo-s" class="tool-btn" title="拖动方块改变大小 [S]">缩放</button>
+                  <button id="gizmo-none" class="tool-btn" title="隐藏操作手柄并取消选中">关闭</button>
+                </div>
+              </div>
+            </details>
+
+            <details class="group" id="group-files">
+              <summary class="group-title">文件与导出</summary>
+              <div class="group-body">
+                <div class="btn-row">
+                  <button id="btn-snapshot" class="btn" title="截取当前视图（PNG）">截图</button>
+                  <button id="btn-export-glb" class="btn" title="导出为二进制 glTF">导出 GLB</button>
+                  <button id="btn-export-obj" class="btn" title="导出为 Wavefront OBJ">
+                    导出 OBJ
+                  </button>
+                </div>
+              </div>
+            </details>
+          </div>
         </aside>
+      </main>
 
-        <!-- Right model telemetry HUD -->
-        <aside class="hud-glass telemetry-card hud-interactive">
-          <div class="telemetry-header">
-            <span>Model Telemetry</span>
-            <span id="telemetry-status" class="telemetry-val">LIVE</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">ASSET:</span>
-            <span id="stat-name" class="telemetry-val">Complete Mecha Assembly</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">FORMAT:</span>
-            <span id="stat-format" class="telemetry-val">GLTF / GLB</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">MESHES:</span>
-            <span id="stat-meshes" class="telemetry-val">--</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">POLYGONS:</span>
-            <span id="stat-polys" class="telemetry-val">--</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">VERTICES:</span>
-            <span id="stat-verts" class="telemetry-val">--</span>
-          </div>
-          <div class="telemetry-row">
-            <span class="telemetry-label">BOUNDS:</span>
-            <span id="stat-bounds" class="telemetry-val">--</span>
-          </div>
-
-          <!-- Component explode slider -->
-          <div class="telemetry-divider">
-            <div class="field-row">
-              <span class="telemetry-label">COMPONENT EXPLODE:</span>
-              <span id="explode-val" class="telemetry-val">0%</span>
-            </div>
-            <input id="explode-slider" class="hud-range" type="range" min="0" max="100" value="0" />
-          </div>
-
-          <!-- Selected object inspector -->
-          <div id="inspector-panel" class="telemetry-divider">
-            <div class="field-row">
-              <span class="telemetry-label">SELECTION:</span>
-              <span id="inspect-id" class="telemetry-val">None (Click mesh)</span>
-            </div>
-            <div class="telemetry-row">
-              <span class="telemetry-label">POS:</span>
-              <span id="inspect-pos" class="telemetry-inline">[0.0, 0.0, 0.0]</span>
-            </div>
-            <div class="telemetry-row">
-              <span class="telemetry-label">ROT:</span>
-              <span id="inspect-rot" class="telemetry-inline">[0.0°, 0.0°, 0.0°]</span>
-            </div>
-          </div>
-
-          <!-- Animation transport -->
-          <div class="telemetry-divider">
-            <div class="field-row">
-              <span class="telemetry-label">ANIMATION</span>
-              <span id="anim-count" class="telemetry-val">0</span>
-            </div>
-            <select id="anim-select" class="select-input anim-select" title="Animation clip">
-              <option value="">No animations</option>
-            </select>
-            <div class="tool-btn-grid">
-              <button id="anim-play" class="tool-btn" title="Play / pause clip [P]">Play</button>
-              <button id="anim-restart" class="tool-btn" title="Restart clip">Restart</button>
-            </div>
-            <div class="field-row section-gap">
-              <span class="field-label">SPEED</span>
-              <span id="anim-speed-val" class="telemetry-val">1.0x</span>
-            </div>
-            <input id="anim-speed" class="hud-range" type="range" min="0.25" max="2" step="0.05" value="1" />
-            <div class="field-row section-gap">
-              <span class="field-label">TIME</span>
-              <span id="anim-time-val" class="telemetry-val">0.00s</span>
-            </div>
-            <input id="anim-time" class="hud-range" type="range" min="0" max="1" step="0.01" value="0" />
-          </div>
-
-          <!-- History -->
-          <div class="telemetry-divider">
-            <div class="tool-btn-grid">
-              <button id="btn-undo" class="tool-btn" title="Undo last command [Ctrl+Z]">Undo</button>
-              <button id="btn-redo" class="tool-btn" title="Redo command [Ctrl+Y]">Redo</button>
-            </div>
-          </div>
-
-          <!-- Quick shortcuts -->
-          <div class="telemetry-divider">
-            <div class="shortcut-note">
-              [1-5] Shading · [F] Frame · [H] Home<br />
-              [G] Move · [R] Rotate · [S] Scale<br />
-              [Space] Turntable · [P] Play/Pause<br />
-              [Ctrl+Z/Y] Undo/Redo · Drag 3D files anywhere
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      <!-- Bottom status bar -->
-      <footer class="hud-glass bottom-bar hud-interactive">
-        <div class="status-item">
-          <span>REVISION: <strong id="rev-val">0</strong></span>
-          <span class="status-sep">|</span>
-          <span>STATUS: <strong id="dirty-val">CLEAN</strong></span>
-          <span class="status-sep">|</span>
-          <span>OBJECTS: <strong id="obj-count-val">3</strong></span>
+      <!-- 底部状态栏 -->
+      <footer class="app-footer">
+        <div class="status-group">
+          <span>修订 <strong id="rev-val">0</strong></span>
+          <span class="sep">·</span>
+          <span>状态 <strong id="dirty-val">未修改</strong></span>
+          <span class="sep">·</span>
+          <span>物体 <strong id="obj-count-val">3</strong></span>
+          <span class="sep">·</span>
+          <span id="hud-cam-stat">相机 透视 · FOV 48°</span>
         </div>
-
-        <div id="toast" class="toast">Model Loaded</div>
-
-        <div class="status-item">
-          <button id="btn-snapshot" class="btn btn-compact" title="Capture high-resolution viewport snapshot (PNG)">
-            Snapshot
-          </button>
-          <button id="btn-export-glb" class="btn btn-compact" title="Export the scene document as binary glTF">
-            Export GLB
-          </button>
-          <button id="btn-export-obj" class="btn btn-compact" title="Export the scene document as Wavefront OBJ">
-            Export OBJ
-          </button>
+        <div class="status-group">
+          <span id="hud-perf-stat">FPS -- · --ms</span>
+          <span class="sep">·</span>
+          <span>three.js r186</span>
         </div>
       </footer>
-    </div>
-
-    <!-- Drag & drop visual target -->
-    <div id="drop-overlay" class="drop-overlay">
-      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#38e2ff" stroke-width="1.5">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-        <polyline points="17 8 12 3 7 8" />
-        <line x1="12" y1="3" x2="12" y2="15" />
-      </svg>
-      <div class="drop-title">Drop 3D Model to Deploy</div>
-      <div class="drop-subtitle">
-        .glb / .gltf / .obj / .stl — drop a .gltf together with its .bin and textures
-      </div>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

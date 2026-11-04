@@ -29,7 +29,7 @@ export const mechaAssemblyDoc: SceneDocument = {
     {
       id: "part-torso",
       type: "mesh",
-      name: "Internal Torso Core",
+      name: "躯干内部核心",
       assetId: "mecha-torso",
       position: [0, 0, 0],
       rotation: [0, 0, 0],
@@ -38,7 +38,7 @@ export const mechaAssemblyDoc: SceneDocument = {
     {
       id: "part-shells",
       type: "mesh",
-      name: "Exo-Chassis Armor Shell",
+      name: "外骨骼装甲外壳",
       assetId: "mecha-shells",
       position: [0, 0, 0],
       rotation: [0, 0, 0],
@@ -47,7 +47,7 @@ export const mechaAssemblyDoc: SceneDocument = {
     {
       id: "part-head",
       type: "mesh",
-      name: "Sensor Optics Pod",
+      name: "传感器光学头",
       assetId: "mecha-head",
       position: [0, 0, 0],
       rotation: [0, 0, 0],
@@ -81,7 +81,7 @@ export const defaultMultiDoc: SceneDocument = {
     {
       id: "box-1",
       type: "mesh",
-      name: "Geometric Unit A",
+      name: "几何体 A",
       position: [0, 0.5, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
@@ -89,7 +89,7 @@ export const defaultMultiDoc: SceneDocument = {
     {
       id: "box-2",
       type: "mesh",
-      name: "Geometric Unit B",
+      name: "几何体 B",
       position: [2, 0.5, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
@@ -97,7 +97,7 @@ export const defaultMultiDoc: SceneDocument = {
     {
       id: "gem-1",
       type: "mesh",
-      name: "Faceted Core Gem",
+      name: "多面核心宝石",
       assetId: "gem",
       position: [-2, 0.7, 0],
       rotation: [0, 0, 0],

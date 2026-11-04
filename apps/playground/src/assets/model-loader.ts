@@ -237,31 +237,39 @@ export class ModelLoader {
     value: string,
   ): { doc: SceneDocument; telemetryName: string; telemetryFormat: string } | null {
     if (value === "mecha-assembly") {
-      return { doc: structuredClone(mechaAssemblyDoc), telemetryName: "Complete Mecha Assembly", telemetryFormat: "GLTF / GLB (Multi-Part)" };
+      return {
+        doc: structuredClone(mechaAssemblyDoc),
+        telemetryName: "机甲总装",
+        telemetryFormat: "GLTF / GLB（多部件）",
+      };
     }
     if (value === "exo-chassis") {
-      const doc = createSingleModelDoc("mecha-shells", "Exo-Chassis Armor Shell");
-      return { doc, telemetryName: "Exo-Chassis Armor Shell", telemetryFormat: "GLTF / GLB" };
+      const doc = createSingleModelDoc("mecha-shells", "外骨骼装甲外壳");
+      return { doc, telemetryName: "外骨骼装甲外壳", telemetryFormat: "GLTF / GLB" };
     }
     if (value === "core-torso") {
-      const doc = createSingleModelDoc("mecha-torso", "Internal Torso Core");
-      return { doc, telemetryName: "Internal Torso Core", telemetryFormat: "GLTF / GLB" };
+      const doc = createSingleModelDoc("mecha-torso", "躯干内部核心");
+      return { doc, telemetryName: "躯干内部核心", telemetryFormat: "GLTF / GLB" };
     }
     if (value === "sensor-head") {
-      const doc = createSingleModelDoc("mecha-head", "Sensor Pod Optics");
-      return { doc, telemetryName: "Sensor Pod Optics", telemetryFormat: "GLTF / GLB" };
+      const doc = createSingleModelDoc("mecha-head", "传感头部件");
+      return { doc, telemetryName: "传感头部件", telemetryFormat: "GLTF / GLB" };
     }
     if (value === "polyhedral-prism") {
-      const doc = createSingleModelDoc("crystal-prism", "Polyhedral Prism");
-      return { doc, telemetryName: "Polyhedral Prism", telemetryFormat: "GLTF / GLB" };
+      const doc = createSingleModelDoc("crystal-prism", "多面棱柱");
+      return { doc, telemetryName: "多面棱柱", telemetryFormat: "GLTF / GLB" };
     }
     if (value === "procedural-assembly" || value === "default-assembly") {
-      return { doc: structuredClone(defaultMultiDoc), telemetryName: "Multi-Geometry Assembly", telemetryFormat: "Procedural Mesh" };
+      return {
+        doc: structuredClone(defaultMultiDoc),
+        telemetryName: "多几何体组合",
+        telemetryFormat: "程序化网格",
+      };
     }
     if (value === "kinetic-orb") {
-      const doc = createSingleModelDoc("kinetic-orb", "Kinetic Orb");
+      const doc = createSingleModelDoc("kinetic-orb", "动感球体");
       doc.view.camera = { position: [3.4, 2.4, 4.2], target: [0, 0.9, 0], fov: 48 };
-      return { doc, telemetryName: "Kinetic Orb (Animated)", telemetryFormat: "Procedural + Clips" };
+      return { doc, telemetryName: "动感球体（含动画）", telemetryFormat: "程序化 + 动画片段" };
     }
     return null;
   }

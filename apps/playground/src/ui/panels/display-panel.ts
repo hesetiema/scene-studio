@@ -30,18 +30,22 @@ export class DisplayPanel extends BasePanel {
       });
     });
 
-    this.click("#toggle-grid", () => {
-      this.#store.patch({ grid: !this.#store.state.grid });
-    });
+    const grid = document.querySelector<HTMLInputElement>("#toggle-grid");
+    if (grid) {
+      this.listen(grid, "change", () => this.#store.patch({ grid: grid.checked }));
+    }
 
-    this.click("#toggle-skeleton", () => {
-      this.#store.patch({ skeleton: !this.#store.state.skeleton });
-    });
+    const skeleton = document.querySelector<HTMLInputElement>("#toggle-skeleton");
+    if (skeleton) {
+      this.listen(skeleton, "change", () => this.#store.patch({ skeleton: skeleton.checked }));
+    }
 
     const slider = document.querySelector<HTMLInputElement>("#explode-slider");
     if (slider) {
       this.listen(slider, "input", () => this.#explode.setFactor(Number(slider.value) / 100));
     }
+
+
 
     this.#unsubscribe = this.#store.subscribe((next) => this.sync(next));
     this.sync(this.#store.state);
@@ -52,11 +56,11 @@ export class DisplayPanel extends BasePanel {
       tab.classList.toggle("active", tab.dataset.mode === state.display);
     });
 
-    this.syncActive("#toggle-grid", state.grid);
-    this.syncText("#toggle-grid", `Floor Grid: ${state.grid ? "ON" : "OFF"}`);
+    const grid = document.querySelector<HTMLInputElement>("#toggle-grid");
+    if (grid) grid.checked = state.grid;
 
-    this.syncActive("#toggle-skeleton", state.skeleton);
-    this.syncText("#toggle-skeleton", `Skeleton: ${state.skeleton ? "ON" : "OFF"}`);
+    const skeleton = document.querySelector<HTMLInputElement>("#toggle-skeleton");
+    if (skeleton) skeleton.checked = state.skeleton;
   }
 
   destroy(): void {

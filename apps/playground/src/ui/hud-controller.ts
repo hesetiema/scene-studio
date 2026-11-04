@@ -29,12 +29,10 @@ export class HUDController {
 
     if (revEl) revEl.textContent = String(this.el.revision);
     if (dirtyEl) {
-      dirtyEl.textContent = this.el.dirty ? "MODIFIED" : "CLEAN";
-      (dirtyEl as HTMLElement).style.color = this.el.dirty ? "#ffab40" : "#38e2ff";
+      dirtyEl.textContent = this.el.dirty ? "已修改" : "未修改";
+      (dirtyEl as HTMLElement).style.color = this.el.dirty ? "#e0b25c" : "#8fbfd8";
     }
-    if (objCountEl) {
-      objCountEl.textContent = String(this.el.getDocument().objects.length);
-    }
+    if (objCountEl) objCountEl.textContent = String(this.el.getDocument().objects.length);
   }
 
   /** Show a transient toast message (bottom center). */
@@ -96,9 +94,9 @@ export class HUDController {
 
     const selectedId = this.el.selectedIds[0];
     if (!selectedId) {
-      if (idEl) idEl.textContent = "None (Click mesh)";
-      if (posEl) posEl.textContent = "[0.0, 0.0, 0.0]";
-      if (rotEl) rotEl.textContent = "[0.0, 0.0, 0.0]";
+      if (idEl) idEl.textContent = "未选择（点击模型）";
+      if (posEl) posEl.textContent = "[0.00, 0.00, 0.00]";
+      if (rotEl) rotEl.textContent = "[0°, 0°, 0°]";
       return;
     }
 
@@ -114,7 +112,7 @@ export class HUDController {
       const degX = ((obj.rotation[0] * 180) / Math.PI).toFixed(0);
       const degY = ((obj.rotation[1] * 180) / Math.PI).toFixed(0);
       const degZ = ((obj.rotation[2] * 180) / Math.PI).toFixed(0);
-      rotEl.textContent = `[${degX}, ${degY}, ${degZ}]`;
+      rotEl.textContent = `[${degX}°, ${degY}°, ${degZ}°]`;
     }
   }
 
@@ -127,7 +125,7 @@ export class HUDController {
       if (now - this.lastFpsTime >= 500) {
         const fps = Math.round((this.frameCount * 1000) / (now - this.lastFpsTime));
         const ms = (1000 / Math.max(fps, 1)).toFixed(1);
-        if (fpsEl) fpsEl.textContent = `FPS: ${fps} - ${ms}ms`;
+        if (fpsEl) fpsEl.textContent = `FPS ${fps} · ${ms}ms`;
         this.frameCount = 0;
         this.lastFpsTime = now;
       }
