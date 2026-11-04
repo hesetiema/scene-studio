@@ -13,14 +13,16 @@ A web component (`<scene-editor>`) plus a headless core that together give any h
 
 ```
 packages/scene-editor/   the npm package (core + element + three adapter)
-apps/playground/         interactive demo + Playwright visual/perf baselines
-e2e/                     Playwright configs & specs (critical flows, studio tools, visual, perf)
+apps/playground/         interactive demo, focused SDK demos (/demos), visual/perf baselines
+e2e/                     Playwright configs & specs (critical flows, SDK coverage, studio tools, visual, perf)
 scripts/                 pack-smoke (npm pack consumer test)
 ```
 
 ### Playground
 
 `apps/playground` is the reference host: model loading (GLB/GLTF/OBJ/STL, including multi-file `.gltf` bundles), shading modes (studio / X-Ray / wireframe / normal / clay), skeleton overlay, explode preview, lighting & backdrop presets, exposure/tone mapping, camera presets + turntable, glTF animation transport, gizmo tool switching, snapshot and GLB/OBJ export. Google-style viewer architecture: a single viewer store (`src/viewer/viewer-state.ts`) fans out to `ViewerController.update*()`, and each HUD panel only patches state.
+
+Focused SDK demos live under `/demos/` (one API surface per page: host editing API, document model, headless facade, assets) and are asserted by `e2e/sdk-coverage.spec.ts`; `minimal.html` is the smallest end-to-end integration.
 
 - `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture the e2e suites assert on; the bare URL boots the mecha showcase.
 - `?select=<id>` selects an object and (optionally) applies `&move=x,y,z&rot=x,y,z&scale=x,y,z` for reproducible screenshots.

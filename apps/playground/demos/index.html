@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SDK 能力 demo · scene-editor</title>
+    <link rel="stylesheet" href="/src/styles/demo.css" />
+  </head>
+  <body>
+    <header class="demo-bar">
+      <a class="demo-back" href="/">← Studio</a>
+      <strong>SDK 能力 demo</strong>
+      <span class="demo-hint">一个页面一个能力点，全部由 Playwright 覆盖</span>
+    </header>
+
+    <main class="demo-main">
+      <p class="demo-note">
+        这些页面是 <code>@scenio/scene-editor</code> 的能力清单，也是
+        <code>e2e/sdk-coverage.spec.ts</code> 的断言对象。完整宿主看
+        <a href="/">playground</a>，最小接入看 <a href="/minimal.html">minimal</a>。
+      </p>
+
+      <div class="demo-hub">
+        <a class="demo-card" href="/demos/host-api.html">
+          <h2>宿主编辑 API</h2>
+          <p><code>executeCommand</code> · 多选 <code>add/remove/toggle</code> · <code>applyRemote</code> + 结构化冲突解决</p>
+        </a>
+
+        <a class="demo-card" href="/demos/document.html">
+          <h2>文档模型</h2>
+          <p><code>migrateSceneDocument</code> · <code>parseSceneDocument</code> · <code>validateHierarchy</code> · 导入编辑器</p>
+        </a>
+
+        <a class="demo-card" href="/demos/headless.html">
+          <h2>Headless 自检</h2>
+          <p><code>createSceneEditor</code> + <code>FakeRuntime</code>：无 DOM / 无 GPU 的全链路断言</p>
+        </a>
+
+        <a class="demo-card" href="/demos/assets.html">
+          <h2>资产加载</h2>
+          <p><code>assetResolver</code> · GLB 实例化 · <code>AssetCache</code> 引用计数 · 错误码分支</p>
+        </a>
+      </div>
+    </main>
+  </body>
+</html>

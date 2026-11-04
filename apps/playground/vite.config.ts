@@ -6,6 +6,9 @@ const pkg = (path: string) =>
 
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
+/** Focused SDK demos (`/demos/*.html`) — one page per API surface. */
+const demoPages = ["index", "host-api", "document", "headless", "assets"];
+
 export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)
@@ -35,6 +38,10 @@ export default defineConfig({
       input: {
         main: html("index.html"),
         perf: html("perf.html"),
+        minimal: html("minimal.html"),
+        ...Object.fromEntries(
+          demoPages.map((page) => [`demo-${page}`, html(`demos/${page}.html`)]),
+        ),
       },
     },
   },

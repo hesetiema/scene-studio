@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>scene-editor · minimal demo</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        background: #0b0f19;
+        color: #e6e8ee;
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px;
+        border-bottom: 1px solid #1c2333;
+      }
+      #bar button {
+        background: #141b2b;
+        color: inherit;
+        border: 1px solid #26314a;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+      #bar button:hover {
+        background: #1c2537;
+      }
+      #bar button[aria-pressed="true"] {
+        border-color: #4f8ef7;
+        color: #9cc0ff;
+      }
+      #bar button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      #viewport {
+        flex: 1;
+        min-height: 0;
+      }
+      #status {
+        padding: 6px 8px;
+        border-top: 1px solid #1c2333;
+        color: #8f9bb3;
+      }
+      #log {
+        height: 96px;
+        overflow: auto;
+        padding: 6px 8px;
+        border-top: 1px solid #1c2333;
+        color: #6f7b93;
+        white-space: pre;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="bar">
+      <button data-mode="translate" aria-pressed="true">移动</button>
+      <button data-mode="rotate">旋转</button>
+      <button data-mode="scale">缩放</button>
+      <button id="nudge">API 平移 box-1</button>
+      <button id="undo" disabled>撤销</button>
+      <button id="redo" disabled>重做</button>
+      <button id="save" disabled>保存</button>
+    </div>
+
+    <scene-editor id="viewport"></scene-editor>
+
+    <div id="status">初始化中…</div>
+    <div id="log"></div>
+
+    <script type="module" src="/src/minimal.ts"></script>
+  </body>
+</html>

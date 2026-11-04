@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Headless 自检 · scene-editor demo</title>
+    <link rel="stylesheet" href="/src/styles/demo.css" />
+  </head>
+  <body>
+    <header class="demo-bar">
+      <a class="demo-back" href="/demos/">← 全部 demo</a>
+      <strong>Headless 自检</strong>
+      <span class="demo-hint">createSceneEditor + FakeRuntime · 无 DOM / 无 GPU</span>
+      <span class="demo-pill" id="summary">…</span>
+    </header>
+
+    <main class="demo-main">
+      <p class="demo-note">
+        <code>createSceneEditor({ runtime: new FakeRuntime() })</code> 不创建 canvas、不碰 WebGL：
+        文档、历史、选择、事件、远端同步、键盘映射、插件生命周期全部在这里跑一遍。
+        这套断言同时被 <code>e2e/sdk-coverage.spec.ts</code> 读取。
+      </p>
+
+      <table class="demo-table">
+        <thead>
+          <tr>
+            <th style="width: 44px">#</th>
+            <th style="width: 260px">能力</th>
+            <th style="width: 90px">结果</th>
+            <th>说明</th>
+          </tr>
+        </thead>
+        <tbody id="results"></tbody>
+      </table>
+
+      <div class="demo-group" style="margin-top: 16px">
+        <h3>日志</h3>
+        <div class="demo-log" id="log"></div>
+      </div>
+    </main>
+
+    <script type="module" src="/src/demos/headless.ts"></script>
+  </body>
+</html>
