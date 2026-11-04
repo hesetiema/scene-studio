@@ -103,6 +103,8 @@ const report: PerfReport = {
 let runtime: ThreeRuntime | null = null;
 let finished = false;
 let heapBeforeLoad: number | null = null;
+/** Scene children after controls mount + one render (lights + grid), before load. */
+let sceneChildrenBaseline = -1;
 
 window.__perfBench = {
   report,
@@ -110,7 +112,6 @@ window.__perfBench = {
     if (finished || runtime == null) return;
     finished = true;
     try {
-      const sceneChildrenBaseline = 3; // ambient + directional + grid
       runtime.flushDisposers();
       const infoAfter = readInfo(runtime);
       const sampleIds = ["obj-0", `obj-${OBJECT_COUNT - 1}`];
@@ -258,6 +259,7 @@ async function run(): Promise<void> {
   runtime.camera.updateProjectionMatrix();
   runtime.render();
   report.infoBaseline = readInfo(runtime);
+  sceneChildrenBaseline = runtime.scene.children.length;
 
   performance.mark("perf:load-start");
   await runtime.loadDocument(buildDoc(OBJECT_COUNT));
