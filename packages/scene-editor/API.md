@@ -281,7 +281,7 @@ runtime.playAnimation("obj-1", 0);
 | `createAnimationRig` | glTF clips, mixers, transport |
 | `createRenderLoop` | Single re-entrancy-guarded render entry |
 
-**WebGPU opt-in:** construct a `WebGPURenderer`, `await renderer.init()` **before** constructing the runtime (constructor renders once), pass `rendererFactory: () => renderer`. Detect silent fallback via `renderer.backend.isWebGPUBackend === true`. Reference: `apps/playground/webgpu.html`.
+**WebGPU opt-in:** construct a `WebGPURenderer`, `await renderer.init()` **before** constructing the runtime (constructor renders once), pass `rendererFactory: () => renderer`. Detect silent fallback via `renderer.backend.isWebGPUBackend === true`. This seam is the only supported WebGPU path; WebGL2 remains the default and the CI-tested renderer.
 
 ### Renderer
 
@@ -322,8 +322,7 @@ Minimal chrome for the custom element (layout of canvas host). Import once in th
 ## Related demo code
 
 - `apps/playground/src/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
-- `apps/playground/src/ui/studio-shell.ts` — reference chrome wiring: toolbar, gizmo mode, explode preview, presets, exports, hotkeys
-- `apps/playground/src/ui/view-mode-controller.ts` — shading modes with owned/disposed material overrides
+- `apps/playground/src/viewer/viewer-controller.ts` — viewer state → engine updates (display, environment, animation)
+- `apps/playground/src/ui/studio-shell.ts` — composes HUD panels, hotkeys, explode preview
+- `apps/playground/src/viewer/display-modes.ts` — shading modes with owned/disposed material overrides
 - `apps/playground/src/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot
-- `apps/playground/webgpu.html` — WebGPU rendererFactory pattern
-- `apps/ssr-demo` — HTMX host pattern (D2): server owns routes/auth; element is the boundary

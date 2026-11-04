@@ -31,7 +31,11 @@ pnpm --filter @scenio/playground typecheck
 | `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element, D20) |
 | `src/styles/{base,controls,hud}.css` | HUD styling extracted from the 680-line inline `<style>` block |
 
-Additional entries: `webgpu.html` (WebGPU rendererFactory seam), `perf.html` (D10 bench).
+Additional entry: `perf.html` (D10 bench).
+
+WebGPU is still supported through the SDK's `rendererFactory` seam (see
+`packages/scene-editor/README.md`); the evaluation probe page was removed once
+the seam was documented and covered by the runtime contract.
 
 ## URL parameters
 

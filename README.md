@@ -7,14 +7,13 @@ Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-edi
 A web component (`<scene-editor>`) plus a headless core that together give any host page a 3D editor: load a JSON scene document, orbit/zoom, click-select, transform with gizmos, undo/redo, host-driven save with structured conflicts, and glTF animation playback. WebGL2 by default; WebGPU via a documented opt-in seam. Prefer to bring your own UI? `createSceneEditor()` gives you the full editing logic — state, history, selection, plugins, typed events — with zero DOM.
 
 - **Consumers:** see [`packages/scene-editor/README.md`](packages/scene-editor/README.md) for install/usage and [`packages/scene-editor/API.md`](packages/scene-editor/API.md) for the full API surface.
-- **Design rationale, decisions D1–D21, phase plans:** internal design doc (gstack project artifacts), not yet published.
+- **Design rationale (D1–D22):** internal design doc, not yet published; shipped feature specs live in [`docs/specs/`](docs/specs/).
 
 ## Layout
 
 ```
 packages/scene-editor/   the npm package (core + element + three adapter)
 apps/playground/         interactive demo + Playwright visual/perf baselines
-apps/ssr-demo/           HTMX / server-driven host pattern (D2)
 e2e/                     Playwright configs & specs (critical flows, studio tools, visual, perf)
 scripts/                 pack-smoke (npm pack consumer test)
 ```
@@ -25,7 +24,7 @@ scripts/                 pack-smoke (npm pack consumer test)
 
 - `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture the e2e suites assert on; the bare URL boots the mecha showcase.
 - `?select=<id>` selects an object and (optionally) applies `&move=x,y,z&rot=x,y,z&scale=x,y,z` for reproducible screenshots.
-- Host wiring lives in `src/main.ts` (runtime factory, save/conflict store, boot); DOM chrome lives in `src/ui/studio-shell.ts` with one controller per concern (`view-mode`, `explode`, `scene-presets`, `scene-export`, `hud`, `camera`).
+- Host wiring lives in `src/main.ts` (runtime factory, save/conflict store, boot); view state lives in `src/viewer/`; HUD chrome is composed from `src/ui/panels/` by `src/ui/studio-shell.ts`.
 
 ## Develop
 
@@ -58,11 +57,11 @@ CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.
 ## Versioning & release
 
 - Every completed phase bumps the minor (`0.x.0`) and tags it; the first stable release is `1.0.0` once the public API is locked.
-- Publish flow and npm scope selection: see TODOS.md (open decisions).
+- Publish flow: see TODOS.md; the npm scope is still undecided (`@scenio` is a placeholder).
 - `npm pack` must stay green (`pnpm test:pack`) — it is the release gate for consumer-facing package contents.
 
 ## Status
 
 `0.5.0` alpha. Not yet published to npm. API may still shift before `1.0.0`; after that, semver applies.
 
-Known roadmap items (TODOS.md): CRDT real-time collaboration, plugin `install(context)` expansion.
+Known roadmap items (TODOS.md): HDR environment maps, embedded-camera switching, morph-target UI.

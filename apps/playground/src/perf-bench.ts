@@ -14,7 +14,7 @@
  * The page only MEASURES — thresholds are applied by e2e/perf.spec.ts so CI
  * can override them (SwiftShader is not a real GPU).
  *
- * Two-phase handshake (same pattern as webgpu-probe):
+ * Two-phase handshake (driven by e2e/perf.spec.ts):
  *   phase 1 → report.status = "ready"; spec reads metrics + calls finish();
  *   phase 2 → unload checks → "done".
  */

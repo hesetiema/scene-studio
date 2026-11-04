@@ -32,10 +32,11 @@ export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
   /**
    * Injectable seam: defaults to real WebGLRenderer via createRenderer (D1).
-   * Documented WebGPU opt-in (evaluated viable 2026-10): create a WebGPURenderer,
-   * `await renderer.init()` BEFORE constructing the runtime (the constructor renders),
-   * then `rendererFactory: () => renderer`. Detect silent fallback via
-   * `renderer.backend.isWebGPUBackend === true`. Reference: apps/playground/webgpu.html.
+   * Documented WebGPU opt-in: create a WebGPURenderer, `await renderer.init()`
+   * BEFORE constructing the runtime (the constructor renders), then
+   * `rendererFactory: () => renderer`. Detect silent fallback via
+   * `renderer.backend.isWebGPUBackend === true`. This seam is the only supported
+   * WebGPU path; WebGL2 remains the default.
    */
   rendererFactory?: (canvas: HTMLCanvasElement) => RendererHandle;
   /** Injectable seam: defaults to real three OrbitControls. */

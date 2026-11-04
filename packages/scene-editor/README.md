@@ -294,14 +294,14 @@ SceneEditorElement.runtimeFactory = async (canvas) => {
 // renderer.backend.isWebGPUBackend === true
 ```
 
-Reference demo: `apps/playground/webgpu.html`. WebGL2 remains the default and the CI-tested path.
+WebGL2 remains the default and the CI-tested path; the seam is the only supported WebGPU integration point (no probe/demo app ships).
 
 ## Compatibility
 
 | Axis | Supported | How verified |
 |---|---|---|
 | `three` | `^0.186.0` (peer) | CI matrix pins `0.186.0` and `latest` within the range (D14) |
-| Renderer | WebGL2 (default), WebGPU via `rendererFactory` | WebGPU evaluated viable 2026-10; opt-in only |
+| Renderer | WebGL2 (default), WebGPU via `rendererFactory` | WebGL2 is CI-tested; WebGPU is opt-in, host-owned |
 | Formats | `.glb`, `.gltf` | Unit tests + e2e; Draco/KTX2 optional inject |
 | Browsers | Any browser with WebGL2 + ES modules | Playwright e2e (Chromium in CI); other engines best-effort |
 | Module | ESM only (`"type": "module"`) | `npm pack` consumption test (`pnpm test:pack`) |
@@ -338,7 +338,7 @@ pnpm test:perf          # frame-time + first-interactive gate (D10)
 pnpm test:pack          # npm pack → fresh consumer install smoke
 ```
 
-Playground apps: `apps/playground` (full editor + visual baselines), `apps/ssr-demo` (HTMX/server-driven host pattern).
+Playground app: `apps/playground` (full editor + visual baselines).
 
 ## License
 

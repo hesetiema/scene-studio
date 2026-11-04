@@ -16,11 +16,9 @@ export default defineConfig({
     ],
   },
   // one optimizer run for all three.js subpaths keeps three.core shared
-  // (class identity between `three` and `three/webgpu` — D1 probe verifies)
   optimizeDeps: {
     include: [
       "three",
-      "three/webgpu",
       "three/examples/jsm/loaders/GLTFLoader.js",
       "three/examples/jsm/loaders/DRACOLoader.js",
       "three/examples/jsm/loaders/OBJLoader.js",
@@ -36,7 +34,6 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: html("index.html"),
-        webgpu: html("webgpu.html"),
         perf: html("perf.html"),
       },
     },

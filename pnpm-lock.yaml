@@ -33,21 +33,6 @@ importers:
         specifier: ^8.3.4
         version: 8.3.4(@types/node@26.6.5)
 
-  apps/ssr-demo:
-    devDependencies:
-      '@scenio/scene-editor':
-        specifier: workspace:*
-        version: link:../../packages/scene-editor
-      three:
-        specifier: ^0.186.0
-        version: 0.186.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vite:
-        specifier: ^8.3.4
-        version: 8.3.4(@types/node@26.6.5)
-
   packages/scene-editor:
     dependencies:
       zod:
