@@ -1,15 +1,43 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
-import type { LoadedAsset } from "./asset-cache";
+import type { AssetLoadContext, AssetLoadProgress, LoadedAsset } from "./asset-cache";
 
 /**
  * glTF/GLB loader adapter (D16). The SDK depends on a narrow structural
  * interface so three's GLTFLoader (or a test stub) can be injected without
  * the core importing three directly.
+ *
+ * `load` is optional: when present (three's GLTFLoader has it) the adapter can
+ * report byte progress; otherwise it falls back to `loadAsync` with no progress.
  */
 export interface MinimalGltfLoader {
   loadAsync(url: string): Promise<{ scene: unknown; animations?: unknown[] }>;
+  load?(
+    url: string,
+    onLoad: (data: { scene: unknown; animations?: unknown[] }) => void,
+    onProgress?: (event: { loaded: number; total: number }) => void,
+    onError?: (error: unknown) => void,
+  ): unknown;
   setDRACOLoader?(loader: unknown): void;
   setKTX2Loader?(loader: unknown): void;
+}
+
+/** Use `load` when progress matters, `loadAsync` otherwise. */
+export function loadGltfScene(
+  loader: MinimalGltfLoader,
+  url: string,
+  onProgress?: (progress: AssetLoadProgress) => void,
+): Promise<{ scene: unknown; animations?: unknown[] }> {
+  if (!onProgress || typeof loader.load !== "function") {
+    return loader.loadAsync(url);
+  }
+  return new Promise((resolve, reject) => {
+    loader.load!(
+      url,
+      (data) => resolve(data),
+      (event) => onProgress({ loaded: event.loaded, total: event.total }),
+      (error) => reject(error),
+    );
+  });
 }
 
 export interface GltfAssetLoaderOptions {
@@ -29,7 +57,10 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
   if (options.dracoLoader) gltfLoader.setDRACOLoader?.(options.dracoLoader);
   if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
 
-  return async function loadGltfAsset(assetId: string): Promise<LoadedAsset> {
+  return async function loadGltfAsset(
+    assetId: string,
+    context?: AssetLoadContext,
+  ): Promise<LoadedAsset> {
     const url = resolveUrl(assetId);
     const ext = url.split("?")[0]?.split(".").pop()?.toLowerCase();
     if (ext !== "glb" && ext !== "gltf") {
@@ -41,7 +72,7 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
     }
     let sceneData: { scene: unknown; animations?: unknown[] };
     try {
-      sceneData = await gltfLoader.loadAsync(url);
+      sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load glTF asset: ${assetId}`, {
         cause,

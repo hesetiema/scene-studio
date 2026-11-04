@@ -59,6 +59,7 @@ export {
   createSceneEditor,
   type SceneEditor,
   type SceneEditorEventMap,
+  type SceneEditorElementEventMap,
   type CreateSceneEditorOptions,
 } from "./runtime/create-scene-editor";
 export { handleEditorKeyCommand, type KeyboardLike } from "./runtime/keyboard";

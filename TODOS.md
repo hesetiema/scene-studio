@@ -2,8 +2,14 @@
 
 ## 查看器能力补齐
 
-0.5.0 已完成运行时拆分、glTF 动画、查看器主链路与视图状态持久化。剩余待办：
+0.6.0 完成了预览主链路：`<scene-editor src>` 单行预览、自动取景（`autoFrame`）、`progress`/`load` 生命周期、tone mapping / exposure，以及 `visibility-change` 与按需开启的 `view-changing` 元素事件。
 
+剩余待办：
+
+- **首帧体验**：`poster` 与 `reveal=auto|interaction|manual`，避免加载期闪白。
+- **交互手感**：OrbitControls 阻尼与可关闭的交互提示。
+- **可见性省电**：`visibility-change` 已可用，尚未接入渲染暂停。
+- **解码器注入**：element 层暴露 Draco/KTX2/Meshopt 注入点（loader 层已支持）。
 - **HDR 环境贴图**：PMREMGenerator + RoomEnvironment/HDR 预设；需要 `view.environment` 增字段与 schema 迁移（v3）。
 - **模型内嵌相机切换**：遍历 asset 的 `isCamera`，切换 `runtime.camera` 或复制参数；需要 `RuntimeContract` 增加相机切换语义。
 - **Morph target UI**：每个 mesh 的 `morphTargetInfluences` 滑块，与动画驱动互斥。
@@ -28,4 +34,4 @@
 ## 发布
 
 - npm scope：`@scenio` 为占位，首次发布前选定。
-- 发布状态：npm `latest` 为 `0.3.0`；仓库内 `0.4.0` / `0.5.0` 尚未发布。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。
+- 发布状态：npm `latest` 为 `0.3.0`；仓库内 `0.4.0`–`0.6.0` 尚未发布。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。

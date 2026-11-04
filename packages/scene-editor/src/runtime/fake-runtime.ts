@@ -3,6 +3,7 @@ import { createDefaultViewState } from "../core/document/default-view";
 import type {
   RuntimeContract,
   RuntimeEventMap,
+  ToneMappingMode,
   Transform,
 } from "./runtime-contract";
 import { TypedEventBus } from "./typed-event-bus";
@@ -18,14 +19,22 @@ export class FakeRuntime implements RuntimeContract {
     pick: [] as Array<[number, number]>,
     flushDisposers: 0,
     applyViewState: [] as ViewState[],
+    autoFrame: 0,
+    setToneMapping: [] as ToneMappingMode[],
+    setExposure: [] as number[],
   };
   pickResult: string | null = null;
   /** When true, applyViewState re-emits view-change (contract-violation probe). */
   viewChangeOnApply = false;
   #view: ViewState = createDefaultViewState();
+  #liveViewEvents = false;
 
   async loadDocument(doc: SceneDocument): Promise<void> {
     this.calls.loadDocument.push(doc);
+    // Mirrors ThreeRuntime: one progress ramp per load, then a `load` edge.
+    this.events.emit("load-progress", { totalProgress: 0, reason: "model-load" });
+    this.events.emit("load-progress", { totalProgress: 1, reason: "model-load" });
+    this.events.emit("load", { sceneId: doc.sceneId });
   }
 
   applyTransform(id: string, transform: Transform): void {
@@ -64,5 +73,34 @@ export class FakeRuntime implements RuntimeContract {
     this.#view = structuredClone(view);
     const payload: RuntimeEventMap["view-change"] = { view: this.getViewState() };
     this.events.emit("view-change", payload);
+  }
+
+  /** Live sampling is opt-in, mirroring ThreeRuntime. */
+  setLiveViewEvents(enabled: boolean): void {
+    this.#liveViewEvents = enabled;
+  }
+
+  autoFrame(): void {
+    this.calls.autoFrame += 1;
+  }
+
+  setToneMapping(mode: ToneMappingMode): void {
+    this.calls.setToneMapping.push(mode);
+  }
+
+  setExposure(value: number): void {
+    this.calls.setExposure.push(value);
+  }
+
+  get liveViewEvents(): boolean {
+    return this.#liveViewEvents;
+  }
+
+  /** Test helper: in-flight sample; a no-op unless live sampling is enabled. */
+  simulateViewChanging(view: ViewState): void {
+    if (!this.#liveViewEvents) return;
+    this.#view = structuredClone(view);
+    const payload: RuntimeEventMap["view-changing"] = { view: this.getViewState() };
+    this.events.emit("view-changing", payload);
   }
 }

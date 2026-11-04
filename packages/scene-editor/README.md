@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.5.0` alpha in this repo. The latest version on npm is `0.3.0`; `0.4.0`/`0.5.0` are unreleased. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
+**Status:** `0.6.0` alpha in this repo. The latest version on npm is `0.3.0`; `0.4.0`–`0.6.0` are unreleased. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
@@ -22,7 +22,7 @@ pnpm add @scenio/scene-editor three
 
 Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 
-> This README tracks the repo (`0.5.0`). `npm install` currently resolves `0.3.0`; to try unreleased features, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
+> This README tracks the repo (`0.6.0`). `npm install` currently resolves `0.3.0`; to try unreleased features, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
 
 ## Quick start
 
@@ -65,6 +65,22 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 ```
 
 In this page you can orbit (drag), zoom (wheel), click an object to select it (`Shift`/`Ctrl`/`Cmd`+click toggles into a multi-selection), drag the transform gizmo, and press `Ctrl+Z` / `Ctrl+Shift+Z` for undo/redo (only when focus is inside the element).
+
+## Preview a glTF in one line
+
+If all you need is to show a model, skip the document entirely:
+
+```html
+<scene-editor src="/models/robot.glb" style="height: 480px"></scene-editor>
+```
+
+The element synthesizes a one-mesh document, auto-frames the camera, and reports lifecycle through `progress` → `load` (`load.detail.url` carries the source). Previews default to ACES tone mapping — set `tone-mapping="none"` to opt out, and call `frameModel()` to re-fit after a layout change. An explicit `loadDocument()` still wins until `src` changes.
+
+```ts
+el.addEventListener("progress", ({ detail }) => setBar(detail.totalProgress));
+el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
+el.addEventListener("error", ({ detail }) => showError(detail.code));
+```
 
 ## Headless usage
 
@@ -109,7 +125,7 @@ window.addEventListener("keydown", (e) => {
 });
 ```
 
-Selection is a one-class subsystem: `select` sets, `add`/`remove` compose, `toggle` flips — all emit `selection-change`. Plugins use the same `install(context)` contract as the element. Events: `selection-change`, `history-change`, `document-dirty`, `save-request`, `error`.
+Selection is a one-class subsystem: `select` sets, `add`/`remove` compose, `toggle` flips — all emit `selection-change`. Plugins use the same `install(context)` contract as the element. Events: `selection-change`, `history-change`, `document-dirty`, `save-request`, `view-change`, `view-changing` (opt-in), `error`.
 
 Mental model if you know the PlayCanvas Editor API: our `history` / `selection` / document+runtime ≈ their `editor.api.globals.history` / `selection` / `entities` — same separation of logic from UI.
 
@@ -206,17 +222,23 @@ const live = el.getViewState();     // live viewport view
 el.setViewState(view);           // record + apply a view; dirty, never undoable
 ```
 
-### Events (all `CustomEvent`s)
+### Events (all `CustomEvent`s, dispatched on the element; none bubble or compose)
 
 | Event | Detail | Fired when |
 |---|---|---|
-| `scene-ready` | — | Init finished; canvas + runtime live |
+| `scene-ready` | — | Init finished; canvas + runtime live (element-only) |
+| `progress` | `{ totalProgress, reason }` | Load progress, monotonic 0..1 |
+| `load` | `{ sceneId, url }` | Document mounted and renderable |
 | `selection-change` | `{ ids: string[] }` | Selection changed (click, API, clear) |
 | `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command executed / undo / redo |
 | `document-dirty` | `{ dirty: boolean }` | Dirty flag crossed false↔true |
 | `save-request` | `{ reason, document, revision }` | Host should persist (manual `requestSave()` today) |
-| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed |
+| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Settled viewport view |
+| `view-changing` | `{ view }` | In-flight camera sample — opt in with `live-view-events`, high frequency |
+| `visibility-change` | `{ visible: boolean }` | Element entered/left the viewport (element-only) |
 | `error` | `{ code, message, cause? }` | Any SDK failure — the reliable failure channel |
+
+`view-changing` exists for live consumers (remote camera sync, recording, a HUD); persist on `view-change` instead. `visibility-change` needs no plumbing on hosts without `IntersectionObserver`, and `SceneEditorElement.visibilityObserverFactory = () => null` disables it. Full contract + versioning rules: [API.md](API.md#element-events-customevent).
 
 Keyboard shortcuts captured while focus is inside the element: `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, and `G`/`R`/`S` (reserved tool modes, currently swallowed) — exported as `CAPTURED_COMBOS`.
 

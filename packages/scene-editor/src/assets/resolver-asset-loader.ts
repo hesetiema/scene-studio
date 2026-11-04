@@ -1,6 +1,6 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
-import type { LoadedAsset } from "./asset-cache";
-import type { MinimalGltfLoader } from "./gltf-asset-loader";
+import type { AssetLoadContext, LoadedAsset } from "./asset-cache";
+import { loadGltfScene, type MinimalGltfLoader } from "./gltf-asset-loader";
 
 /** Host-provided URL resolution (design §10). SDK never hardcodes asset paths. */
 export interface AssetResolver {
@@ -25,7 +25,10 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
     if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
   }
 
-  return async function loadResolvedAsset(assetId: string): Promise<LoadedAsset> {
+  return async function loadResolvedAsset(
+    assetId: string,
+    context?: AssetLoadContext,
+  ): Promise<LoadedAsset> {
     let url: string;
     try {
       const resolved = await resolver.resolve(assetId);
@@ -47,10 +50,10 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       );
     }
 
-    let sceneData: { scene: unknown };
+    let sceneData: { scene: unknown; animations?: unknown[] };
     try {
       if (!gltfLoader) throw new Error("gltfLoader not provided");
-      sceneData = await gltfLoader.loadAsync(url);
+      sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {
         cause,
@@ -63,11 +66,16 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       isObject3D?: boolean;
       dispose?: () => void;
     };
-    return {
+    const asset: LoadedAsset = {
       scene: root,
       dispose: () => {
         (root as { dispose?: () => void }).dispose?.();
       },
     };
+    // Forward clips: the resolver path is the one <scene-editor src> uses.
+    if (sceneData.animations && sceneData.animations.length > 0) {
+      asset.animations = sceneData.animations;
+    }
+    return asset;
   };
 }

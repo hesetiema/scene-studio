@@ -11,7 +11,21 @@ export interface LoadedAsset {
   animations?: readonly unknown[];
 }
 
-export type AssetLoader = (assetId: string) => Promise<LoadedAsset>;
+/** Byte-level progress for one asset load (`total` may be 0 when unknown). */
+export interface AssetLoadProgress {
+  loaded: number;
+  total: number;
+}
+
+/** Optional per-load context handed to the loader (progress reporting). */
+export interface AssetLoadContext {
+  onProgress?: (progress: AssetLoadProgress) => void;
+}
+
+export type AssetLoader = (
+  assetId: string,
+  context?: AssetLoadContext,
+) => Promise<LoadedAsset>;
 
 interface CacheEntry {
   asset: LoadedAsset | undefined;
@@ -51,7 +65,11 @@ export class AssetCache {
     });
   }
 
-  async retain(assetId: string): Promise<LoadedAsset> {
+  /**
+   * Acquire a reference. Only the call that actually starts the load receives
+   * `context` progress; later concurrent retains join the same promise.
+   */
+  async retain(assetId: string, context?: AssetLoadContext): Promise<LoadedAsset> {
     let entry = this.#entries.get(assetId);
     if (entry?.asset) {
       entry.refCount += 1;
@@ -66,7 +84,7 @@ export class AssetCache {
     }
     entry = { asset: undefined, refCount: 0 };
     this.#entries.set(assetId, entry);
-    const pending = this.#loader(assetId).catch((cause) => {
+    const pending = this.#loader(assetId, context).catch((cause) => {
       this.#entries.delete(assetId);
       // Loaders already classify their failures (resolve vs load vs format);
       // keep those codes so hosts can switch on the documented AssetErrorCode.

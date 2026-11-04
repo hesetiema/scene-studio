@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.5.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
+Version: `0.6.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
 Docs: [English README](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.md)
 
@@ -41,7 +41,9 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | getters | `canUndo` `canRedo` `dirty` `revision` `selectedIds` `runtime` | |
 | `destroy` | `() => void` | Idempotent: tears down plugins, flushes controller + runtime disposers, clears handlers. Later calls throw `lifecycle` |
 
-**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `error` `{code, message, cause?}`.
+**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `view-changing` `{view: ViewState}` (opt-in, high frequency) · `progress` `{totalProgress, reason}` · `load` `{sceneId}` · `visibility-change` `{visible: boolean}` (**element-only** — the facade has no DOM and never emits it) · `error` `{code, message, cause?}`.
+
+`SceneEditorElementEventMap` = the map above, with `load` widened to `{sceneId, url: string | null}`, plus `scene-ready: null`. It is the typed source for `el.addEventListener(...)`.
 
 Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping function, for hosts that keep their own controller.
 
@@ -94,6 +96,14 @@ interface RuntimeContract {
   flushDisposers(): void;
   getViewState(): ViewState;
   applyViewState(view: ViewState): void;
+  /** Optional: toggle high-frequency `view-changing` sampling (default off). */
+  setLiveViewEvents?(enabled: boolean): void;
+  /** Optional: fit the camera to the content bounds. */
+  autoFrame?(): void;
+  /** Optional: display transfer function (never persisted). */
+  setToneMapping?(mode: "none" | "linear" | "aces" | "agx" | "neutral"): void;
+  /** Optional: exposure multiplier. */
+  setExposure?(value: number): void;
   readonly events: RuntimeEventBus;
 }
 
@@ -113,6 +123,9 @@ type Transform = {
 | `transform-commit` | `{ id, from: Transform, to: Transform }` — one completed gizmo drag |
 | `error` | `{ code: string, message: string, cause? }` |
 | `view-change` | `{ view: ViewState }` — a **user** interaction ended; never emitted while `applyViewState` runs |
+| `view-changing` | `{ view: ViewState }` — in-flight camera sample; only after `setLiveViewEvents(true)`, never during `applyViewState`, and only when the camera actually moved |
+| `load-progress` | `{ totalProgress: number, reason: string }` — monotonic 0..1 across the document's meshes |
+| `load` | `{ sceneId: string }` — the document is mounted and renderable (fires after `load-progress` reaches 1) |
 
 | Export | Description |
 |---|---|
@@ -185,12 +198,31 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `SceneEditorElement` | The custom element class |
 | `CAPTURED_COMBOS` | `readonly ["ctrl+z", "ctrl+shift+z", "ctrl+y", "g", "r", "s"]` — keyboard capture list |
 
+### Preview mode — `<scene-editor src>`
+
+The shortest path from a glTF URL to a rendered model:
+
+```html
+<scene-editor src="/models/robot.glb" style="height: 480px"></scene-editor>
+```
+
+- The element synthesizes a one-mesh `SceneDocument` (`assetId: "__src__"`, name taken from the filename), loads it through `createResolverAssetLoader`, then calls `autoFrame()`.
+- `progress` / `load` / `error` are the lifecycle surface; `load.url` carries the resolved source.
+- Previews default to `tone-mapping="aces"`; pass `tone-mapping="none"` to keep three's raw output.
+- `loadDocument()` overrides the preview. Changing `src` afterwards switches back to preview and re-frames.
+- No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` still wins.
+- `createSrcDocument(url)`, `SRC_ASSET_ID`, `SRC_SCENE_ID` are exported from `./element` for the same document shape in a headless setup.
+
 ### `SceneEditorElement` properties & methods
 
 | Member | Kind | Description |
 |---|---|---|
 | `runtimeFactory` | **static** | `(canvas, options?) => RuntimeContract`. Defaults to `ThreeRuntime` + lazy GLTF. Override before connect to inject assets / WebGPU / test fakes |
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
+| `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. An explicit `loadDocument()` takes precedence until `src` changes again |
+| `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `aces`; documents stay on the engine default unless set |
+| `exposure` | attribute | Exposure multiplier applied on top of the tone mapping |
+| `frameModel()` | method | Fit the camera to the current bounds ("reset view"); never marks the document dirty |
 | `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the reliable failure channel |
 | `controlsReady` | promise | Resolves when gizmo mounted; non-three runtimes resolve immediately |
 | `loadDocument(doc)` | method | Validated load; throws/rejects with typed errors. Overlapping calls are serialized (call order wins) |
@@ -207,19 +239,63 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `getViewState()` / `setViewState(view)` | method | View state: live read / record + apply (dirty, not undoable) |
 | `use(plugin)` / `unuse(id)` | method | Plugin install/uninstall; pre-connect `use` is queued; duplicate id throws |
 | `revision` / `dirty` / `selectedIds` | getters | |
+| `visible` | getter | Whether the element currently intersects the viewport; mirrors `visibility-change` without waiting for an event |
+| `live-view-events` | attribute | Opt in to the high-frequency `view-changing` event. Toggleable at runtime |
+| `visibilityObserverFactory` | **static** | Seam for `visibility-change`; default uses `IntersectionObserver`, return `null` to disable |
 | `connectedCallback` / `disconnectedCallback` | lifecycle | Teardown destroys runtime + all plugins |
 
 ### Element events (CustomEvent)
 
-| Event | `detail` | When |
-|---|---|---|
-| `scene-ready` | — | Init complete |
-| `selection-change` | `{ ids: string[] }` | Selection changed |
-| `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | Command/undo/redo |
-| `document-dirty` | `{ dirty: boolean }` | Dirty crossed the boundary |
-| `save-request` | `{ reason: "manual", document, revision }` | Host should persist |
-| `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed |
-| `error` | `{ code, message, cause? }` | Any SDK failure, including runtime/asset errors (`AssetErrorCode` values are forwarded verbatim) |
+Every event is dispatched **on the element itself** with `bubbles: false`, `composed: false`, `cancelable: false`. That is part of the contract, not an implementation detail: bind a direct listener or a framework ref, never rely on event delegation, and never expect `preventDefault()` to change SDK behaviour.
+
+| Event | `detail` | Bubbles | Composed | When | Since |
+|---|---|---|---|---|---|
+| `scene-ready` | `null` | no | no | Init complete; canvas + runtime live. **Element-only** | ≤ 0.5.0 |
+| `progress` | `{ totalProgress: number, reason: string }` | no | no | Load progress, monotonic 0..1. Not a success signal | 0.6.0 |
+| `load` | `{ sceneId, url: string \| null }` | no | no | Document mounted and renderable; `url` is set only for the `src` path | 0.6.0 |
+| `selection-change` | `{ ids: string[] }` | no | no | Selection changed (click, API, clear) | ≤ 0.5.0 |
+| `history-change` | `{ canUndo, canRedo, dirty, lastCommand? }` | no | no | Command executed / undo / redo | ≤ 0.5.0 |
+| `document-dirty` | `{ dirty: boolean }` | no | no | Dirty crossed false↔true (edge-triggered) | ≤ 0.5.0 |
+| `save-request` | `{ reason: "manual", document, revision }` | no | no | Host should persist; confirm with `markSaved()` | ≤ 0.5.0 |
+| `view-change` | `{ view: ViewState, source: "interaction" \| "api" \| "load" }` | no | no | Settled view (one per gesture / API call / scene load) | ≤ 0.5.0 |
+| `view-changing` | `{ view: ViewState }` | no | no | In-flight camera sample. **Opt-in** via `live-view-events`; high frequency | 0.6.0 |
+| `visibility-change` | `{ visible: boolean }` | no | no | Element entered/left the viewport. **Element-only** | 0.6.0 |
+| `error` | `{ code, message, cause? }` | no | no | Any SDK failure, including runtime/asset errors (`AssetErrorCode` values are forwarded verbatim) | ≤ 0.5.0 |
+
+Typed listeners come from `SceneEditorElementEventMap`:
+
+```ts
+el.addEventListener("view-change", (event) => {
+  event.detail.view.camera.fov; // inferred, no cast
+});
+el.addEventListener("scene-ready", () => {});
+```
+
+**`view-changing` is opt-in on purpose.** It fires on every damped camera frame; persisting or POSTing on it will melt the host. Use it only for live consumers (remote camera sync, recording, a numeric HUD) and keep `view-change` for persistence:
+
+```html
+<scene-editor live-view-events></scene-editor>
+```
+
+```ts
+el.addEventListener("view-changing", ({ detail }) => sendCamera(detail.view));
+el.addEventListener("view-change", ({ detail }) => persistView(detail.view));
+```
+
+Programmatic `setViewState()` and document loads never produce `view-changing`; only real camera movement does. Toggling the attribute on/off is safe at runtime — enabling seeds the sampler, so the current view is never re-announced.
+
+**`visibility-change` is element-only.** The headless facade owns no DOM, so `editor.on("visibility-change")` is typed but never fires — listen on the element. It is backed by `IntersectionObserver`; platforms without one (SSR, some test DOMs) stay silent, and `SceneEditorElement.visibilityObserverFactory = () => null` disables it explicitly. Read the current state without waiting via `el.visible`.
+
+### Event contract & versioning
+
+Events are a published contract, versioned with the package:
+
+1. **Names never change inside a major.** Additions ship in a minor; removal or renaming waits for a major.
+2. **Payloads only grow.** New fields are optional; existing field types never widen or narrow in a minor.
+3. **Edge-triggered stays edge-triggered.** `document-dirty` and `visibility-change` fire only on crossings. `view-changing` is the only high-frequency event and stays opt-in.
+4. **Deprecation has a tail.** A retired event is marked `@deprecated` for at least one minor while still being dispatched, then removed in the next major. Downstream code cannot detect a silently vanished event — model-viewer's old `scene-graph-ready` / `preload` are still listened to by popular wrappers while the current implementation no longer dispatches them.
+5. **Dispatch flags are part of the contract.** `bubbles` / `composed` / `cancelable` are fixed at `false`; changing any of them is a breaking change.
+6. **Errors carry a stable `code`.** Codes are documented, never reused, and hosts branch on `code` — never on `message`.
 
 ---
 

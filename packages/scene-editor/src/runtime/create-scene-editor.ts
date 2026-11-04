@@ -29,7 +29,39 @@ export type SceneEditorEventMap = {
    * "api" (host called setViewState), "load" (documented view applied for a new scene).
    */
   "view-change": { view: ViewState; source: "interaction" | "api" | "load" };
+  /**
+   * In-flight view sample while the camera is moving (D22). Only emitted when
+   * the host opted in through the runtime's `setLiveViewEvents(true)` (element:
+   * the `live-view-events` attribute). High frequency — do not persist on it.
+   */
+  "view-changing": { view: ViewState };
+  /**
+   * Aggregate load progress (0..1), monotonic per load. `reason` names the
+   * activity ("model-load"). Safe for a progress bar; not a success signal —
+   * a failed load still ends at 1.
+   */
+  progress: { totalProgress: number; reason: string };
+  /** The document finished loading and the runtime is renderable. */
+  load: { sceneId: string };
+  /**
+   * Element-only: the `<scene-editor>` host entered or left the viewport.
+   * The headless facade owns no DOM, so `editor.on("visibility-change")` never
+   * fires — listen on the element instead.
+   */
+  "visibility-change": { visible: boolean };
   error: { code: string; message: string; cause?: unknown };
+};
+
+/**
+ * Full element contract: facade events plus the two DOM-only ones. Element
+ * listeners are typed against this map; `SceneEditorEventMap` deliberately
+ * still carries `visibility-change` so one import describes both surfaces.
+ */
+export type SceneEditorElementEventMap = Omit<SceneEditorEventMap, "load"> & {
+  /** Init finished; canvas + runtime live. `detail` is `null` (no payload). */
+  "scene-ready": null;
+  /** The element adds the `src` URL; headless hosts get `url: null`. */
+  load: { sceneId: string; url: string | null };
 };
 
 export interface CreateSceneEditorOptions {
@@ -123,6 +155,16 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
     // The controller records the view on the document; the facade attributes the source.
     this.runtime.events.on("view-change", ({ view }) => {
       this.#emit("view-change", { view, source: "interaction" });
+    });
+    // Live sampling is opt-in at the runtime seam; forward verbatim when it fires.
+    this.runtime.events.on("view-changing", ({ view }) => {
+      this.#emit("view-changing", { view });
+    });
+    this.runtime.events.on("load-progress", (payload) => {
+      this.#emit("progress", payload);
+    });
+    this.runtime.events.on("load", (payload) => {
+      this.#emit("load", payload);
     });
     // Runtime failures (asset resolve/load, render) are one error channel for
     // hosts — the element docs promise `error` is the reliable surface (D6).

@@ -9,4 +9,10 @@ export interface RendererHandle {
   setSize(width: number, height: number, updateStyle?: boolean): void;
   setPixelRatio(value: number): void;
   dispose(): void;
+  /**
+   * Optional display settings. Present on a real WebGLRenderer; test stubs that
+   * omit them make `setToneMapping` / `setExposure` a silent no-op.
+   */
+  toneMapping?: number;
+  toneMappingExposure?: number;
 }

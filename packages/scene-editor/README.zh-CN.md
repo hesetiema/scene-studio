@@ -4,7 +4,7 @@
 
 > 英文完整文档见 [README.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md)，完整 API 见 [API.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md)。本页是中文快速上手与核心概念。
 
-**状态：** 仓库内为 `0.5.0` alpha；npm 最新版本是 `0.3.0`，`0.4.0`/`0.5.0` 尚未发布。`1.0.0` 之前 API 仍可能调整。
+**状态：** 仓库内为 `0.6.0` alpha；npm 最新版本是 `0.3.0`，`0.4.0`–`0.6.0` 尚未发布。`1.0.0` 之前 API 仍可能调整。
 
 **编辑范围：** 变换与视图状态；对象增删/改父子级、材质写入文档、morph target、HDR 环境尚未进入文档 API。
 
@@ -21,7 +21,7 @@ pnpm add @scenio/scene-editor three
 
 `three@^0.186.0` 是 peer dependency，需要自行安装。
 
-> 本页跟随仓库 `0.5.0`。`npm install` 目前安装到 `0.3.0`；想使用未发布功能，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
+> 本页跟随仓库 `0.6.0`。`npm install` 目前安装到 `0.3.0`；想使用未发布功能，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
 
 ## 入口
 
@@ -74,6 +74,22 @@ pnpm add @scenio/scene-editor three
 
 拖拽旋转，滚轮缩放，点击选择（`Shift`/`Ctrl`/`Cmd` + 点击多选），拖动 gizmo 变换；焦点在元素内时支持 `Ctrl+Z` / `Ctrl+Shift+Z`。
 
+## 一行预览 glTF
+
+只需要展示模型时，可以不写文档：
+
+```html
+<scene-editor src="/models/robot.glb" style="height: 480px"></scene-editor>
+```
+
+元素会自动合成单对象文档、自动取景，并通过 `progress` → `load` 上报生命周期（`load.detail.url` 为加载源）。预览默认使用 ACES 色调映射，可用 `tone-mapping="none"` 关闭；容器尺寸变化后可调用 `frameModel()` 重新取景。显式 `loadDocument()` 仍然优先，直到 `src` 再次变化。
+
+```ts
+el.addEventListener("progress", ({ detail }) => setBar(detail.totalProgress));
+el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
+el.addEventListener("error", ({ detail }) => showError(detail.code));
+```
+
 ## Headless
 
 ```ts
@@ -95,7 +111,9 @@ editor.on("save-request", ({ document, revision }) => {
 editor.requestSave();
 ```
 
-`createSceneEditor({ runtime })` 必须传入 runtime：单测用 `FakeRuntime`，生产用 `ThreeRuntime`，也可以实现自己的 `RuntimeContract`。事件包括 `selection-change`、`history-change`、`document-dirty`、`save-request`、`view-change`、`error`。
+`createSceneEditor({ runtime })` 必须传入 runtime：单测用 `FakeRuntime`，生产用 `ThreeRuntime`，也可以实现自己的 `RuntimeContract`。事件包括 `selection-change`、`history-change`、`document-dirty`、`save-request`、`view-change`、`view-changing`（需开启）、`error`。
+
+Element 额外提供两个 DOM 专属事件：`visibility-change`（进入/离开视口，`{ visible: boolean }`）和恒有的 `scene-ready`。`view-changing` 是高频相机采样，需要 `<scene-editor live-view-events>` 显式开启；持久化请用 `view-change`。完整契约（含冒泡/合成/可取消均为 `false` 与版本策略）见 [API.md](API.md#element-events-customevent)。
 
 ## 文档模型
 
