@@ -189,8 +189,37 @@ export class SceneEditorElement extends HTMLElement {
     this.#requireEditor().markSaved(serverRevision);
   }
 
+  /**
+   * Inbound remote update (D17): fast-forwards only when there are no local
+   * edits and the remote is the exact next revision; otherwise rejects with a
+   * structured `conflict` error carrying `{ base, incoming, local }`.
+   */
+  applyRemote(input: unknown, options: { baseRevision: number }): Promise<void> {
+    return this.#requireEditor().applyRemote(input, options);
+  }
+
   selectObject(id: string): void {
     this.#requireEditor().select([id]);
+  }
+
+  /** Set the selection to exactly `ids` (multi-select, same semantics as the facade). */
+  select(ids: string[]): void {
+    this.#requireEditor().select(ids);
+  }
+
+  /** Add ids to the current selection (shift/ctrl click, marquee results). */
+  addToSelection(ids: string[]): void {
+    this.#requireEditor().add(ids);
+  }
+
+  /** Remove ids from the current selection. */
+  removeFromSelection(ids: string[]): void {
+    this.#requireEditor().remove(ids);
+  }
+
+  /** Flip one id in the current selection. */
+  toggleSelection(id: string): void {
+    this.#requireEditor().toggle(id);
   }
 
   executeCommand(command: Command): void {
@@ -259,10 +288,17 @@ export class SceneEditorElement extends HTMLElement {
       this.#editor = editor;
 
       // Click-to-select (P2-T7): pick on canvas click, empty → clear.
+      // Shift / Ctrl / Cmd makes the click additive (toggle), matching the
+      // facade's multi-select surface (`add` / `remove` / `toggle`).
       const onClick = (event: MouseEvent): void => {
         const picked = runtime.pick(event.clientX, event.clientY);
-        if (picked) editor.select([picked]);
-        else editor.clearSelection();
+        const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+        if (!picked) {
+          if (!additive) editor.clearSelection();
+          return;
+        }
+        if (additive) editor.toggle(picked);
+        else editor.select([picked]);
       };
       canvas.addEventListener("click", onClick, { signal });
 

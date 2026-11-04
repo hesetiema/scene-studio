@@ -19,7 +19,7 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | Member | Signature | Description |
 |---|---|---|
 | constructor | `createSceneEditor({ runtime })` | `runtime: RuntimeContract` required — `FakeRuntime` (tests), `ThreeRuntime`, or custom. Never defaults |
-| `loadDocument` | `(input: unknown) => Promise<void>` | zod-validated; emits `error` and rethrows on failure |
+| `loadDocument` | `(input: unknown) => Promise<void>` | zod-validated; emits `error` and rethrows on failure. Serialized: overlapping calls run in call order |
 | `getDocument` | `() => SceneDocument` | Deep-clone snapshot |
 | `markSaved` | `(serverRevision: number) => void` | Host confirmed save; adopts revision, clears dirty |
 | `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward or throw structured conflict (D17) |
@@ -125,7 +125,7 @@ type Transform = {
 | Export | Description |
 |---|---|
 | `CommandHistory` | Undo/redo stack; `execute`, `undo`, `redo`, `markClean`, `clear`; emits `history-change` via callback |
-| `Command` | type: `{ id: string; do(): void; undo(): void }` |
+| `Command` | type: `{ label: string; execute(): void; undo(): void }` |
 | `HistoryState` | type: `{ canUndo, canRedo, dirty, lastCommand? }` |
 | `TransformCommand` | One transform edit as a command (`id`, `from`, `to`, apply fn) |
 
@@ -136,7 +136,7 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | Member | Signature | Description |
 |---|---|---|
 | constructor | `(runtime: RuntimeContract)` | |
-| `loadDocument` | `(input: unknown) => Promise<void>` | Parse + hand to runtime; clears history & selection |
+| `loadDocument` | `(input: unknown) => Promise<void>` | Parse + hand to runtime; clears history & selection. Serialized — call order decides the final document |
 | `getDocument` | `() => SceneDocument` | Deep clone snapshot; throws `lifecycle` if nothing loaded |
 | `applyTransform` | `(id, from, to) => void` | One undoable command updating runtime + stored doc |
 | `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward only if clean and `revision === baseRevision + 1`; otherwise throws structured `conflict` (D17 — never auto-merges) |
@@ -191,11 +191,14 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
 | `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the必发面 |
 | `controlsReady` | promise | Resolves when gizmo mounted; non-three runtimes resolve immediately |
-| `loadDocument(doc)` | method | Validated load; throws/rejects with typed errors |
+| `loadDocument(doc)` | method | Validated load; throws/rejects with typed errors. Overlapping calls are serialized (call order wins) |
 | `getDocument()` | method | Detached deep-clone snapshot — never the save trigger |
 | `markSaved(revision)` | method | Host confirmed save (D18) |
-| `selectObject(id)` / `select` via plugins | method | Single-id convenience |
+| `selectObject(id)` | method | Single-id convenience |
+| `select(ids)` | method | Set the selection to exactly `ids` (multi-select) |
+| `addToSelection(ids)` / `removeFromSelection(ids)` / `toggleSelection(id)` | method | Compose the current selection (parity with the facade's `add` / `remove` / `toggle`) |
 | `applyTransform(id, from, to)` | method | One undoable command |
+| `applyRemote(input, { baseRevision })` | method | Inbound remote update: fast-forward or throw structured `conflict` (D17) |
 | `executeCommand(cmd)` | method | Escape hatch for custom `Command`s |
 | `undo()` / `redo()` | method | Also bound to keyboard (see `CAPTURED_COMBOS`) |
 | `requestSave()` | method | Dispatches `save-request` with current document + revision |
@@ -214,7 +217,7 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `document-dirty` | `{ dirty: boolean }` | Dirty crossed the boundary |
 | `save-request` | `{ reason: "manual", document, revision }` | Host should persist |
 | `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Viewport view changed (D22) |
-| `error` | `{ code, message, cause? }` | Any SDK failure |
+| `error` | `{ code, message, cause? }` | Any SDK failure, including runtime/asset errors (`AssetErrorCode` values are forwarded verbatim) |
 
 ---
 

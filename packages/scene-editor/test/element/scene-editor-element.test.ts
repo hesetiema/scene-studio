@@ -316,3 +316,128 @@ describe("SceneEditorElement thin shell (0.2 — delegates to the headless facad
     el.remove();
   });
 });
+
+describe("SceneEditorElement multi-select surface (facade parity)", () => {
+  const multiDoc = sceneDocument({
+    objects: [
+      sceneObject({ id: "box-1", name: "Box" }),
+      sceneObject({ id: "box-2", name: "Box2" }),
+      sceneObject({ id: "box-3", name: "Box3" }),
+    ],
+  });
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  async function setup(): Promise<{ el: SceneEditorElement; fake: FakeRuntime }> {
+    const { el, fake } = makeElement();
+    await connected(el);
+    await el.loadDocument(multiDoc);
+    return { el, fake };
+  }
+
+  it("select(ids) sets a multi-selection and broadcasts it", async () => {
+    const { el, fake } = await setup();
+    const spy = vi.fn();
+    el.addEventListener("selection-change", spy);
+    el.select(["box-1", "box-2"]);
+    expect(el.selectedIds).toEqual(["box-1", "box-2"]);
+    expect(fake.calls.select).toContainEqual(["box-1", "box-2"]);
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: { ids: ["box-1", "box-2"] } }),
+    );
+  });
+
+  it("addToSelection / removeFromSelection / toggleSelection compose", async () => {
+    const { el } = await setup();
+    el.select(["box-1"]);
+    el.addToSelection(["box-2", "box-3"]);
+    expect(el.selectedIds).toEqual(["box-1", "box-2", "box-3"]);
+
+    el.removeFromSelection(["box-2"]);
+    expect(el.selectedIds).toEqual(["box-1", "box-3"]);
+
+    el.toggleSelection("box-3");
+    el.toggleSelection("box-2");
+    expect(el.selectedIds).toEqual(["box-1", "box-2"]);
+  });
+
+  it("shift-click on the canvas toggles instead of replacing", async () => {
+    const { el, fake } = await setup();
+    el.select(["box-1"]);
+    fake.pickResult = "box-2";
+    const canvas = el.querySelector("canvas")!;
+    canvas.dispatchEvent(
+      new MouseEvent("click", { clientX: 1, clientY: 1, shiftKey: true, bubbles: true }),
+    );
+    expect(el.selectedIds).toEqual(["box-1", "box-2"]);
+
+    canvas.dispatchEvent(
+      new MouseEvent("click", { clientX: 1, clientY: 1, shiftKey: true, bubbles: true }),
+    );
+    expect(el.selectedIds).toEqual(["box-1"]);
+  });
+});
+
+describe("SceneEditorElement inbound remote updates (D17)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  it("fast-forwards a clean editor when the remote is the next revision", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    const remote = {
+      ...doc,
+      revision: 1,
+      objects: [{ ...doc.objects[0]!, position: [3, 0, 0] as [number, number, number] }],
+    };
+    await el.applyRemote(remote, { baseRevision: 0 });
+    expect(el.revision).toBe(1);
+    expect(el.dirty).toBe(false);
+    expect(el.getDocument().objects[0]?.position).toEqual([3, 0, 0]);
+    expect(fake.calls.loadDocument).toHaveLength(2);
+  });
+
+  it("throws a structured conflict when the editor has local edits", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    el.applyTransform("box-1", doc.objects[0]!, {
+      position: [1, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    const remote = { ...doc, revision: 1 };
+
+    // Documented semantics: conflict is thrown synchronously (see API.md), so
+    // hosts wrap the call in try/catch rather than chaining `.catch()`.
+    expect(() => el.applyRemote(remote, { baseRevision: 0 })).toThrow(SceneEditorError);
+    try {
+      el.applyRemote(remote, { baseRevision: 0 });
+    } catch (err) {
+      expect((err as SceneEditorError).code).toBe(SceneErrorCode.Conflict);
+      expect((err as SceneEditorError).detail).toMatchObject({
+        base: { revision: 0 },
+        incoming: { revision: 1 },
+        local: { revision: 0 },
+      });
+    }
+    // local edits are never silently dropped
+    expect(el.getDocument().objects[0]?.position).toEqual([1, 0, 0]);
+    expect(el.dirty).toBe(true);
+  });
+
+  it("conflicts when the remote skips revisions", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    expect(() => el.applyRemote({ ...doc, revision: 7 }, { baseRevision: 0 })).toThrow(
+      SceneEditorError,
+    );
+  });
+});

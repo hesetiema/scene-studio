@@ -20,6 +20,13 @@ export class EditorController {
 
   #doc: SceneDocument | null = null;
   #baseRevision = 0;
+  /**
+   * Loads are serialized: `loadDocument` clears and repopulates the scene, so
+   * overlapping calls used to interleave `clear()` with another call's async
+   * asset mounts (duplicated objects, orphaned meshes, document/scene mismatch).
+   * Call order decides the final document; failures never poison the chain.
+   */
+  #loadChain: Promise<void> = Promise.resolve();
 
   constructor(readonly runtime: RuntimeContract) {
     this.history = new CommandHistory((state) => {
@@ -127,14 +134,23 @@ export class EditorController {
         local: local ?? { ...remote, revision: options.baseRevision },
       });
     }
-    return this.runtime.loadDocument(remote).then(() => {
-      const sceneChanged = this.#doc?.sceneId !== remote.sceneId;
-      this.#doc = structuredClone(remote);
-      this.#baseRevision = remote.revision;
-      this.history.clear();
-      this.selection.clear();
-      if (sceneChanged) this.runtime.applyViewState(remote.view);
+    // The swap joins the same chain as loadDocument: runtime.loadDocument
+    // clears the scene, so overlapping swaps corrupt the object graph.
+    const run = this.#loadChain.then(() => this.#applyRemoteDocument(remote));
+    this.#loadChain = run.catch(() => {
+      // keep the chain usable after a failed remote swap
     });
+    return run;
+  }
+
+  async #applyRemoteDocument(remote: SceneDocument): Promise<void> {
+    await this.runtime.loadDocument(remote);
+    const sceneChanged = this.#doc?.sceneId !== remote.sceneId;
+    this.#doc = structuredClone(remote);
+    this.#baseRevision = remote.revision;
+    this.history.clear();
+    this.selection.clear();
+    if (sceneChanged) this.runtime.applyViewState(remote.view);
   }
 
   executeCommand(command: Command): void {
@@ -174,7 +190,17 @@ export class EditorController {
   }
 
   async loadDocument(input: unknown): Promise<void> {
+    // Validate before queueing: invalid input must reject without touching a
+    // load that is already in flight.
     const doc = parseSceneDocument(input);
+    const run = this.#loadChain.then(() => this.#applyDocument(doc));
+    this.#loadChain = run.catch(() => {
+      // a failed load must not stall the next one
+    });
+    return run;
+  }
+
+  async #applyDocument(doc: SceneDocument): Promise<void> {
     await this.runtime.loadDocument(doc);
     const sceneChanged = this.#doc?.sceneId !== doc.sceneId;
     this.#doc = structuredClone(doc);

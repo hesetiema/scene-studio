@@ -68,6 +68,9 @@ export class AssetCache {
     this.#entries.set(assetId, entry);
     const pending = this.#loader(assetId).catch((cause) => {
       this.#entries.delete(assetId);
+      // Loaders already classify their failures (resolve vs load vs format);
+      // keep those codes so hosts can switch on the documented AssetErrorCode.
+      if (cause instanceof AssetError) throw cause;
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {
         cause,
         detail: { assetId },

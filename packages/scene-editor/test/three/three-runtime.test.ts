@@ -76,6 +76,14 @@ describe("ThreeRuntime", () => {
     expect(runtime.getObjectById("box-1")).toBeUndefined();
   });
 
+  it("loadDocument resets selection so the gizmo cannot outlive its object", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(makeDoc());
+    runtime.select(["box-1"]);
+    await runtime.loadDocument(makeDoc());
+    expect(runtime.selectedIds).toEqual([]);
+  });
+
   it("applyTransform mutates the live object", async () => {
     const { runtime } = makeRuntime();
     await runtime.loadDocument(makeDoc());

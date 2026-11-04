@@ -53,6 +53,19 @@ describe("createSceneEditor — document & history", () => {
     expect(fake.calls.loadDocument).toHaveLength(1);
   });
 
+  it("forwards runtime failures (asset resolve/load) on the error channel", () => {
+    const { editor, fake } = setup();
+    const errors: Array<{ code: string; message: string }> = [];
+    editor.on("error", (e) => errors.push(e));
+    fake.events.emit("error", {
+      code: "asset-resolve-failed",
+      message: "Failed to resolve asset: tri",
+    });
+    expect(errors).toEqual([
+      { code: "asset-resolve-failed", message: "Failed to resolve asset: tri" },
+    ]);
+  });
+
   it("rejects invalid documents with a typed error and emits error event", async () => {
     const { editor } = setup();
     const errors: Array<{ code: string }> = [];

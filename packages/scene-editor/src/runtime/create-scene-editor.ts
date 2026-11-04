@@ -124,6 +124,11 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
     this.runtime.events.on("view-change", ({ view }) => {
       this.#emit("view-change", { view, source: "interaction" });
     });
+    // Runtime failures (asset resolve/load, render) are one error channel for
+    // hosts — the element docs promise `error` is the reliable surface (D6).
+    this.runtime.events.on("error", (payload) => {
+      this.#emit("error", payload);
+    });
     this.#plugins.flushPending();
   }
 

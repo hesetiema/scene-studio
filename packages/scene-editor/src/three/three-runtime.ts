@@ -7,6 +7,7 @@ import { createRenderer } from "./create-renderer";
 import type { RendererHandle } from "./renderer-handle";
 import { createPicker, type Picker } from "./picker";
 import type { AssetCache } from "../assets/asset-cache";
+import { AssetErrorCode } from "../assets/asset-error";
 import { createCameraRig, type CameraRig, type OrbitControlsLike } from "./viewer/camera-rig";
 import { createLightingRig, type LightingRig } from "./viewer/lighting-rig";
 import { createEnvironmentRig, type EnvironmentRig } from "./viewer/environment-rig";
@@ -27,6 +28,9 @@ import { createRenderLoop, type RenderLoop } from "./viewer/render-loop";
 export type { OrbitControlsLike } from "./viewer/camera-rig";
 export type { TransformMode } from "./viewer/gizmo-rig";
 export type { AnimationClipInfo } from "./viewer/animation-rig";
+
+/** Asset-layer codes forwarded verbatim on the runtime `error` event (D6). */
+const ASSET_ERROR_CODES: ReadonlySet<string> = new Set(Object.values(AssetErrorCode));
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
@@ -197,6 +201,10 @@ export class ThreeRuntime implements RuntimeContract {
   async loadDocument(doc: SceneDocument): Promise<void> {
     this.#stopAnimationLoop();
     this.#animation.dispose();
+    // Selection is document-scoped: detach before the old objects leave the
+    // graph, otherwise TransformControls keeps a stale target (and warns).
+    this.#selectedIds = [];
+    this.#gizmo.syncSelection(null);
     await this.#objects.load(doc);
     this.#picker.setTargets(this.#objects.list());
     this.#render();
@@ -385,10 +393,10 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   #emitAssetError(err: unknown, dto: { id: string; assetId?: string | undefined }): void {
-    const code =
-      (err as { code?: string }).code === "asset-resolve-failed"
-        ? "asset-resolve-failed"
-        : "asset-load-failed";
+    // Forward the loader's classification (resolve / load / format / not-found)
+    // instead of collapsing everything into a generic load failure.
+    const candidate = (err as { code?: string }).code;
+    const code = candidate && ASSET_ERROR_CODES.has(candidate) ? candidate : "asset-load-failed";
     this.events.emit("error", {
       code,
       message: err instanceof Error ? err.message : String(err),

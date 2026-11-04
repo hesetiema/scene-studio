@@ -56,7 +56,7 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 <scene-editor style="width: 640px; height: 400px"></scene-editor>
 ```
 
-In this page you can orbit (drag), zoom (wheel), click an object to select it, drag the transform gizmo, and press `Ctrl+Z` / `Ctrl+Shift+Z` for undo/redo (only when focus is inside the element).
+In this page you can orbit (drag), zoom (wheel), click an object to select it (`Shift`/`Ctrl`/`Cmd`+click toggles into a multi-selection), drag the transform gizmo, and press `Ctrl+Z` / `Ctrl+Shift+Z` for undo/redo (only when focus is inside the element).
 
 ## Headless usage
 
@@ -175,9 +175,13 @@ const el = document.querySelector("scene-editor") as SceneEditorElement;
 
 await el.ready;                 // init done (or rejected — also see `error` event)
 await el.controlsReady;         // gizmo mounted (resolves immediately for non-three runtimes)
-await el.loadDocument(doc);     // zod-validated; clears history + selection
+await el.loadDocument(doc);     // zod-validated, serialized; clears history + selection
 const snapshot = el.getDocument(); // deep clone; never the save trigger
 el.selectObject("box-1");
+el.select(["box-1", "box-2"]);   // multi-select set
+el.addToSelection(["gem-1"]);    // compose: add / remove / toggle
+el.toggleSelection("box-2");
+el.applyRemote(serverDoc, { baseRevision: el.revision }); // inbound update (D17)
 el.applyTransform(id, from, to); // one undoable command
 el.undo(); el.redo();
 el.requestSave();                // dispatches `save-request` with the document
@@ -239,9 +243,11 @@ Formats: `glb` and `gltf` only (`SUPPORTED_ASSET_FORMATS`). Draco/KTX2 are optio
 
 `AssetCache` refcounts per `assetId`: parallel loads collapse, dispose runs when the last reference drops, next retain reloads.
 
+The resolver is the host's trust boundary — documents carry `assetId`, not URLs. Allowlist ids (`Record<string, string>`) instead of interpolating `assetId` into a path, so a hand-edited document cannot point the page at arbitrary URLs.
+
 ## Errors
 
-All SDK failures are typed. Element failures arrive on the `error` event; direct API calls may also throw.
+All SDK failures are typed. Element failures arrive on the `error` event; direct API calls may also throw. Runtime and asset failures are forwarded verbatim, so `asset-unsupported-format` / `asset-not-found` reach the host instead of collapsing into a generic load failure.
 
 **`SceneErrorCode`** (element/controller): `validation` · `asset-resolve-failed` · `asset-load-failed` · `render-init-failed` · `lifecycle` · `conflict`
 

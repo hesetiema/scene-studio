@@ -4,6 +4,7 @@ import { createDefaultViewState } from "../../src/core/document/default-view";
 import * as THREE from "three";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import { AssetCache } from "../../src/assets/asset-cache";
+import { AssetError, AssetErrorCode } from "../../src/assets/asset-error";
 import type { RendererHandle } from "../../src/three/renderer-handle";
 import type { SceneDocument } from "../../src/core/document/schema";
 import type { LoadedAsset } from "../../src/assets/asset-cache";
@@ -123,6 +124,20 @@ describe("ThreeRuntime asset loading (D11/D12/D16)", () => {
     expect(runtime.getObjectById("bad")).toBeUndefined(); // failed object not placed
     expect(runtime.getObjectById("ok")).toBeDefined();
     expect(runtime.getObjectById("plain")).toBeDefined();
+  });
+
+  it("forwards the loader's AssetErrorCode instead of collapsing it", async () => {
+    const cache = new AssetCache(async (id) => {
+      throw new AssetError(AssetErrorCode.UnsupportedFormat, `Unsupported asset: ${id}`, {
+        detail: { assetId: id },
+      });
+    });
+    const { runtime } = makeRuntime(cache);
+    const errors: Array<{ code: string; message: string }> = [];
+    runtime.events.on("error", (e) => errors.push(e));
+    await runtime.loadDocument(makeDoc([assetObj("bad", "legacy")]));
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.code).toBe("asset-unsupported-format");
   });
 
   it("assetId without cache falls back to placeholder box + no throw", async () => {

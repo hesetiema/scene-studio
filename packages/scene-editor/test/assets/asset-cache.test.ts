@@ -56,6 +56,30 @@ describe("AssetCache (D11/D12)", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves loader-classified AssetError codes (resolve vs load)", async () => {
+    const cache = new AssetCache(async (assetId) => {
+      throw new AssetError(AssetErrorCode.ResolveFailed, `Failed to resolve asset: ${assetId}`, {
+        detail: { assetId },
+      });
+    });
+    await expect(cache.retain("secret")).rejects.toMatchObject({
+      code: AssetErrorCode.ResolveFailed,
+      detail: { assetId: "secret" },
+    });
+    // a failed entry must not leak into the cache
+    expect(cache.has("secret")).toBe(false);
+  });
+
+  it("wraps untyped loader failures as LoadFailed", async () => {
+    const cache = new AssetCache(async () => {
+      throw new Error("network");
+    });
+    await expect(cache.retain("asset-1")).rejects.toMatchObject({
+      code: AssetErrorCode.LoadFailed,
+      detail: { assetId: "asset-1" },
+    });
+  });
+
   it("clear() drops everything", async () => {
     const load = vi.fn(async () => ({ scene: { uuid: "s" } }));
     const cache = new AssetCache(load);

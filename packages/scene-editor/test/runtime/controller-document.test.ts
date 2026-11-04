@@ -66,3 +66,60 @@ describe("EditorController document state (D18 getDocument snapshot)", () => {
     expect(controller.getDocument().objects[0]?.name).toBe("Box");
   });
 });
+
+describe("EditorController document loading is serialized", () => {
+  /** Runtime whose loadDocument is slow enough to expose overlap. */
+  function slowRuntime(delayMs = 10): { fake: FakeRuntime; stats: { active: number; max: number } } {
+    const fake = new FakeRuntime();
+    const stats = { active: 0, max: 0 };
+    const original = fake.loadDocument.bind(fake);
+    fake.loadDocument = async (input: SceneDocument): Promise<void> => {
+      stats.active += 1;
+      stats.max = Math.max(stats.max, stats.active);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await original(input);
+      stats.active -= 1;
+    };
+    return { fake, stats };
+  }
+
+  it("overlapping loadDocument calls never run the runtime concurrently", async () => {
+    const { fake, stats } = slowRuntime();
+    const controller = new EditorController(fake);
+
+    await Promise.all([
+      controller.loadDocument({ ...doc, sceneId: "a" }),
+      controller.loadDocument({ ...doc, sceneId: "b" }),
+    ]);
+
+    expect(stats.max).toBe(1);
+    // call order decides the winner, not completion order
+    expect(fake.calls.loadDocument.map((call) => call.sceneId)).toEqual(["a", "b"]);
+    expect(controller.getDocument().sceneId).toBe("b");
+  });
+
+  it("a failed load does not poison the queue", async () => {
+    const controller = new EditorController(new FakeRuntime());
+    await expect(controller.loadDocument({ schemaVersion: 1 })).rejects.toBeInstanceOf(
+      SceneEditorError,
+    );
+    await controller.loadDocument({ ...doc, sceneId: "after-failure" });
+    expect(controller.getDocument().sceneId).toBe("after-failure");
+  });
+
+  it("applyRemote queues behind a pending load instead of interleaving", async () => {
+    const { fake, stats } = slowRuntime();
+    const controller = new EditorController(fake);
+
+    const load = controller.loadDocument({ ...doc, sceneId: "local" });
+    const remote = controller.applyRemote({ ...doc, sceneId: "remote", revision: 1 }, {
+      baseRevision: 0,
+    });
+    await Promise.all([load, remote]);
+
+    expect(stats.max).toBe(1);
+    expect(fake.calls.loadDocument.map((call) => call.sceneId)).toEqual(["local", "remote"]);
+    expect(controller.getDocument().sceneId).toBe("remote");
+    expect(controller.revision).toBe(1);
+  });
+});
