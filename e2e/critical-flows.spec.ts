@@ -30,7 +30,7 @@ declare global {
 
 async function bootEditor(page: Page): Promise<void> {
   // `?scene=default` pins the deterministic fixture (box-1 / box-2 / gem-1);
-  // the bare playground URL is the mecha showcase.
+  // the bare playground URL opens the home screen instead.
   await page.goto("/?scene=default");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
   await expect(page.locator("scene-editor canvas")).toBeVisible();
@@ -161,4 +161,25 @@ test("asset object loads into viewport and highlight plugin reacts to selection"
     return !!el.getDocument;
   });
   expect(picked).toBe(true);
+});
+
+test("home screen: waits for input, loads a sample, 首页 returns to it", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => document.body.dataset.boot === "ready");
+  await expect(page.locator("#welcome")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
+    .toBe(0);
+
+  await page.click('.sample-chip[data-model="fox"]');
+  await expect(page.locator("#welcome")).toBeHidden();
+  await expect
+    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
+    .toBe(1);
+
+  await page.click("#btn-home");
+  await expect(page.locator("#welcome")).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
+    .toBe(0);
 });

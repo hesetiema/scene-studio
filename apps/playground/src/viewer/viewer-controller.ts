@@ -7,6 +7,7 @@ import {
   DEFAULT_BACKDROP,
   LIGHTING_PRESETS,
   applyBackdrop,
+  applyIblIntensity,
   applyLightingPreset,
   readDocumentView,
   setGridVisible,
@@ -74,6 +75,7 @@ export class ViewerController {
     this.#store.syncFromDocument({
       background: view?.environment.background ?? DEFAULT_BACKDROP,
       grid: view?.environment.gridVisible ?? true,
+      iblIntensity: view?.environment.iblIntensity ?? 1,
       animation: first
         ? { clipId: first.id, playing: true, speed: this.#store.state.animation.speed }
         : { clipId: null, playing: false },
@@ -130,6 +132,9 @@ export class ViewerController {
 
     if (next.background !== prev.background) applyBackdrop(this.#el, next.background);
     if (next.grid !== prev.grid) setGridVisible(this.#el, next.grid);
+    if (next.iblIntensity !== prev.iblIntensity) {
+      applyIblIntensity(this.#el, next.iblIntensity);
+    }
     if (next.lighting !== prev.lighting) applyLightingPreset(this.#el, next.lighting);
 
     if (

@@ -34,7 +34,7 @@ describe("ThreeRuntime view state (D22)", () => {
     view.camera = { position: [-4, 3, 2], target: [1, 1, 0], fov: 30 };
     view.lights.ambient = { color: "#123456", intensity: 0.9 };
     view.lights.directional = { color: "#654321", intensity: 0.4, position: [1, 2, 3] };
-    view.environment = { background: "#0f0f0f", gridVisible: false };
+    view.environment = { background: "#0f0f0f", gridVisible: false, iblIntensity: 0 };
 
     runtime.applyViewState(view);
     expect(runtime.getViewState()).toEqual(view);

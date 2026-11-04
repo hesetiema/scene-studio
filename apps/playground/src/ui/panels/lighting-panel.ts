@@ -40,6 +40,9 @@ export class LightingPanel extends BasePanel {
       });
     });
 
+    this.#bindScale("#ibl-scale", "#ibl-scale-val", (value) =>
+      this.#store.patch({ iblIntensity: value / 100 }),
+    );
     this.#bindScale("#ambient-scale", "#ambient-scale-val", (value) =>
       this.#store.patch({ ambientScale: value / 100 }),
     );
@@ -92,6 +95,10 @@ export class LightingPanel extends BasePanel {
     });
 
     const preset = LIGHTING_PRESETS[state.lighting];
+
+    const iblScale = document.querySelector<HTMLInputElement>("#ibl-scale");
+    if (iblScale) iblScale.value = String(Math.round(state.iblIntensity * 100));
+    this.syncText("#ibl-scale-val", `${Math.round(state.iblIntensity * 100)}%`);
 
     const ambientScale = document.querySelector<HTMLInputElement>("#ambient-scale");
     if (ambientScale) ambientScale.value = String(Math.round(state.ambientScale * 100));

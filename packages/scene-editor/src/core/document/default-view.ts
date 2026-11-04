@@ -7,7 +7,7 @@ export const DEFAULT_VIEW_STATE: ViewState = {
     ambient: { color: "#ffffff", intensity: 0.55 },
     directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
   },
-  environment: { background: null, gridVisible: true },
+  environment: { background: null, gridVisible: true, iblIntensity: 1 },
 };
 
 /** Engine defaults (three-runtime initial state) — the canonical view of a new scene. */

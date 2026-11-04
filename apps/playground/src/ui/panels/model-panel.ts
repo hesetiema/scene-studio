@@ -55,11 +55,17 @@ export class ModelPanel extends BasePanel {
     });
   }
 
-  /** Reflect the loaded preset in the model `<select>` (custom files keep the last option). */
+  /**
+   * Reflect the loaded preset in the model `<select>`.
+   * `null` resets it to the placeholder (home screen); custom files keep the last option.
+   */
   selectModelOption(value: string | null): void {
-    if (!value) return;
     const select = document.querySelector<HTMLSelectElement>("#model-select");
     if (!select) return;
+    if (!value) {
+      select.value = "";
+      return;
+    }
     if (!Array.from(select.options).some((option) => option.value === value)) return;
     select.value = value;
   }

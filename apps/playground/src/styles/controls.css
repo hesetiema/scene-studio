@@ -47,6 +47,29 @@
   width: 100%;
 }
 
+/* 顶栏图标按钮：只有图形，靠 title/aria-label 说明含义 */
+.btn-icon {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+}
+
+.btn-icon:hover {
+  color: var(--text-strong);
+}
+
+.btn-icon svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .btn-row {
   display: flex;
   gap: 6px;

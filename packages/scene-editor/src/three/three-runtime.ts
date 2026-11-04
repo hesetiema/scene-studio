@@ -108,10 +108,15 @@ export class ThreeRuntime implements RuntimeContract {
     this.camera.lookAt(0, 0, 0);
 
     this.#lighting = createLightingRig(this.scene, initial.lights);
-    this.#environment = createEnvironmentRig(this.scene, initial.environment);
 
     const factory = options.rendererFactory ?? createRenderer;
     this.renderer = factory(options.canvas);
+
+    // After the renderer: IBL prefilters through PMREM, which needs the GPU context.
+    this.#environment = createEnvironmentRig(this.scene, initial.environment, {
+      renderer: this.renderer,
+      onEnvironmentReady: () => this.#render(),
+    });
 
     const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? options.canvas;
 
@@ -237,6 +242,7 @@ export class ThreeRuntime implements RuntimeContract {
     this.#cameraRig.dispose();
     this.#objects.dispose();
     this.#picker.dispose();
+    this.#environment.dispose();
     this.#renderLoop?.dispose();
     this.#renderLoop = null;
     this.renderer.dispose();

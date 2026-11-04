@@ -1,13 +1,7 @@
 ﻿import { DEFAULT_VIEW_STATE, type SceneDocument, type AssetLoader, createUniversalAssetLoader, inspectModel } from "@scenio/scene-editor";
 import { AssetCache } from "@scenio/scene-editor";
 import * as THREE from "three";
-import {
-  COMFORTABLE_MECHA_CAM_POS,
-  COMFORTABLE_MECHA_TARGET,
-  createSingleModelDoc,
-  defaultMultiDoc,
-  mechaAssemblyDoc,
-} from "../bootstrap";
+import { createSingleModelDoc, showcaseDoc } from "../bootstrap";
 
 type AssetFactoryResult =
   | THREE.Object3D
@@ -19,23 +13,19 @@ type AssetFactory = () => AssetFactoryResult;
  * ModelLoader: owns asset registry, lazy GLTF loading, AssetCache,
  * and SceneDocument creation for preset / custom models.
  * Extracted from main.ts so main.ts only handles host + UI wiring.
+ *
+ * Built-in samples are the Khronos glTF sample assets served by
+ * `KhronosGroup/GLTF-Sample-Viewer` (the models themselves live in
+ * `KhronosGroup/glTF-Sample-Assets`), copied into `public/assets/`.
  */
 export class ModelLoader {
   /** Universal asset registry for built-in and dynamically registered models */
   private readonly registry = new Map<string, string | AssetFactory>([
-    // Primary generic identifiers
-    ["mecha-shells", "/assets/mecha-shells.glb"],
-    ["mecha-torso", "/assets/mecha-torso.glb"],
-    ["mecha-head", "/assets/mecha-head.glb"],
-    ["crystal-prism", "/assets/tri.glb"],
-    // Backward-compatible aliases
-    ["bionic-chassis", "/assets/mecha-shells.glb"],
-    ["mechanical-torso", "/assets/mecha-torso.glb"],
-    ["sensor-head", "/assets/mecha-head.glb"],
-    ["kestrel-shells", "/assets/mecha-shells.glb"],
-    ["kestrel-torso", "/assets/mecha-torso.glb"],
-    ["kestrel-head", "/assets/mecha-head.glb"],
-    ["tri", "/assets/tri.glb"],
+    ["damaged-helmet", "/assets/DamagedHelmet.glb"],
+    ["boom-box", "/assets/BoomBox.glb"],
+    ["fox", "/assets/Fox.glb"],
+    ["water-bottle", "/assets/WaterBottle.glb"],
+    ["milk-truck", "/assets/CesiumMilkTruck.glb"],
     [
       "gem",
       () =>
@@ -49,10 +39,8 @@ export class ModelLoader {
           }),
         ),
     ],
-    ["kinetic-orb", createKineticOrb],
   ]);
 
-  private gltfLoaderInstance: unknown = null;
   private readonly universalFallbackLoader;
   private readonly demoAssetLoader: AssetLoader;
   private readonly assetCache: AssetCache;
@@ -86,41 +74,8 @@ export class ModelLoader {
         };
       }
 
-      const url = typeof customFactory === "string" ? customFactory : assetId;
-
-      const isMechaPart =
-        assetId.includes("shells") ||
-        assetId.includes("torso") ||
-        assetId.includes("head") ||
-        assetId.includes("chassis");
-
-      if (isMechaPart) {
-        const loader = await this.getMechaGltfLoader();
-        const gltf = await loader.loadAsync(url);
-        const root = gltf.scene;
-        root.scale.setScalar(0.004);
-        root.position.y += 1.0;
-        root.updateMatrixWorld(true);
-        return {
-          scene: root,
-          metadata: inspectModel(root),
-          ...(gltf.animations?.length ? { animations: gltf.animations } : {}),
-        };
-      }
-
-      if (assetId === "crystal-prism" || assetId === "tri") {
-        const loader = await this.getMechaGltfLoader();
-        const gltf = await loader.loadAsync(url);
-        const root = gltf.scene;
-        root.position.y += 1.0;
-        root.updateMatrixWorld(true);
-        return {
-          scene: root,
-          metadata: inspectModel(root),
-          ...(gltf.animations?.length ? { animations: gltf.animations } : {}),
-        };
-      }
-
+      // GLB / glTF / OBJ / STL: the universal loader resolves, normalizes
+      // (center + scale + rest on y = 0) and forwards animation clips.
       return this.universalFallbackLoader(assetId);
     };
 
@@ -135,32 +90,6 @@ export class ModelLoader {
   /** Register a custom asset URL or procedural factory. */
   registerAsset(assetId: string, urlOrFactory: string | (() => THREE.Object3D)): void {
     this.registry.set(assetId, urlOrFactory);
-  }
-
-  /** Lazy loader for MeshoptDecoder and GLTFLoader. */
-  private async getMechaGltfLoader() {
-    if (!this.gltfLoaderInstance) {
-      const [gltfMod, meshoptMod] = await Promise.all([
-        import("three/examples/jsm/loaders/GLTFLoader.js"),
-        import("three/examples/jsm/libs/meshopt_decoder.module.js").catch(() => null),
-      ]);
-      const loader = new gltfMod.GLTFLoader();
-      if (meshoptMod && "MeshoptDecoder" in meshoptMod) {
-        try {
-          const decoder = (meshoptMod as { MeshoptDecoder: { ready?: Promise<void> } }).MeshoptDecoder;
-          if (decoder?.ready) {
-            await decoder.ready;
-          }
-          loader.setMeshoptDecoder(decoder as Parameters<typeof loader.setMeshoptDecoder>[0]);
-        } catch {
-          // proceed
-        }
-      }
-      this.gltfLoaderInstance = loader;
-    }
-    return this.gltfLoaderInstance as {
-      loadAsync(url: string): Promise<{ scene: THREE.Object3D; animations?: THREE.AnimationClip[] }>;
-    };
   }
 
   /**
@@ -236,117 +165,39 @@ export class ModelLoader {
   createModelDocByOption(
     value: string,
   ): { doc: SceneDocument; telemetryName: string; telemetryFormat: string } | null {
-    if (value === "mecha-assembly") {
+    if (value === "damaged-helmet") {
       return {
-        doc: structuredClone(mechaAssemblyDoc),
-        telemetryName: "机甲总装",
-        telemetryFormat: "GLTF / GLB（多部件）",
+        doc: structuredClone(showcaseDoc),
+        telemetryName: "Damaged Helmet",
+        telemetryFormat: "glTF / GLB（Khronos 示例）",
       };
     }
-    if (value === "exo-chassis") {
-      const doc = createSingleModelDoc("mecha-shells", "外骨骼装甲外壳");
-      return { doc, telemetryName: "外骨骼装甲外壳", telemetryFormat: "GLTF / GLB" };
+    if (value === "boom-box") {
+      const doc = createSingleModelDoc("boom-box", "Boom Box");
+      return { doc, telemetryName: "Boom Box", telemetryFormat: "glTF / GLB（自发光材质）" };
     }
-    if (value === "core-torso") {
-      const doc = createSingleModelDoc("mecha-torso", "躯干内部核心");
-      return { doc, telemetryName: "躯干内部核心", telemetryFormat: "GLTF / GLB" };
-    }
-    if (value === "sensor-head") {
-      const doc = createSingleModelDoc("mecha-head", "传感头部件");
-      return { doc, telemetryName: "传感头部件", telemetryFormat: "GLTF / GLB" };
-    }
-    if (value === "polyhedral-prism") {
-      const doc = createSingleModelDoc("crystal-prism", "多面棱柱");
-      return { doc, telemetryName: "多面棱柱", telemetryFormat: "GLTF / GLB" };
-    }
-    if (value === "procedural-assembly" || value === "default-assembly") {
+    if (value === "fox") {
+      const doc = createSingleModelDoc("fox", "Fox");
       return {
-        doc: structuredClone(defaultMultiDoc),
-        telemetryName: "多几何体组合",
-        telemetryFormat: "程序化网格",
+        doc,
+        telemetryName: "Fox（含动画）",
+        telemetryFormat: "glTF / GLB + 骨骼动画",
       };
     }
-    if (value === "kinetic-orb") {
-      const doc = createSingleModelDoc("kinetic-orb", "动感球体");
-      doc.view.camera = { position: [3.4, 2.4, 4.2], target: [0, 0.9, 0], fov: 48 };
-      return { doc, telemetryName: "动感球体（含动画）", telemetryFormat: "程序化 + 动画片段" };
+    if (value === "water-bottle") {
+      const doc = createSingleModelDoc("water-bottle", "Water Bottle");
+      return { doc, telemetryName: "Water Bottle", telemetryFormat: "glTF / GLB（PBR 玻璃瓶）" };
+    }
+    if (value === "milk-truck") {
+      const doc = createSingleModelDoc("milk-truck", "Cesium Milk Truck");
+      return {
+        doc,
+        telemetryName: "Cesium Milk Truck（含动画）",
+        telemetryFormat: "glTF / GLB（多部件 + 动画）",
+      };
     }
     return null;
   }
-}
-
-/** Demo asset with two clips — exercises the animation transport end to end. */
-function createKineticOrb(): { object: THREE.Object3D; animations: THREE.AnimationClip[] } {
-  const group = new THREE.Group();
-
-  const core = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.85, 2),
-    new THREE.MeshStandardMaterial({
-      color: 0x38e2ff,
-      metalness: 0.55,
-      roughness: 0.18,
-      emissive: 0x063a4a,
-      emissiveIntensity: 0.5,
-    }),
-  );
-  core.name = "core";
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(1.6, 0.05, 8, 96),
-    new THREE.MeshStandardMaterial({
-      color: 0x9fe9ff,
-      metalness: 0.8,
-      roughness: 0.25,
-      emissive: 0x0a2a33,
-      emissiveIntensity: 0.4,
-    }),
-  );
-  ring.name = "ring";
-  ring.rotation.x = Math.PI / 2;
-
-  const satellite = new THREE.Mesh(
-    new THREE.SphereGeometry(0.16, 16, 16),
-    new THREE.MeshStandardMaterial({
-      color: 0xffab40,
-      emissive: 0xff7a00,
-      emissiveIntensity: 0.9,
-      roughness: 0.3,
-    }),
-  );
-  satellite.name = "satellite";
-  satellite.position.set(1.6, 0, 0);
-
-  group.add(core, ring, satellite);
-  return { object: group, animations: [createOrbitClip(), createBreatheClip()] };
-}
-
-function createOrbitClip(): THREE.AnimationClip {
-  const duration = 4;
-  const segments = 48;
-  const radius = 1.6;
-  const times: number[] = [];
-  const values: number[] = [];
-
-  for (let i = 0; i <= segments; i += 1) {
-    const t = (i / segments) * duration;
-    const angle = (i / segments) * Math.PI * 2;
-    times.push(t);
-    values.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-  }
-
-  return new THREE.AnimationClip("Orbit", duration, [
-    new THREE.VectorKeyframeTrack("satellite.position", times, values),
-  ]);
-}
-
-function createBreatheClip(): THREE.AnimationClip {
-  return new THREE.AnimationClip("Breathe", 2.5, [
-    new THREE.VectorKeyframeTrack(
-      "core.scale",
-      [0, 1.25, 2.5],
-      [1, 1, 1, 1.22, 1.22, 1.22, 1, 1, 1],
-    ),
-  ]);
 }
 
 const SUPPORTED_FILE_EXTENSIONS = ["gltf", "glb", "obj", "stl"] as const;

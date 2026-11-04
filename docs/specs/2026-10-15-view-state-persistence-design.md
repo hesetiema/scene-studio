@@ -50,6 +50,7 @@ D3 原先把相机位姿、灯光、环境划为"编辑会话状态"，**不写�
     environment: {
       background: "#rrggbb" | null,        // null = 透明（沿用现状）
       gridVisible: boolean,
+      iblIntensity?: number,               // 环境光照（IBL）强度；0 = 关闭；缺省按 1（向后兼容）
     },
   },
 }
@@ -64,6 +65,7 @@ D3 原先把相机位姿、灯光、环境划为"编辑会话状态"，**不写�
 | `lights.directional` | `#ffffff`, `1`, `[5, 10, 7]` |
 | `environment.background` | `null`（透明） |
 | `environment.gridVisible` | `true` |
+| `environment.iblIntensity` | `1`（内置 `RoomEnvironment` 经 PMREM 预滤波；`0` = 只用灯光） |
 
 **明确不入档**（延续 D3）：`near` / `far` / `aspect`、OrbitControls 阻尼与速度、renderer 参数。
 

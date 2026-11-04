@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { SceneObjectDTO } from "../../core/document/schema";
 
 export interface PlaceholderObject {
@@ -28,19 +29,27 @@ export function tagSceneObject(object: THREE.Object3D, objectId: string): void {
 
 /** Clone a cached asset root into a document object (D11/D12). */
 export function instantiateAsset(root: unknown, dto: SceneObjectDTO): THREE.Object3D {
-  const source = root as { clone?: (recursive?: boolean) => unknown } | null;
-  const instance =
-    source && typeof source.clone === "function"
-      ? (source.clone(true) as THREE.Object3D)
-      : (root as THREE.Object3D);
-
-  if (!instance || typeof instance.traverse !== "function") {
+  const source = root as THREE.Object3D | null;
+  if (!source || typeof source.traverse !== "function") {
     throw new Error(`Asset "${dto.assetId ?? dto.id}" did not yield an Object3D`);
   }
+
+  // Skinned assets need the skeleton re-bound to the cloned bones; a plain
+  // `Object3D.clone` keeps pointing at the cached skeleton, so animation drives
+  // bones that no longer exist in the scene graph.
+  const instance = hasSkinnedMesh(source) ? cloneSkinned(source) : source.clone(true);
 
   applyDtoTransform(instance, dto);
   tagSceneObject(instance, dto.id);
   return instance;
+}
+
+function hasSkinnedMesh(object: THREE.Object3D): boolean {
+  let found = false;
+  object.traverse((child) => {
+    if ((child as THREE.SkinnedMesh).isSkinnedMesh) found = true;
+  });
+  return found;
 }
 
 /** Deterministic box used when no assetId / asset cache is available. */

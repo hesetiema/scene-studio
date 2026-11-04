@@ -206,6 +206,15 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
       rootObject.position.y -= alignedBox.min.y;
       rootObject.position.z -= (alignedBox.min.z + alignedBox.max.z) / 2;
       rootObject.updateMatrixWorld(true);
+
+      // The mount step overwrites the root transform with the document values
+      // (`applyDtoTransform`), so the normalization has to live one level down
+      // behind an identity wrapper — otherwise a 154-unit model snaps back to
+      // its raw scale and the camera frames it from 200 units away.
+      const normalized = new THREE.Group();
+      normalized.name = rootObject.name;
+      normalized.add(rootObject);
+      rootObject = normalized;
     }
 
     // Inspect and attach metadata

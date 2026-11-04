@@ -77,8 +77,8 @@ test("animation panel lists clips, auto-plays, and toggles transport", async ({ 
   await openGroup(page, "group-animation");
   await openAdvanced(page, "group-animation");
 
-  await page.selectOption("#model-select", "kinetic-orb");
-  await expect.poll(() => page.textContent("#anim-count")).toBe("2");
+  await page.selectOption("#model-select", "fox");
+  await expect.poll(() => page.textContent("#anim-count")).toBe("3");
   // A freshly loaded asset with clips auto-plays clip #0 (viewer convention).
   await expect(page.locator("#anim-play")).toHaveText("暂停");
 

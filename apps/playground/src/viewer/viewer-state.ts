@@ -29,6 +29,8 @@ export interface ViewerState {
   skeleton: boolean;
   grid: boolean;
   background: string;
+  /** IBL 环境光照强度倍率（0 = 关闭，只用灯光），持久化到 `view.environment`。 */
+  iblIntensity: number;
   lighting: LightingPresetId;
   /** 环境光强度倍率，1 = 预设原值（UI 显示为百分比）。 */
   ambientScale: number;
@@ -55,6 +57,7 @@ export const DEFAULT_VIEWER_STATE: ViewerState = {
   skeleton: false,
   grid: true,
   background: "#0c0e12",
+  iblIntensity: 1,
   lighting: "studio",
   ambientScale: 1,
   directionalScale: 1,

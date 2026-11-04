@@ -69,6 +69,19 @@ export function applyBackdrop(el: SceneEditorElement, hex: string): boolean {
   return true;
 }
 
+/** IBL 强度属于 `view.environment`：持久化，但和背景色一样不进撤销栈。 */
+export function applyIblIntensity(el: SceneEditorElement, intensity: number): boolean {
+  const view = readDocumentView(el);
+  if (!view) return false;
+  const next = Number.isFinite(intensity) ? Math.max(0, intensity) : 1;
+  if ((view.environment.iblIntensity ?? 1) === next) return false;
+  el.setViewState({
+    ...view,
+    environment: { ...view.environment, iblIntensity: next },
+  });
+  return true;
+}
+
 export function setGridVisible(el: SceneEditorElement, visible: boolean): boolean {
   const view = readDocumentView(el);
   if (!view || view.environment.gridVisible === visible) return false;

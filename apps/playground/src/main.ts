@@ -2,13 +2,14 @@
 import { SceneEditorElement, defineSceneEditor } from "@scenio/scene-editor/element";
 import { ThreeRuntime, createSelectionHighlightPlugin } from "@scenio/scene-editor/three";
 import { ModelLoader } from "./assets/model-loader";
+import { WelcomeScreen } from "./ui/welcome-screen";
 import { CameraController } from "./camera/camera-controller";
 import { HUDController } from "./ui/hud-controller";
 import { StudioShell } from "./ui/studio-shell";
 import { bindHistoryHotkeys, HistoryCoordinator } from "./viewer/history-coordinator";
 import { createViewerStore, type ViewerStore } from "./viewer/viewer-state";
 import { ViewerController } from "./viewer/viewer-controller";
-import { defaultMultiDoc, mechaAssemblyDoc } from "./bootstrap";
+import { defaultMultiDoc, emptyDoc } from "./bootstrap";
 
 declare global {
   interface Window {
@@ -61,7 +62,7 @@ const history = new HistoryCoordinator(el, store);
 
 /** In-memory host store for e2e save/conflict flows (D18/D17). */
 const host = {
-  serverDoc: structuredClone(mechaAssemblyDoc),
+  serverDoc: structuredClone(emptyDoc),
   forceConflict: false,
   saves: 0,
 };
@@ -82,6 +83,12 @@ const shell = new StudioShell({
   loadPreset: loadModelByOption,
   loadCustom: loadCustomModel,
   loadFiles: loadFilesModel,
+});
+
+/** 空状态引导：未载入模型时覆盖视口，上传 / 选示例后自动隐藏。 */
+const welcome = new WelcomeScreen({
+  onPickPreset: (value) => void loadModelByOption(value),
+  onUpload: () => document.querySelector<HTMLInputElement>("#file-input")?.click(),
 });
 
 // ---------------------------------------------------------------------------
@@ -108,6 +115,10 @@ async function applyDocument(
   host.serverDoc = structuredClone(el.getDocument());
   el.markSaved(el.revision);
   hud.updateDirtyUI();
+
+  // 空文档 = 首次进入：显示上传引导；载入任何内容后收起。
+  if (doc.objects.length === 0) welcome.show();
+  else welcome.hide();
 }
 
 async function loadModelByOption(value: string): Promise<void> {
@@ -137,6 +148,22 @@ async function loadFilesModel(files: File[]): Promise<void> {
   }
 }
 
+/** 回到首页：清空文档，空场景会自动恢复上传 / 示例引导。 */
+async function goHome(): Promise<void> {
+  try {
+    if (el.getDocument().objects.length === 0) return;
+  } catch {
+    return;
+  }
+  await applyDocument(emptyDoc, "未载入模型", "—", false);
+  camera.frameScene(false, false);
+  hud.showToast("已回到首页");
+}
+
+document.querySelector("#btn-home")?.addEventListener("click", () => {
+  void goHome();
+});
+
 window.loadCustomModel = loadCustomModel;
 window.loadCustomFiles = loadFilesModel;
 
@@ -146,6 +173,9 @@ window.loadCustomFiles = loadFilesModel;
 
 el.addEventListener("save-request", () => {
   const local = el.getDocument();
+
+  // 首页没有可保存的内容（保存按钮与快捷键在空场景下都不该落库）。
+  if (local.objects.length === 0) return;
 
   if (host.forceConflict) {
     const incoming: SceneDocument = { ...host.serverDoc, revision: host.serverDoc.revision + 1 };
@@ -196,23 +226,26 @@ el.addEventListener("error", (event) => {
 // Plugin demo: selection highlight (design §5, install(context)).
 el.use(createSelectionHighlightPlugin());
 shell.mount();
+welcome.mount();
 document.body.dataset.boot = "pending";
 
 void el.ready.then(async () => {
   const params = new URLSearchParams(location.search);
   const selectId = params.get("select");
+  const requestedModel = params.get("model");
   // `?scene=default` (or any `?select=`) loads the deterministic fixture the
-  // e2e suites assert on; the bare URL is the showcase mecha scene.
+  // e2e suites assert on; `?model=<preset>` jumps straight to one sample; the
+  // bare URL boots an empty scene and waits for a file or a sample pick, so a
+  // first visit never downloads a model the user did not ask for.
   const useFixture = params.get("scene") === "default" || selectId !== null;
 
-  const doc = useFixture ? defaultMultiDoc : mechaAssemblyDoc;
-  await applyDocument(
-    doc,
-    useFixture ? "几何体组合场景" : "机甲总装",
-    useFixture ? "默认场景" : "GLTF / GLB（多部件）",
-    false,
-    useFixture ? "procedural-assembly" : "mecha-assembly",
-  );
+  if (useFixture) {
+    await applyDocument(defaultMultiDoc, "几何体组合场景", "默认场景", false);
+  } else if (requestedModel && modelLoader.createModelDocByOption(requestedModel)) {
+    await loadModelByOption(requestedModel);
+  } else {
+    await applyDocument(emptyDoc, "未载入模型", "—", false);
+  }
 
   // 首次加载后一次性适配视口：预设资产的尺度从毫米到数百米不等，
   // 写死在文档里的相机距离无法保证模型完整可见（只移动相机，不改文档）。

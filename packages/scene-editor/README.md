@@ -48,7 +48,7 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
         ambient: { color: "#ffffff", intensity: 0.55 },
         directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
       },
-      environment: { background: null, gridVisible: true },
+      environment: { background: null, gridVisible: true, iblIntensity: 1 },
     },
   });
 </script>
@@ -147,7 +147,11 @@ type SceneDocument = {
       ambient: { color: "#rrggbb"; intensity: number };
       directional: { color: "#rrggbb"; intensity: number; position: [number, number, number] };
     };
-    environment: { background: "#rrggbb" | null; gridVisible: boolean };
+    environment: {
+      background: "#rrggbb" | null;
+      gridVisible: boolean;
+      iblIntensity?: number; // image-based lighting strength; 0 = analytic lights only (default 1)
+    };
   };
 };
 
@@ -167,6 +171,8 @@ type SceneObjectDTO = {
 Parse and validate yourself with `parseSceneDocument(input)` / `SceneDocumentSchema` when you need the same errors on the server.
 
 **View state (D22).** v1 documents load unchanged — a generic migration registry fills the engine defaults for `view`. The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
+
+**Image-based lighting.** `environment.iblIntensity` drives a PMREM-prefiltered built-in studio environment (`RoomEnvironment` — no network assets, no decoder). `0` turns it off and leaves the analytic ambient/directional lights as the only illumination; the key is optional and defaults to `1`, so v2 documents written before IBL still load and simply pick up the default. WebGPU renderers and GPU-less test runtimes skip IBL silently (`scene.environment` stays `null`). Metals and glass depend on it: with analytic lights alone they render nearly black.
 
 ## Element API
 

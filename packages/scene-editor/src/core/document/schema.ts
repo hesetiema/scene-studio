@@ -34,6 +34,12 @@ export const ViewStateSchema = z.strictObject({
     /** null = transparent background (preserves the pre-D22 look). */
     background: HexColorSchema.nullable(),
     gridVisible: z.boolean(),
+    /**
+     * Image-based lighting strength (0 = analytic lights only). Optional so v2
+     * documents written before IBL existed still parse; missing means
+     * `DEFAULT_IBL_INTENSITY`.
+     */
+    iblIntensity: z.number().nonnegative().optional(),
   }),
 });
 
