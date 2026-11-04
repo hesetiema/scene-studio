@@ -1,10 +1,10 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.4.0`.
+Embeddable 3D scene editor SDK monorepo. Ships as npm package `@scenio/scene-editor` (placeholder scope — TBD before first public publish). Current line: `0.5.0`.
 
 ## What this is
 
-A web component (`<scene-editor>`) plus a headless core that together give any host page a 3D editor: load a JSON scene document, orbit/zoom, click-select, transform with gizmos, undo/redo, host-driven save with structured conflicts. WebGL2 by default; WebGPU via a documented opt-in seam. Prefer to bring your own UI? `createSceneEditor()` gives you the full editing logic — state, history, selection, plugins, typed events — with zero DOM.
+A web component (`<scene-editor>`) plus a headless core that together give any host page a 3D editor: load a JSON scene document, orbit/zoom, click-select, transform with gizmos, undo/redo, host-driven save with structured conflicts, and glTF animation playback. WebGL2 by default; WebGPU via a documented opt-in seam. Prefer to bring your own UI? `createSceneEditor()` gives you the full editing logic — state, history, selection, plugins, typed events — with zero DOM.
 
 - **Consumers:** see [`packages/scene-editor/README.md`](packages/scene-editor/README.md) for install/usage and [`packages/scene-editor/API.md`](packages/scene-editor/API.md) for the full API surface.
 - **Design rationale, decisions D1–D21, phase plans:** internal design doc (gstack project artifacts), not yet published.
@@ -21,7 +21,7 @@ scripts/                 pack-smoke (npm pack consumer test)
 
 ### Playground
 
-`apps/playground` is the reference host: model loading (GLB/GLTF/OBJ/STL), shading modes (studio / X-Ray / wireframe / normal / clay), explode preview, lighting & backdrop presets, camera presets + turntable, gizmo tool switching, snapshot and GLB/OBJ export.
+`apps/playground` is the reference host: model loading (GLB/GLTF/OBJ/STL, including multi-file `.gltf` bundles), shading modes (studio / X-Ray / wireframe / normal / clay), skeleton overlay, explode preview, lighting & backdrop presets, exposure/tone mapping, camera presets + turntable, glTF animation transport, gizmo tool switching, snapshot and GLB/OBJ export. Google-style viewer architecture: a single viewer store (`src/viewer/viewer-state.ts`) fans out to `ViewerController.update*()`, and each HUD panel only patches state.
 
 - `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture the e2e suites assert on; the bare URL boots the mecha showcase.
 - `?select=<id>` selects an object and (optionally) applies `&move=x,y,z&rot=x,y,z&scale=x,y,z` for reproducible screenshots.
@@ -63,6 +63,6 @@ CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.
 
 ## Status
 
-`0.4.0` alpha. Not yet published to npm. API may still shift before `1.0.0`; after that, semver applies.
+`0.5.0` alpha. Not yet published to npm. API may still shift before `1.0.0`; after that, semver applies.
 
 Known roadmap items (TODOS.md): CRDT real-time collaboration, plugin `install(context)` expansion.

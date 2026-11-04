@@ -5,6 +5,8 @@ import { ModelLoader } from "./assets/model-loader";
 import { CameraController } from "./camera/camera-controller";
 import { HUDController } from "./ui/hud-controller";
 import { StudioShell } from "./ui/studio-shell";
+import { createViewerStore, type ViewerStore } from "./viewer/viewer-state";
+import { ViewerController } from "./viewer/viewer-controller";
 import { defaultMultiDoc, mechaAssemblyDoc } from "./bootstrap";
 
 declare global {
@@ -14,13 +16,16 @@ declare global {
     __savedDocs: SceneDocument[];
     __conflicts: unknown[];
     __runtime?: ThreeRuntime;
+    __viewer?: ViewerController;
+    __store?: ViewerStore;
     loadCustomModel: (urlOrFile: string | File, name?: string) => Promise<void>;
+    loadCustomFiles: (files: File[]) => Promise<void>;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Composition root: runtime factory → element → controllers → host store.
-// UI wiring lives in StudioShell; this file owns lifecycle + persistence only.
+// Composition root: runtime factory → element → viewer state → panels → host.
+// UI wiring lives in StudioShell; the viewer store keeps panels declarative.
 // ---------------------------------------------------------------------------
 
 const modelLoader = new ModelLoader();
@@ -45,6 +50,10 @@ const getRuntime = (): ThreeRuntime | null =>
 const camera = new CameraController(el, getRuntime);
 const hud = new HUDController(el, getRuntime);
 
+const store = createViewerStore();
+const viewer = new ViewerController({ store, el, getRuntime, camera });
+viewer.mount();
+
 /** In-memory host store for e2e save/conflict flows (D18/D17). */
 const host = {
   serverDoc: structuredClone(mechaAssemblyDoc),
@@ -62,8 +71,11 @@ const shell = new StudioShell({
   getRuntime,
   hud,
   camera,
+  store,
+  viewer,
   loadPreset: loadModelByOption,
   loadCustom: loadCustomModel,
+  loadFiles: loadFilesModel,
 });
 
 // ---------------------------------------------------------------------------
@@ -104,7 +116,19 @@ async function loadCustomModel(urlOrFile: string | File, customName?: string): P
   }
 }
 
+/** Drop / pick a multi-file bundle: .gltf + .bin + textures resolve in-place. */
+async function loadFilesModel(files: File[]): Promise<void> {
+  try {
+    const { doc, filename, format } = await modelLoader.createFilesModelDoc(files);
+    await applyDocument(doc, filename, format, true);
+    hud.showToast(`Loaded ${filename}`);
+  } catch (error) {
+    hud.showToast(error instanceof Error ? `加载失败: ${error.message}` : "3D 模型加载失败");
+  }
+}
+
 window.loadCustomModel = loadCustomModel;
+window.loadCustomFiles = loadFilesModel;
 
 // ---------------------------------------------------------------------------
 // Host persistence + conflict surface (D17/D18)
@@ -215,3 +239,6 @@ function applyTransformFromQuery(id: string, params: URLSearchParams): void {
     },
   );
 }
+
+window.__viewer = viewer;
+window.__store = store;

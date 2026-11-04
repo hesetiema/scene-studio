@@ -1,0 +1,245 @@
+/* Chrome-specific layout: top bar, tool strip, telemetry card, footer, overlays. */
+
+/* Top bar */
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 14px;
+  height: 50px;
+}
+
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #38e2ff;
+  box-shadow: 0 0 10px #38e2ff;
+  animation: pulse-dot 2.5s infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.85);
+  }
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-badge {
+  font-size: 10px;
+  background: rgba(56, 226, 255, 0.12);
+  color: #38e2ff;
+  border: 1px solid rgba(56, 226, 255, 0.35);
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* Left floating tool strip */
+.left-toolbar {
+  width: 190px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-family: ui-monospace, monospace;
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(56, 226, 255, 0.35) transparent;
+}
+
+.toolbar-section-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #727b8c;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Right floating telemetry HUD */
+.telemetry-card {
+  padding: 12px 14px;
+  width: 290px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.telemetry-header {
+  font-size: 11px;
+  color: #727b8c;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 6px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.telemetry-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.telemetry-label {
+  color: #8c93a4;
+}
+
+.telemetry-val {
+  color: #38e2ff;
+  font-weight: 600;
+}
+
+.telemetry-divider {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 8px;
+}
+
+/* Bottom status bar */
+.bottom-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+}
+
+.status-item {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: #8c93a4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toast {
+  background: rgba(12, 15, 20, 0.95);
+  border: 1px solid #38e2ff;
+  color: #38e2ff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  font-family: ui-monospace, monospace;
+  box-shadow: 0 0 16px rgba(56, 226, 255, 0.3);
+}
+
+.toast.visible {
+  opacity: 1;
+}
+
+/* Drag & drop sci-fi overlay */
+.drop-overlay {
+  position: absolute;
+  inset: 20px;
+  border: 2px dashed rgba(56, 226, 255, 0.75);
+  border-radius: 12px;
+  background: rgba(10, 14, 20, 0.92);
+  backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  z-index: 100;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.drop-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.drop-title {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #38e2ff;
+  text-shadow: 0 0 16px rgba(56, 226, 255, 0.5);
+}
+
+.drop-subtitle {
+  font-size: 13px;
+  color: #8c93a4;
+  font-family: ui-monospace, monospace;
+}
+
+/* Animation transport */
+.anim-select {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.anim-progress {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #8c93a4;
+  margin-top: 2px;
+}
+
+/* Small layout utilities used by the HUD markup (no inline styles) */
+.section-gap {
+  margin-top: 6px;
+}
+
+.tool-btn-full {
+  width: 100%;
+}
+
+.btn-compact {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.telemetry-inline {
+  color: #dce1eb;
+}
+
+.shortcut-note {
+  color: #727b8c;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.status-sep {
+  color: rgba(255, 255, 255, 0.2);
+}
+

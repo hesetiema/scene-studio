@@ -134,7 +134,9 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
         return loader;
       });
     }
-    return gltfLoaderPromise as Promise<{ loadAsync(url: string): Promise<{ scene: THREE.Object3D }> }>;
+    return gltfLoaderPromise as Promise<{
+      loadAsync(url: string): Promise<{ scene: THREE.Object3D; animations?: THREE.AnimationClip[] }>;
+    }>;
   }
 
   return async function loadUniversalAsset(assetId: string): Promise<LoadedAsset> {
@@ -151,12 +153,14 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
 
     const format = detectFormatFromUrl(url, assetId);
     let rootObject: THREE.Object3D;
+    let animations: THREE.AnimationClip[] | undefined;
 
     try {
       if (format === "glb" || format === "gltf") {
         const loader = await getGltfLoader();
         const gltf = await loader.loadAsync(url);
         rootObject = gltf.scene;
+        animations = gltf.animations;
       } else if (format === "obj") {
         const { OBJLoader } = await import("three/examples/jsm/loaders/OBJLoader.js");
         const loader = new OBJLoader();
@@ -207,7 +211,7 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
     // Inspect and attach metadata
     const metadata = inspectModel(rootObject);
 
-    return {
+    const asset: LoadedAsset = {
       scene: rootObject,
       metadata,
       dispose: () => {
@@ -217,5 +221,9 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
         }
       },
     };
+    if (animations && animations.length > 0) {
+      asset.animations = animations;
+    }
+    return asset;
   };
 }

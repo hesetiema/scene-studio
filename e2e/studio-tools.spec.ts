@@ -69,6 +69,26 @@ test("explode slider is a preview: object moves, document does not", async ({ pa
   await expect.poll(async () => (await readPositions()).live).toEqual(before.live);
 });
 
+test("animation panel lists clips, auto-plays, and toggles transport", async ({ page }) => {
+  await boot(page);
+
+  await page.selectOption("#model-select", "kinetic-orb");
+  await expect.poll(() => page.textContent("#anim-count")).toBe("2");
+  // A freshly loaded asset with clips auto-plays clip #0 (viewer convention).
+  await expect(page.locator("#anim-play")).toHaveText("Pause");
+
+  await page.click("#anim-play");
+  await expect(page.locator("#anim-play")).toHaveText("Play");
+  await page.click("#anim-play");
+  await expect(page.locator("#anim-play")).toHaveText("Pause");
+
+  await page.locator("#anim-speed").fill("1.5");
+  await expect(page.locator("#anim-speed-val")).toHaveText("1.50x");
+
+  await page.selectOption("#anim-select", { index: 1 });
+  await expect(page.locator("#anim-play")).toHaveText("Pause");
+});
+
 test("snapshot and GLB export produce downloads", async ({ page }) => {
   await boot(page);
 

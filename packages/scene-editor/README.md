@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.4.0` — API surface is locked for the v0.1 line but may still adjust before `1.0.0`. `three` is a peer dependency you install yourself.
+**Status:** `0.5.0` — API surface is locked for the v0.1 line but may still adjust before `1.0.0`. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
@@ -111,12 +111,25 @@ Mental model if you know the PlayCanvas Editor API: our `history` / `selection` 
 |---|---|---|
 | `@scenio/scene-editor/element` | `<scene-editor>` custom element + `defineSceneEditor()` | Most integrations — recommended |
 | `@scenio/scene-editor` | Core: `createSceneEditor()` headless facade, schema, commands, controller, errors, assets, plugin types | Headless editing, custom runtimes, server-side validation |
-| `@scenio/scene-editor/three` | `ThreeRuntime`, picker, controls bindings, example plugin | Advanced: custom renderer, custom scene graph wiring |
+| `@scenio/scene-editor/three` | `ThreeRuntime`, composable viewer rigs (camera / lighting / environment / objects / gizmo / animation / render loop), picker, controls bindings, example plugin | Advanced: custom renderer, custom scene graph wiring |
 | `@scenio/scene-editor/style.css` | Minimal editor chrome styles | Pair with the element entry |
 
 The element creates its canvas and a default `ThreeRuntime` (WebGL2) for you. Override `SceneEditorElement.runtimeFactory` before the element connects if you need a custom runtime (assets, WebGPU, tests).
 
 `ThreeRuntime` also exposes `setTransformMode("translate" | "rotate" | "scale")` (and a `transformMode` getter) so a host toolbar can switch the gizmo; the call is accepted before the TransformControls addon finishes loading.
+
+**Animation.** glTF clips are forwarded by `AssetCache` loaders (`LoadedAsset.animations`) and bound to each mounted asset instance:
+
+```ts
+runtime.animations;                       // [{ id: "obj-1#0", objectId, index, name, duration }]
+runtime.playAnimation("obj-1", 0);        // starts the clip and the render loop
+runtime.pauseAnimations();
+runtime.resumeAnimations();               // continue without rewinding
+runtime.setAnimationSpeed(1.5);
+runtime.setAnimationTime(0.8);            // scrub (seconds)
+```
+
+Internally the runtime is a thin orchestrator over the rigs exported from this entry: `createCameraRig`, `createLightingRig`, `createEnvironmentRig`, `createObjectStore`, `createGizmoRig`, `createAnimationRig`, `createRenderLoop`. Use them directly if you need a viewer-shaped runtime without the editor contract.
 
 ## Document model
 

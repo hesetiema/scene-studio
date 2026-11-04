@@ -67,7 +67,9 @@ export function createPicker(options: PickerOptions): Picker {
       for (const hit of hits) {
         let node: Object3D | null | undefined = hit.object;
         while (node) {
-          const id = node.userData?.sceneObjectId as string | undefined;
+          const id = (node.userData?.sceneObjectId ?? node.userData?.objectId) as
+            | string
+            | undefined;
           if (id) return id;
           node = (node.parent ?? null) as Object3D | null;
         }

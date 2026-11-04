@@ -7,6 +7,8 @@ export interface LoadedAsset {
   dispose?: () => void;
   /** Optional metadata about the asset (e.g. bounding box, polycount). */
   metadata?: unknown;
+  /** Optional glTF animation clips (THREE.AnimationClip[]) forwarded to the runtime. */
+  animations?: readonly unknown[];
 }
 
 export type AssetLoader = (assetId: string) => Promise<LoadedAsset>;

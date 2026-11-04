@@ -7,7 +7,7 @@ import type { LoadedAsset } from "./asset-cache";
  * the core importing three directly.
  */
 export interface MinimalGltfLoader {
-  loadAsync(url: string): Promise<{ scene: unknown }>;
+  loadAsync(url: string): Promise<{ scene: unknown; animations?: unknown[] }>;
   setDRACOLoader?(loader: unknown): void;
   setKTX2Loader?(loader: unknown): void;
 }
@@ -39,7 +39,7 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
         { detail: { assetId, url, ext } },
       );
     }
-    let sceneData: { scene: unknown };
+    let sceneData: { scene: unknown; animations?: unknown[] };
     try {
       sceneData = await gltfLoader.loadAsync(url);
     } catch (cause) {
@@ -49,7 +49,7 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
       });
     }
     const root = sceneData.scene as { clone?: () => unknown; isObject3D?: boolean };
-    return {
+    const asset: LoadedAsset = {
       scene: root,
       dispose: () => {
         // three GLTFLoader has no dispose; the runtime disposes geometries/materials
@@ -57,5 +57,9 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
         (root as { dispose?: () => void }).dispose?.();
       },
     };
+    if (sceneData.animations && sceneData.animations.length > 0) {
+      asset.animations = sceneData.animations;
+    }
+    return asset;
   };
 }

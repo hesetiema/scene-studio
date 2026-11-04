@@ -9,6 +9,12 @@ import {
   mechaAssemblyDoc,
 } from "../bootstrap";
 
+type AssetFactoryResult =
+  | THREE.Object3D
+  | { object: THREE.Object3D; animations?: THREE.AnimationClip[] };
+
+type AssetFactory = () => AssetFactoryResult;
+
 /**
  * ModelLoader: owns asset registry, lazy GLTF loading, AssetCache,
  * and SceneDocument creation for preset / custom models.
@@ -16,7 +22,7 @@ import {
  */
 export class ModelLoader {
   /** Universal asset registry for built-in and dynamically registered models */
-  private readonly registry = new Map<string, string | (() => THREE.Object3D)>([
+  private readonly registry = new Map<string, string | AssetFactory>([
     // Primary generic identifiers
     ["mecha-shells", "/assets/mecha-shells.glb"],
     ["mecha-torso", "/assets/mecha-torso.glb"],
@@ -43,6 +49,7 @@ export class ModelLoader {
           }),
         ),
     ],
+    ["kinetic-orb", createKineticOrb],
   ]);
 
   private gltfLoaderInstance: unknown = null;
@@ -65,9 +72,18 @@ export class ModelLoader {
     this.demoAssetLoader = async (assetId) => {
       const customFactory = this.registry.get(assetId);
       if (typeof customFactory === "function") {
+        const built = customFactory();
         const root = new THREE.Group();
-        root.add(customFactory());
-        return { scene: root, metadata: inspectModel(root) };
+        if (built instanceof THREE.Object3D) {
+          root.add(built);
+          return { scene: root, metadata: inspectModel(root) };
+        }
+        root.add(built.object);
+        return {
+          scene: root,
+          metadata: inspectModel(root),
+          ...(built.animations?.length ? { animations: built.animations } : {}),
+        };
       }
 
       const url = typeof customFactory === "string" ? customFactory : assetId;
@@ -85,7 +101,11 @@ export class ModelLoader {
         root.scale.setScalar(0.004);
         root.position.y += 1.0;
         root.updateMatrixWorld(true);
-        return { scene: root, metadata: inspectModel(root) };
+        return {
+          scene: root,
+          metadata: inspectModel(root),
+          ...(gltf.animations?.length ? { animations: gltf.animations } : {}),
+        };
       }
 
       if (assetId === "crystal-prism" || assetId === "tri") {
@@ -94,7 +114,11 @@ export class ModelLoader {
         const root = gltf.scene;
         root.position.y += 1.0;
         root.updateMatrixWorld(true);
-        return { scene: root, metadata: inspectModel(root) };
+        return {
+          scene: root,
+          metadata: inspectModel(root),
+          ...(gltf.animations?.length ? { animations: gltf.animations } : {}),
+        };
       }
 
       return this.universalFallbackLoader(assetId);
@@ -134,7 +158,9 @@ export class ModelLoader {
       }
       this.gltfLoaderInstance = loader;
     }
-    return this.gltfLoaderInstance as { loadAsync(url: string): Promise<{ scene: THREE.Object3D }> };
+    return this.gltfLoaderInstance as {
+      loadAsync(url: string): Promise<{ scene: THREE.Object3D; animations?: THREE.AnimationClip[] }>;
+    };
   }
 
   /**
@@ -146,17 +172,33 @@ export class ModelLoader {
     urlOrFile: string | File,
     customName?: string,
   ): Promise<{ doc: SceneDocument; filename: string; format: string }> {
-    let url: string;
-    let filename: string;
-
     if (typeof urlOrFile === "string") {
-      url = urlOrFile;
-      filename = customName || url.split("/").pop()?.split("?")[0] || "Custom Model";
-    } else {
-      url = URL.createObjectURL(urlOrFile);
-      filename = customName || urlOrFile.name;
+      const filename = customName || urlOrFile.split("/").pop()?.split("?")[0] || "Custom Model";
+      return this.#createDoc(urlOrFile, filename);
     }
+    return this.#createDoc(URL.createObjectURL(urlOrFile), customName || urlOrFile.name);
+  }
 
+  /**
+   * Create a document from a dropped/picked bundle. A `.gltf` arrives with its
+   * `.bin` and textures; those relative URIs are rewritten to blob URLs so the
+   * loader resolves everything in place (reference: `assetMap` URL modifier).
+   */
+  async createFilesModelDoc(
+    files: File[],
+  ): Promise<{ doc: SceneDocument; filename: string; format: string }> {
+    const primary = pickPrimaryFile(files);
+    if (!primary) {
+      throw new Error("未找到支持的 3D 文件（.glb / .gltf / .obj / .stl）");
+    }
+    const url = await bundleUrl(primary, files);
+    return this.#createDoc(url, primary.name);
+  }
+
+  #createDoc(
+    url: string,
+    filename: string,
+  ): { doc: SceneDocument; filename: string; format: string } {
     const assetId = `custom-${Date.now()}`;
     this.registry.set(assetId, url);
 
@@ -216,6 +258,156 @@ export class ModelLoader {
     if (value === "procedural-assembly" || value === "default-assembly") {
       return { doc: structuredClone(defaultMultiDoc), telemetryName: "Multi-Geometry Assembly", telemetryFormat: "Procedural Mesh" };
     }
+    if (value === "kinetic-orb") {
+      const doc = createSingleModelDoc("kinetic-orb", "Kinetic Orb");
+      doc.view.camera = { position: [3.4, 2.4, 4.2], target: [0, 0.9, 0], fov: 48 };
+      return { doc, telemetryName: "Kinetic Orb (Animated)", telemetryFormat: "Procedural + Clips" };
+    }
     return null;
   }
+}
+
+/** Demo asset with two clips — exercises the animation transport end to end. */
+function createKineticOrb(): { object: THREE.Object3D; animations: THREE.AnimationClip[] } {
+  const group = new THREE.Group();
+
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.85, 2),
+    new THREE.MeshStandardMaterial({
+      color: 0x38e2ff,
+      metalness: 0.55,
+      roughness: 0.18,
+      emissive: 0x063a4a,
+      emissiveIntensity: 0.5,
+    }),
+  );
+  core.name = "core";
+
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(1.6, 0.05, 8, 96),
+    new THREE.MeshStandardMaterial({
+      color: 0x9fe9ff,
+      metalness: 0.8,
+      roughness: 0.25,
+      emissive: 0x0a2a33,
+      emissiveIntensity: 0.4,
+    }),
+  );
+  ring.name = "ring";
+  ring.rotation.x = Math.PI / 2;
+
+  const satellite = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 16, 16),
+    new THREE.MeshStandardMaterial({
+      color: 0xffab40,
+      emissive: 0xff7a00,
+      emissiveIntensity: 0.9,
+      roughness: 0.3,
+    }),
+  );
+  satellite.name = "satellite";
+  satellite.position.set(1.6, 0, 0);
+
+  group.add(core, ring, satellite);
+  return { object: group, animations: [createOrbitClip(), createBreatheClip()] };
+}
+
+function createOrbitClip(): THREE.AnimationClip {
+  const duration = 4;
+  const segments = 48;
+  const radius = 1.6;
+  const times: number[] = [];
+  const values: number[] = [];
+
+  for (let i = 0; i <= segments; i += 1) {
+    const t = (i / segments) * duration;
+    const angle = (i / segments) * Math.PI * 2;
+    times.push(t);
+    values.push(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+  }
+
+  return new THREE.AnimationClip("Orbit", duration, [
+    new THREE.VectorKeyframeTrack("satellite.position", times, values),
+  ]);
+}
+
+function createBreatheClip(): THREE.AnimationClip {
+  return new THREE.AnimationClip("Breathe", 2.5, [
+    new THREE.VectorKeyframeTrack(
+      "core.scale",
+      [0, 1.25, 2.5],
+      [1, 1, 1, 1.22, 1.22, 1.22, 1, 1, 1],
+    ),
+  ]);
+}
+
+const SUPPORTED_FILE_EXTENSIONS = ["gltf", "glb", "obj", "stl"] as const;
+
+function fileExtension(name: string): string {
+  return (
+    name
+      .split("?")[0]!
+      .split(".")
+      .pop()
+      ?.toLowerCase() ?? ""
+  );
+}
+
+/** Prefer a .gltf bundle (it owns external resources), then self-contained .glb. */
+function pickPrimaryFile(files: File[]): File | null {
+  for (const ext of SUPPORTED_FILE_EXTENSIONS) {
+    const match = files.find((file) => fileExtension(file.name) === ext);
+    if (match) return match;
+  }
+  return null;
+}
+
+/**
+ * Inline a .gltf bundle: map every relative buffer/image URI to a Blob URL from
+ * the dropped file set, then hand the loader a single JSON blob. This is the
+ * playground equivalent of three-gltf-viewer's `assetMap` URL modifier.
+ */
+async function bundleUrl(primary: File, files: File[]): Promise<string> {
+  if (fileExtension(primary.name) !== "gltf") return URL.createObjectURL(primary);
+
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(await primary.text()) as Record<string, unknown>;
+  } catch {
+    return URL.createObjectURL(primary);
+  }
+
+  const byName = new Map<string, File>();
+  for (const file of files) {
+    if (file === primary) continue;
+    byName.set(file.name.toLowerCase(), file);
+    const base = file.name.split("/").pop()?.toLowerCase();
+    if (base) byName.set(base, file);
+  }
+
+  const resolve = (uri: string): string | null => {
+    if (!uri || uri.startsWith("data:") || /^(blob:|https?:|file:)/i.test(uri)) return null;
+    let clean = uri.replace(/^\.\//, "");
+    try {
+      clean = decodeURIComponent(clean);
+    } catch {
+      // keep the raw URI when it is not valid percent-encoding
+    }
+    const base = clean.split("/").pop()?.toLowerCase();
+    const file = byName.get(clean.toLowerCase()) ?? (base ? byName.get(base) : undefined);
+    return file ? URL.createObjectURL(file) : null;
+  };
+
+  for (const key of ["buffers", "images"]) {
+    const list = json[key];
+    if (!Array.isArray(list)) continue;
+    for (const item of list as Array<{ uri?: unknown }>) {
+      if (typeof item?.uri !== "string") continue;
+      const blobUrl = resolve(item.uri);
+      if (blobUrl) item.uri = blobUrl;
+    }
+  }
+
+  const blob = new Blob([JSON.stringify(json)], { type: "model/gltf+json" });
+  return URL.createObjectURL(blob);
 }

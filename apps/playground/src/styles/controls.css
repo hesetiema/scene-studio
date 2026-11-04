@@ -1,0 +1,177 @@
+/* Shared control primitives: buttons, selects, segmented tabs, tool grid. */
+
+.controls-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #dce1eb;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  outline: none;
+}
+
+.btn:hover {
+  background: rgba(56, 226, 255, 0.1);
+  border-color: rgba(56, 226, 255, 0.4);
+  color: #fff;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: rgba(56, 226, 255, 0.18);
+  border-color: rgba(56, 226, 255, 0.55);
+  color: #38e2ff;
+  font-weight: 600;
+}
+
+.btn-primary:hover {
+  background: rgba(56, 226, 255, 0.32);
+  border-color: #38e2ff;
+  color: #fff;
+  box-shadow: 0 0 12px rgba(56, 226, 255, 0.3);
+}
+
+/* Select and option high-contrast dark styling */
+select.select-input {
+  background-color: #12151c !important;
+  color: #38e2ff !important;
+  border: 1px solid rgba(56, 226, 255, 0.45) !important;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+select.select-input:hover,
+select.select-input:focus {
+  border-color: #38e2ff !important;
+  box-shadow: 0 0 10px rgba(56, 226, 255, 0.35) !important;
+}
+
+select.select-input option {
+  background-color: #12151c !important;
+  color: #f0f3fa !important;
+  font-size: 12px;
+  padding: 8px 12px;
+}
+
+select.select-input option:checked {
+  background-color: #1d2638 !important;
+  color: #38e2ff !important;
+  font-weight: bold;
+}
+
+/* Mode switcher bar */
+.mode-bar {
+  display: flex;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.mode-tab {
+  background: transparent;
+  border: none;
+  color: #8c93a4;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.mode-tab:hover {
+  color: #fff;
+}
+
+.mode-tab.active {
+  background: rgba(56, 226, 255, 0.22);
+  color: #38e2ff;
+  font-weight: 600;
+  box-shadow: 0 0 8px rgba(56, 226, 255, 0.25);
+}
+
+/* Tool grid */
+.tool-btn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.tool-btn {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #a0a6b5;
+  padding: 5px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.15s ease;
+}
+
+.tool-btn:hover {
+  background: rgba(56, 226, 255, 0.15);
+  color: #fff;
+  border-color: rgba(56, 226, 255, 0.4);
+}
+
+.tool-btn.active {
+  background: rgba(56, 226, 255, 0.25);
+  color: #38e2ff;
+  border-color: #38e2ff;
+  box-shadow: 0 0 8px rgba(56, 226, 255, 0.3);
+}
+
+/* Range sliders (explode / exposure / animation scrub) */
+input[type="range"].hud-range {
+  width: 100%;
+  accent-color: #38e2ff;
+}
+
+.tool-btn:disabled,
+.btn:disabled,
+input:disabled,
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Compact inline label used by panel rows */
+.field-label {
+  font-size: 10px;
+  color: #8c93a4;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}

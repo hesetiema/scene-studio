@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.4.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
+Version: `0.5.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
 ---
 
@@ -154,7 +154,7 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 |---|---|
 | `AssetCache` | Refcounted per-`assetId` cache. `retain(id)`, `release(id)`, `has`, `refCount`. Parallel retains collapse to one load; dispose at refcount 0; next retain reloads |
 | `AssetLoader` | type: `(assetId: string) => Promise<LoadedAsset>` |
-| `LoadedAsset` | type: `{ scene: unknown; dispose?: () => void }` — opaque runtime handle |
+| `LoadedAsset` | type: `{ scene: unknown; dispose?: () => void; metadata?: unknown; animations?: readonly unknown[] }` — opaque runtime handle; glTF clips are forwarded to the runtime |
 | `AssetError` / `AssetErrorCode` | Codes: `asset-not-found`, `asset-resolve-failed`, `asset-load-failed`, `asset-unsupported-format`, `asset-disposed` |
 | `createGltfAssetLoader(options)` | `{ resolveUrl, gltfLoader, dracoLoader?, ktx2Loader? }` → `AssetLoader` |
 | `createResolverAssetLoader(options)` | `{ resolver, gltfLoader, dracoLoader?, ktx2Loader? }` → `AssetLoader`; resolve failure → `asset-resolve-failed` |
@@ -249,6 +249,37 @@ Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resiz
 const runtime = new ThreeRuntime({ canvas });
 runtime.setTransformMode("rotate"); // remembered until the addon mounts
 ```
+
+**Animation.** Clips from `LoadedAsset.animations` are bound to each mounted asset instance (one mixer per object). One clip plays at a time across the runtime.
+
+| Member | Description |
+|---|---|
+| `animations` | `AnimationClipInfo[]`: `{ id: "objectId#index", objectId, index, name, duration }` |
+| `playAnimation(objectId?, index?)` | Start a clip (`null` objectId = first object with clips); starts an rAF loop |
+| `pauseAnimations()` / `resumeAnimations()` | Pause without rewind / continue from the playhead |
+| `setAnimationSpeed(speed)` | Playback rate (`0` allowed) |
+| `setAnimationTime(seconds)` | Scrub the active clip |
+| `animationPlaying` / `animationTime` / `animationDuration` | Transport read surface |
+
+```ts
+const runtime = new ThreeRuntime({ canvas, assetCache });
+await runtime.loadDocument(doc); // assets with clips register their mixers
+runtime.playAnimation("obj-1", 0);
+```
+
+### Viewer rigs
+
+`ThreeRuntime` is a thin orchestrator over these composable pieces (same split a standalone glTF viewer uses). Import them from `@scenio/scene-editor/three` to build a viewer without the editor contract.
+
+| Export | Responsibility |
+|---|---|
+| `createCameraRig` | Camera + OrbitControls lifecycle, `readView()` / `applyView()` |
+| `createLightingRig` | Ambient + directional lights, view read/apply |
+| `createEnvironmentRig` | Background + floor grid |
+| `createObjectStore` | id → Object3D registry, asset instantiation, disposal |
+| `createGizmoRig` | TransformControls mount / mode / selection binding |
+| `createAnimationRig` | glTF clips, mixers, transport |
+| `createRenderLoop` | Single re-entrancy-guarded render entry |
 
 **WebGPU opt-in:** construct a `WebGPURenderer`, `await renderer.init()` **before** constructing the runtime (constructor renders once), pass `rendererFactory: () => renderer`. Detect silent fallback via `renderer.backend.isWebGPUBackend === true`. Reference: `apps/playground/webgpu.html`.
 

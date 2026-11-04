@@ -1,5 +1,18 @@
 # TODOS
 
+## Viewer 能力补齐（参考 three-gltf-viewer）
+
+**已完成（0.5.0）：** three 运行时拆分为 camera / lighting / environment / object-store / gizmo / animation / render-loop 七个 rig；`LoadedAsset.animations` 透传，运行时提供 `animations` / `playAnimation` / `pause/resume` / `setAnimationSpeed` / `setAnimationTime`；playground 以单一 `ViewerState` + `ViewerController.update*()` 驱动，面板拆分为 model / transform / camera / display / lighting / animation / document，样式抽离为 `styles/*.css`，支持 `.gltf + bin + 贴图` 多文件拖拽、骨骼叠加、曝光/色调映射。
+
+**待补齐：**
+- **HDR 环境贴图**：PMREMGenerator + RoomEnvironment/HDR 预设；需要 `view.environment` 增字段与 schema 迁移（v3）。
+- **模型内嵌相机切换**：遍历 asset 的 `isCamera`，切换 `runtime.camera` 或复制参数；需要 `RuntimeContract` 增加相机切换语义。
+- **Morph target UI**：每个 mesh 的 `morphTargetInfluences` 滑块，与动画驱动互斥。
+
+**Why:** 参考仓库把“查看器”能力做全，而当前 SDK 只覆盖编辑器主链路。
+
+**Cons:** HDR 与内嵌相机都会触碰持久化 schema 或 RuntimeContract，需独立迁移评审，不宜混入本次结构重构。
+
 ## CRDT / 实时多人协作编辑层
 
 **What:** 为 SceneDocument 设计 CRDT 或 OT 合并层，支持多光标、实时共编与意图感知冲突解决。

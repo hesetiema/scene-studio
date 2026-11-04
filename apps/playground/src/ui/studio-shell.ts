@@ -1,30 +1,35 @@
 import type { SceneEditorElement } from "@scenio/scene-editor/element";
-import type { ThreeRuntime, TransformMode } from "@scenio/scene-editor/three";
-import type { CameraController, CameraPreset } from "../camera/camera-controller";
+import type { ThreeRuntime } from "@scenio/scene-editor/three";
+import type { CameraController } from "../camera/camera-controller";
+import type { ViewerController } from "../viewer/viewer-controller";
+import type { DisplayMode, ViewerStore } from "../viewer/viewer-state";
 import { bindHotkeys } from "../interaction/hotkeys";
+import { DropZone } from "./drop-zone";
 import type { HUDController } from "./hud-controller";
 import { ExplodeController } from "./explode-controller";
-import { ViewModeController, type DisplayMode } from "./view-mode-controller";
-import {
-  ScenePresetController,
-  DEFAULT_BACKDROP,
-  type LightingPresetId,
-} from "./scene-presets";
-import { captureSnapshot, exportDocument, type ExportFormat } from "./scene-export";
+import { AnimationPanel } from "./panels/animation-panel";
+import { CameraPanel } from "./panels/camera-panel";
+import { DisplayPanel } from "./panels/display-panel";
+import { DocumentPanel } from "./panels/document-panel";
+import { LightingPanel } from "./panels/lighting-panel";
+import { ModelPanel } from "./panels/model-panel";
+import { TransformPanel } from "./panels/transform-panel";
+import type { Panel } from "./panel";
 
 export interface StudioShellOptions {
   el: SceneEditorElement;
   getRuntime: () => ThreeRuntime | null;
   hud: HUDController;
   camera: CameraController;
+  store: ViewerStore;
+  viewer: ViewerController;
   /** Load a built-in preset by `<select>` value. */
   loadPreset: (value: string) => Promise<void>;
   /** Load a local file / remote URL. */
   loadCustom: (source: string | File) => Promise<void>;
+  /** Load a multi-file glTF bundle (glTF + buffers + textures). */
+  loadFiles: (files: File[]) => Promise<void>;
 }
-
-const REMOTE_MODEL_EXAMPLE =
-  "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Models/master/2.0/DamagedHelmet/glTF-Binary/DamagedHelmet.glb";
 
 const MODE_BY_SHORTCUT: Record<string, DisplayMode> = {
   "1": "studio",
@@ -34,316 +39,136 @@ const MODE_BY_SHORTCUT: Record<string, DisplayMode> = {
   "5": "clay",
 };
 
-const GIZMO_BY_SHORTCUT: Record<string, TransformMode> = {
-  g: "translate",
-  r: "rotate",
-  s: "scale",
-};
-
-const GIZMO_BUTTONS: Record<TransformMode, string> = {
-  translate: "#gizmo-t",
-  rotate: "#gizmo-r",
-  scale: "#gizmo-s",
-};
-
 /**
- * Host chrome wiring for the playground: toolbar, presets, gizmo, hotkeys,
- * drag & drop, snapshot/export.
+ * Composition root for the host chrome.
  *
- * `main.ts` keeps the host-side concerns (runtime factory, save/conflict store,
- * boot sequence); everything DOM-facing lives here so the two don't grow back
- * into one 700-line file.
+ * Each panel owns one concern and talks to the viewer store, not to Three
+ * (reference: three-gltf-viewer's `Viewer#addGUI` folders). `main.ts` keeps
+ * host concerns — runtime factory, save/conflict store, boot sequence.
  */
 export class StudioShell {
-  readonly #el: SceneEditorElement;
-  readonly #getRuntime: () => ThreeRuntime | null;
-  readonly #hud: HUDController;
-  readonly #camera: CameraController;
-  readonly #loadPreset: (value: string) => Promise<void>;
-  readonly #loadCustom: (source: string | File) => Promise<void>;
-
-  readonly viewModes: ViewModeController;
   readonly explode: ExplodeController;
-  readonly presets: ScenePresetController;
+  readonly model: ModelPanel;
+  readonly transform: TransformPanel;
+  readonly cameraPanel: CameraPanel;
+  readonly display: DisplayPanel;
+  readonly lighting: LightingPanel;
+  readonly animation: AnimationPanel;
+  readonly document: DocumentPanel;
 
+  readonly #options: StudioShellOptions;
+  readonly #panels: Panel[];
+  readonly #dropZone: DropZone;
   readonly #disposers: Array<() => void> = [];
-  #dragDepth = 0;
 
   constructor(options: StudioShellOptions) {
-    this.#el = options.el;
-    this.#getRuntime = options.getRuntime;
-    this.#hud = options.hud;
-    this.#camera = options.camera;
-    this.#loadPreset = options.loadPreset;
-    this.#loadCustom = options.loadCustom;
-
-    this.viewModes = new ViewModeController(options.el, options.getRuntime);
+    this.#options = options;
     this.explode = new ExplodeController(options.el, options.getRuntime);
-    this.presets = new ScenePresetController(options.el);
+
+    this.model = new ModelPanel({
+      loadPreset: options.loadPreset,
+      loadCustom: options.loadCustom,
+      loadFiles: options.loadFiles,
+    });
+
+    this.transform = new TransformPanel({
+      el: options.el,
+      getRuntime: options.getRuntime,
+    });
+
+    this.cameraPanel = new CameraPanel({
+      camera: options.camera,
+      hud: options.hud,
+      store: options.store,
+    });
+
+    this.display = new DisplayPanel({ store: options.store, explode: this.explode });
+    this.lighting = new LightingPanel({ store: options.store });
+
+    this.animation = new AnimationPanel({
+      store: options.store,
+      viewer: options.viewer,
+      getRuntime: options.getRuntime,
+    });
+
+    this.document = new DocumentPanel({
+      el: options.el,
+      getRuntime: options.getRuntime,
+      hud: options.hud,
+    });
+
+    this.#panels = [
+      this.model,
+      this.transform,
+      this.cameraPanel,
+      this.display,
+      this.lighting,
+      this.animation,
+      this.document,
+    ];
+
+    this.#dropZone = new DropZone({
+      onFiles: (files) =>
+        files.length === 1
+          ? options.loadCustom(files[0]!)
+          : options.loadFiles(files),
+    });
   }
 
   mount(): void {
-    this.#bindModelSources();
-    this.#bindDisplayModes();
-    this.#bindCameraTools();
-    this.#bindGizmoTools();
-    this.#bindScenePresets();
-    this.#bindDocumentActions();
-    this.#bindDragAndDrop();
+    for (const panel of this.#panels) panel.mount();
+    this.#dropZone.mount();
     this.#bindKeys();
 
-    this.#hud.startFpsCounter();
-    this.presets.syncUI();
-    this.#syncTurntableButton(false);
+    this.#options.hud.startFpsCounter();
+    this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
+  }
+
+  /** Re-sync the viewer after `loadDocument()` — clips, explode baseline, presets. */
+  onDocumentLoaded(): void {
+    this.explode.reset();
+    this.#options.viewer.syncFromDocument();
+    this.animation.refresh();
+    this.lighting.sync(this.#options.store.state);
+    this.display.sync(this.#options.store.state);
+    this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
   }
 
   /** Reflect the loaded preset in the model `<select>` (custom files keep the last option). */
   selectModelOption(value: string | null): void {
-    if (!value) return;
-    const select = document.querySelector<HTMLSelectElement>("#model-select");
-    if (!select) return;
-    if (!Array.from(select.options).some((option) => option.value === value)) return;
-    select.value = value;
-  }
-
-  /** Re-sync the viewer after `loadDocument()` — modes, explode baseline, presets. */
-  onDocumentLoaded(): void {
-    this.viewModes.reset();
-    this.explode.reset();
-    this.presets.syncUI();
-    this.#syncTurntableButton(this.#camera.turntableActive);
+    this.model.selectModelOption(value);
   }
 
   destroy(): void {
     for (const dispose of this.#disposers.splice(0)) dispose();
-    this.#camera.stopTurntable();
-    this.viewModes.dispose();
-    this.#hud.destroy();
-  }
-
-  #bindModelSources(): void {
-    const select = document.querySelector<HTMLSelectElement>("#model-select");
-    if (select) {
-      this.#listen(select, "change", () => {
-        void this.#loadPreset(select.value);
-      });
-    }
-
-    const fileInput = document.querySelector<HTMLInputElement>("#file-input");
-    const upload = document.querySelector<HTMLElement>("#btn-upload");
-    if (upload && fileInput) {
-      this.#listen(upload, "click", () => fileInput.click());
-      this.#listen(fileInput, "change", () => {
-        const file = fileInput.files?.[0];
-        // Reset so re-picking the same file fires `change` again.
-        fileInput.value = "";
-        if (file) void this.#loadCustom(file);
-      });
-    }
-
-    const urlButton = document.querySelector<HTMLElement>("#btn-url");
-    if (urlButton) {
-      this.#listen(urlButton, "click", () => {
-        const url = window.prompt("输入 3D 模型 URL（.glb / .gltf / .obj / .stl）", REMOTE_MODEL_EXAMPLE);
-        if (url) void this.#loadCustom(url.trim());
-      });
-    }
-  }
-
-  #bindDisplayModes(): void {
-    document.querySelectorAll<HTMLElement>(".mode-tab[data-mode]").forEach((tab) => {
-      this.#listen(tab, "click", () => {
-        const mode = tab.dataset.mode as DisplayMode | undefined;
-        if (mode) this.viewModes.apply(mode);
-      });
-    });
-  }
-
-  #bindCameraTools(): void {
-    this.#click("#btn-frame", () => {
-      this.#camera.frameScene(true);
-      this.#hud.showToast("Frame: scene centered");
-    });
-
-    this.#click("#btn-reset-cam", () => {
-      this.#camera.resetCamera(true);
-      this.#hud.showToast("Camera Reset [H]");
-    });
-
-    this.#click("#btn-turntable", () => {
-      this.#syncTurntableButton(this.#camera.toggleTurntable());
-    });
-
-    const presets: Array<[CameraPreset, string]> = [
-      ["iso", "#cam-iso"],
-      ["top", "#cam-top"],
-      ["front", "#cam-front"],
-      ["side", "#cam-side"],
-    ];
-    for (const [preset, selector] of presets) {
-      this.#click(selector, () => this.#setCameraPreset(preset));
-    }
-  }
-
-  #bindGizmoTools(): void {
-    this.#click("#gizmo-t", () => this.#setGizmo("translate"));
-    this.#click("#gizmo-r", () => this.#setGizmo("rotate"));
-    this.#click("#gizmo-s", () => this.#setGizmo("scale"));
-    this.#click("#gizmo-none", () => this.#setGizmo("none"));
-  }
-
-  #bindScenePresets(): void {
-    const slider = document.querySelector<HTMLInputElement>("#explode-slider");
-    if (slider) {
-      this.#listen(slider, "input", () => {
-        this.explode.setFactor(Number(slider.value) / 100);
-      });
-    }
-
-    this.#click("#toggle-grid", () => {
-      const visible = this.presets.toggleGrid();
-      this.#hud.showToast(`Grid: ${visible ? "Visible" : "Hidden"}`);
-    });
-
-    document.querySelectorAll<HTMLElement>(".bg-preset-btn").forEach((btn) => {
-      this.#listen(btn, "click", () => {
-        const hex = btn.dataset.bg || DEFAULT_BACKDROP;
-        this.presets.applyBackdrop(hex);
-        // Keep the page chrome in sync with the 3D background (no flash on resize).
-        document.body.style.backgroundColor = hex;
-        this.#el.style.backgroundColor = hex;
-        this.#hud.showToast(`Backdrop: ${btn.textContent?.trim() ?? hex}`);
-      });
-    });
-
-    document.querySelectorAll<HTMLElement>(".light-preset-btn").forEach((btn) => {
-      this.#listen(btn, "click", () => {
-        const preset = btn.dataset.light as LightingPresetId | undefined;
-        if (!preset) return;
-        this.presets.applyLighting(preset);
-        this.#hud.showToast(`Light: ${preset.toUpperCase()}`);
-      });
-    });
-  }
-
-  #bindDocumentActions(): void {
-    this.#click("#btn-save", () => this.#el.requestSave());
-    this.#click("#btn-undo", () => this.#el.undo());
-    this.#click("#btn-redo", () => this.#el.redo());
-
-    this.#click("#btn-snapshot", () => {
-      const rt = this.#getRuntime();
-      if (!rt) return;
-      try {
-        const filename = captureSnapshot(rt, this.#el, this.#el.getDocument());
-        this.#hud.showToast(`Snapshot: ${filename}`);
-      } catch (error) {
-        this.#hud.showToast(error instanceof Error ? error.message : "截图失败");
-      }
-    });
-
-    this.#click("#btn-export-glb", () => void this.#export("glb"));
-    this.#click("#btn-export-obj", () => void this.#export("obj"));
-  }
-
-  #bindDragAndDrop(): void {
-    const overlay = document.querySelector<HTMLElement>("#drop-overlay");
-
-    this.#listen<DragEvent>(window, "dragenter", (event) => {
-      event.preventDefault();
-      this.#dragDepth += 1;
-      overlay?.classList.add("visible");
-    });
-
-    this.#listen<DragEvent>(window, "dragleave", (event) => {
-      event.preventDefault();
-      this.#dragDepth = Math.max(0, this.#dragDepth - 1);
-      if (this.#dragDepth === 0) overlay?.classList.remove("visible");
-    });
-
-    this.#listen<DragEvent>(window, "dragover", (event) => event.preventDefault());
-
-    this.#listen<DragEvent>(window, "drop", (event) => {
-      event.preventDefault();
-      this.#dragDepth = 0;
-      overlay?.classList.remove("visible");
-      const file = event.dataTransfer?.files?.[0];
-      if (file) void this.#loadCustom(file);
-    });
+    this.#dropZone.destroy();
+    this.#options.camera.stopTurntable();
+    for (const panel of this.#panels) panel.destroy();
+    this.#options.hud.destroy();
   }
 
   #bindKeys(): void {
+    const { store, camera, hud } = this.#options;
+
     const off = bindHotkeys({
       ...Object.fromEntries(
-        Object.entries(MODE_BY_SHORTCUT).map(([key, mode]) => [key, () => this.viewModes.apply(mode)]),
+        Object.entries(MODE_BY_SHORTCUT).map(([key, mode]) => [
+          key,
+          () => store.patch({ display: mode }),
+        ]),
       ),
-      ...Object.fromEntries(
-        Object.entries(GIZMO_BY_SHORTCUT).map(([key, mode]) => [key, () => this.#setGizmo(mode)]),
-      ),
-      f: () => this.#camera.frameScene(true),
+      g: () => this.transform.setMode("translate"),
+      r: () => this.transform.setMode("rotate"),
+      s: () => this.transform.setMode("scale"),
+      f: () => camera.frameScene(true),
       h: () => {
-        this.#camera.resetCamera(true);
-        this.#hud.showToast("Camera Reset [H]");
+        camera.resetCamera(true);
+        hud.showToast("Camera Reset [H]");
       },
-      "7": () => this.#setCameraPreset("top"),
-      space: () => this.#syncTurntableButton(this.#camera.toggleTurntable()),
+      "7": () => this.cameraPanel.setPreset("top"),
+      space: () => store.patch({ autoRotate: !store.state.autoRotate }),
+      p: () => this.animation.togglePlay(),
     });
     this.#disposers.push(off);
-  }
-
-  #setCameraPreset(preset: CameraPreset): void {
-    this.#camera.setCameraPreset(preset, true);
-
-    const { distance } = this.#camera.getBoundingInfo();
-    const stat = document.querySelector<HTMLElement>("#hud-cam-stat");
-    if (stat) stat.textContent = `CAM: ${preset.toUpperCase()} · DIST: ${distance.toFixed(1)}m`;
-
-    document.querySelectorAll("#cam-iso, #cam-top, #cam-front, #cam-side").forEach((btn) => {
-      btn.classList.toggle("active", btn.id === `cam-${preset}`);
-    });
-    this.#hud.showToast(`Camera: ${preset.toUpperCase()}`);
-  }
-
-  #setGizmo(mode: TransformMode | "none"): void {
-    if (mode === "none") {
-      this.#el.clearSelection();
-    } else {
-      this.#getRuntime()?.setTransformMode(mode);
-    }
-
-    document
-      .querySelectorAll("#gizmo-t, #gizmo-r, #gizmo-s, #gizmo-none")
-      .forEach((btn) => btn.classList.remove("active"));
-    const active = mode === "none" ? "#gizmo-none" : GIZMO_BUTTONS[mode];
-    document.querySelector(active)?.classList.add("active");
-  }
-
-  async #export(format: ExportFormat): Promise<void> {
-    const rt = this.#getRuntime();
-    if (!rt) return;
-    try {
-      const filename = await exportDocument(rt, this.#el.getDocument(), format);
-      this.#hud.showToast(`Export: ${filename}`);
-    } catch (error) {
-      this.#hud.showToast(error instanceof Error ? error.message : "导出失败");
-    }
-  }
-
-  #syncTurntableButton(active: boolean): void {
-    document.querySelector("#btn-turntable")?.classList.toggle("active", active);
-  }
-
-  #click(selector: string, handler: () => void): void {
-    const element = document.querySelector<HTMLElement>(selector);
-    if (element) this.#listen(element, "click", handler);
-  }
-
-  #listen<E extends Event = Event>(
-    target: EventTarget,
-    type: string,
-    handler: (event: E) => void,
-  ): void {
-    target.addEventListener(type, handler as EventListener);
-    this.#disposers.push(() => target.removeEventListener(type, handler as EventListener));
   }
 }
