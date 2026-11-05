@@ -1,6 +1,6 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder. This repo tracks `0.6.0`; the latest published version is `0.3.0`.
+Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder. This repo tracks `0.6.0`, which is also the latest published version.
 
 **Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
 
@@ -136,7 +136,7 @@ CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.
 
 ## Status and roadmap
 
-`0.6.0` alpha in this repo. The latest published version is `0.3.0`; `0.4.0`–`0.6.0` have not been released yet. The API may still shift before `1.0.0`; after that, semver applies.
+`0.6.0` alpha, published to npm. `0.4.0` / `0.5.0` were never released on their own; `0.6.0` supersedes them. The API may still shift before `1.0.0`; after that, semver applies.
 
 `0.6.0` added a one-line glTF preview path (`<scene-editor src>`) with auto-framing, `progress`/`load` lifecycle events, and display settings (tone mapping / exposure), plus the `visibility-change` and opt-in `view-changing` element events.
 

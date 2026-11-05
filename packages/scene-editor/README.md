@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.6.0` alpha in this repo. The latest version on npm is `0.3.0`; `0.4.0`–`0.6.0` are unreleased. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
+**Status:** `0.6.0` alpha, published to npm. `0.4.0` / `0.5.0` were never released on their own; `0.6.0` supersedes them. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
@@ -22,7 +22,7 @@ pnpm add @scenio/scene-editor three
 
 Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 
-> This README tracks the repo (`0.6.0`). `npm install` currently resolves `0.3.0`; to try unreleased features, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
+> This README tracks the repo (`0.6.0`), which matches npm `latest`. To try unreleased work, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
 
 ## Quick start
 

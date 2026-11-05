@@ -1,6 +1,6 @@
 # scene-studio
 
-可嵌入网页的 3D 场景编辑器 SDK。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布（`@scenio` 仍是占位 scope）。仓库当前版本为 `0.6.0`，npm 上最新发布版本为 `0.3.0`。
+可嵌入网页的 3D 场景编辑器 SDK。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布（`@scenio` 仍是占位 scope）。仓库当前版本为 `0.6.0`，也已是 npm 上的最新发布版本。
 
 **文档：** [English](README.md) · 简体中文（本页） · [包快速上手](packages/scene-editor/README.zh-CN.md) · [API 参考](packages/scene-editor/API.md)
 
@@ -136,7 +136,7 @@ CI（`.github/workflows/ci.yml`）会跑 `three` 版本矩阵（固定 `0.186.0`
 
 ## 状态与路线图
 
-仓库内为 `0.6.0` alpha。npm 最新发布版本是 `0.3.0`，`0.4.0`–`0.6.0` 尚未发布。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
+仓库内为 `0.6.0` alpha，已发布到 npm。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
 
 `0.6.0` 补齐了预览主链路：`<scene-editor src>` 单行预览、自动取景、`progress`/`load` 生命周期事件、tone mapping / exposure 显示设置，以及 `visibility-change` 与按需开启的 `view-changing` 元素事件。
 

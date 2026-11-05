@@ -34,4 +34,4 @@
 ## 发布
 
 - npm scope：`@scenio` 为占位，首次发布前选定。
-- 发布状态：npm `latest` 为 `0.3.0`；仓库内 `0.4.0`–`0.6.0` 尚未发布。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。
+- 发布状态：npm `latest` 为 `0.6.0`（`0.6.0` tag 已推送）。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。

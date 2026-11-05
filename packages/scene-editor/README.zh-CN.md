@@ -4,7 +4,7 @@
 
 > 英文完整文档见 [README.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md)，完整 API 见 [API.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md)。本页是中文快速上手与核心概念。
 
-**状态：** 仓库内为 `0.6.0` alpha；npm 最新版本是 `0.3.0`，`0.4.0`–`0.6.0` 尚未发布。`1.0.0` 之前 API 仍可能调整。
+**状态：** 仓库内为 `0.6.0` alpha，已发布到 npm。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。`1.0.0` 之前 API 仍可能调整。
 
 **编辑范围：** 变换与视图状态；对象增删/改父子级、材质写入文档、morph target、HDR 环境尚未进入文档 API。
 
@@ -21,7 +21,7 @@ pnpm add @scenio/scene-editor three
 
 `three@^0.186.0` 是 peer dependency，需要自行安装。
 
-> 本页跟随仓库 `0.6.0`。`npm install` 目前安装到 `0.3.0`；想使用未发布功能，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
+> 本页跟随仓库 `0.6.0`，与 npm `latest` 一致。想试用未发布内容，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
 
 ## 入口
 
