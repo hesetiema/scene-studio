@@ -76,11 +76,42 @@ If all you need is to show a model, skip the document entirely:
 
 The element synthesizes a one-mesh document, auto-frames the camera, and reports lifecycle through `progress` → `load` (`load.detail.url` carries the source). Previews default to ACES tone mapping — set `tone-mapping="none"` to opt out, and call `frameModel()` to re-fit after a layout change. An explicit `loadDocument()` still wins until `src` changes.
 
+A preview is a **viewer**, not an editor: no floor grid, model-viewer framing (`camera-orbit="0deg 75deg"`, `field-of-view="auto"` → 30° landscape / 45° portrait), and the environment map as the only light source. `environment-image="neutral"` (the default here) uses a grayscale softbox studio; `environment-image="room"` switches to the editor's warm `RoomEnvironment`.
+
 ```ts
 el.addEventListener("progress", ({ detail }) => setBar(detail.totalProgress));
 el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
 el.addEventListener("error", ({ detail }) => showError(detail.code));
 ```
+
+Viewer chrome is attribute-only and never written to the document — the canvas is transparent by default, so the page shows through a `null` background:
+
+```html
+<scene-editor
+  src="/models/robot.glb"
+  loading="lazy"
+  auto-rotate
+  rotation-per-second="20"
+  min-camera-orbit="auto 60deg 2m"
+  max-camera-orbit="auto 100deg 12m"
+  autoplay
+  animation-name="Idle"
+  animation-crossfade-duration="300"
+  pause-at-end
+></scene-editor>
+```
+
+Declarative slots cover the viewer chrome, model-viewer style:
+
+```html
+<scene-editor src="/models/robot.glb" reveal="interaction">
+  <img slot="poster" src="/poster.jpg" alt="Loading" />
+  <div slot="progress-bar">Loading…</div>
+  <button slot="hotspot-lens" data-position="0 1.2 0.4">Lens</button>
+</scene-editor>
+```
+
+`reveal` mirrors model-viewer: `auto` (the default) drops the poster on `load`, `interaction` on the first gesture, `manual` only through `dismissPoster()`; `poster-dismissed` fires once per dismissal. Capture/export parity: `getDimensions()`, `positionAndNormalFromPoint()`, `toDataURL()`, `toBlob()`, `exportScene()`.
 
 ## Headless usage
 
@@ -151,6 +182,9 @@ runtime.pauseAnimations();
 runtime.resumeAnimations();               // continue without rewinding
 runtime.setAnimationSpeed(1.5);
 runtime.setAnimationTime(0.8);            // scrub (seconds)
+runtime.setAnimationOptions({ autoplay: true, clipName: "Idle", crossfadeSeconds: 0.3, pauseAtEnd: true });
+runtime.setCameraControls({ pan: false, zoom: true, limits: { radius: [2, 20] } }); // theta/phi in degrees
+runtime.setAutoRotate({ enabled: true, degreesPerSecond: 20, delayMs: 3000 });
 ```
 
 Internally the runtime is a thin orchestrator over the rigs exported from this entry: `createCameraRig`, `createLightingRig`, `createEnvironmentRig`, `createObjectStore`, `createGizmoRig`, `createAnimationRig`, `createRenderLoop`. Use them directly if you need a viewer-shaped runtime without the editor contract.
@@ -264,7 +298,10 @@ el.setViewState(view);           // record + apply a view; dirty, never undoable
 | `save-request` | `{ reason, document, revision }` | Host should persist (manual `requestSave()` today) |
 | `view-change` | `{ view, source: "interaction" \| "api" \| "load" }` | Settled viewport view |
 | `view-changing` | `{ view }` | In-flight camera sample — opt in with `live-view-events`, high frequency |
+| `camera-change` | `{ position, target, fov }` | Camera moved (drag, damping, auto-rotate); always on, camera-only |
+| `environment-change` | `{ environment, source }` | Background / grid / IBL / HDR / contact shadow changed |
 | `visibility-change` | `{ visible: boolean }` | Element entered/left the viewport (element-only) |
+| `model-visibility` | `{ visible: boolean }` | model-viewer-compatible alias of `visibility-change` (element-only) |
 | `error` | `{ code, message, cause? }` | Any SDK failure — the reliable failure channel |
 
 `view-changing` exists for live consumers (remote camera sync, recording, a HUD); persist on `view-change` instead. `visibility-change` needs no plumbing on hosts without `IntersectionObserver`, and `SceneEditorElement.visibilityObserverFactory = () => null` disables it. Full contract + versioning rules: [API.md](API.md#element-events-customevent).

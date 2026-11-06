@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Viewer 对标 model-viewer · scene-editor demo</title>
+    <link rel="stylesheet" href="/src/styles/demo.css" />
+    <style>
+      /* 棋盘格：透明画布（alpha=true + background:null）一眼可辨 */
+      .demo-viewport {
+        background-color: #10141d;
+        background-image:
+          linear-gradient(45deg, #1a2130 25%, transparent 25%),
+          linear-gradient(-45deg, #1a2130 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #1a2130 75%),
+          linear-gradient(-45deg, transparent 75%, #1a2130 75%);
+        background-size: 24px 24px;
+        background-position: 0 0, 0 12px, 12px -12px, -12px 0;
+      }
+
+      .demo-probe {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding-top: 12px;
+      }
+
+      /* 离屏区：让 loading="lazy" 的探针真的落在视口外 */
+      .demo-probe-spacer {
+        height: 1200px;
+        border-left: 1px dashed var(--line);
+        margin: 8px 0 8px 10px;
+      }
+
+      #probe-slot scene-editor {
+        display: block;
+        width: 100%;
+        height: 180px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="demo-bar">
+      <a class="demo-back" href="/demos/">← 全部 demo</a>
+      <strong>Viewer 对标 model-viewer</strong>
+      <span class="demo-hint">全部走元素属性：src · loading · auto-rotate · min/max-camera-orbit · autoplay …</span>
+      <span class="demo-pill" id="src-pill">src</span>
+    </header>
+
+    <main class="demo-layout">
+      <section class="demo-viewport" id="stage"></section>
+
+      <aside class="demo-side">
+        <div class="demo-group">
+          <h3>模型（src 属性）</h3>
+          <div class="demo-row">
+            <button class="demo-btn primary" data-model="fox">Fox（3 段动画）</button>
+            <button class="demo-btn" data-model="helmet">Damaged Helmet</button>
+            <button class="demo-btn" data-model="truck">Milk Truck</button>
+          </div>
+          <p class="demo-note">
+            切 <code>src</code> 走的是预览路径：合成一份单 mesh 文档 + <code>autoFrame()</code>，
+            与 <code>&lt;model-viewer src&gt;</code> 等价。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>加载</h3>
+          <div class="demo-row">
+            <label><input type="radio" name="loading" value="eager" checked /> eager</label>
+            <label><input type="radio" name="loading" value="lazy" /> lazy</label>
+          </div>
+          <p class="demo-note">
+            <code>loading</code> 只影响下一次声明式加载；本页视口一直可见，所以 lazy 的效果在
+            页面底部的<strong>离屏探针</strong>上演示。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>相机</h3>
+          <div class="demo-row">
+            <label><input type="checkbox" id="auto-rotate" /> auto-rotate</label>
+            <label>°/s <input type="number" id="rotation-per-second" value="30" min="1" max="180" style="width: 64px" /></label>
+            <label>delay <input type="number" id="auto-rotate-delay" value="1500" min="0" step="500" style="width: 74px" />ms</label>
+          </div>
+          <div class="demo-row">
+            <label>轨道约束
+              <select id="limits">
+                <option value="free">自由</option>
+                <option value="horizontal">仅水平 ±45°</option>
+                <option value="eye">俯仰 60–90°</option>
+              </select>
+            </label>
+          </div>
+          <div class="demo-row">
+            <label><input type="checkbox" id="disable-pan" /> disable-pan</label>
+            <label><input type="checkbox" id="disable-zoom" /> disable-zoom</label>
+            <label><input type="checkbox" id="disable-tap" /> disable-tap</label>
+          </div>
+          <div class="demo-row">
+            <button class="demo-btn" id="reset-camera">重置视角（frameModel）</button>
+          </div>
+          <p class="demo-note">
+            <code>auto-rotate</code> 是真实 delta 的 rAF 转向（暂停拖拽、按 delay 恢复），
+            拖动时 <code>camera-change</code> 会持续计数。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>动画</h3>
+          <div class="demo-row">
+            <label><input type="checkbox" id="autoplay" checked /> autoplay</label>
+            <label><input type="checkbox" id="pause-at-end" /> pause-at-end</label>
+          </div>
+          <div class="demo-row">
+            <label>clip
+              <select id="clip-name"><option value="">（自动：首条）</option></select>
+            </label>
+            <label>crossfade
+              <input type="number" id="crossfade" value="0" min="0" max="2000" step="50" style="width: 74px" />ms
+            </label>
+          </div>
+        </div>
+
+        <div class="demo-group">
+          <h3>显示</h3>
+          <div class="demo-row">
+            <label>tone-mapping
+              <select id="tone-mapping">
+                <option value="aces">aces</option>
+                <option value="none">none</option>
+                <option value="linear">linear</option>
+                <option value="agx">agx</option>
+                <option value="neutral">neutral</option>
+              </select>
+            </label>
+            <label>exposure <input type="number" id="exposure" value="1" min="0" max="4" step="0.1" style="width: 64px" /></label>
+          </div>
+          <div class="demo-row">
+            <label><input type="checkbox" id="transparent" checked /> 透明背景</label>
+            <label><input type="checkbox" id="contact-shadow" /> 接触阴影</label>
+            <label><input type="checkbox" id="grid" /> 网格</label>
+          </div>
+          <p class="demo-note">
+            取消“透明背景”会写入纯色 <code>background</code>；画布本身是
+            <code>alpha: true</code>，所以棋盘格会从模型后面透出来。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>事件</h3>
+          <div class="demo-row">
+            <button class="demo-btn" id="clear-log">清空日志</button>
+          </div>
+          <div class="demo-log" id="log"></div>
+        </div>
+
+        <div class="demo-group">
+          <h3>对标 model-viewer</h3>
+          <table class="demo-table">
+            <tr><th>能力</th><th>本页演示</th></tr>
+            <tr><td><code>src</code> / 自动取景</td><td class="ok">已对齐</td></tr>
+            <tr><td><code>loading=lazy</code></td><td class="ok">已对齐（离屏探针）</td></tr>
+            <tr><td><code>auto-rotate</code> / <code>auto-rotate-delay</code> / <code>rotation-per-second</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>min/max-camera-orbit</code></td><td class="ok">已对齐（theta/phi/radius）</td></tr>
+            <tr><td><code>disable-pan</code> / <code>disable-zoom</code> / <code>disable-tap</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>autoplay</code> / <code>animation-name</code> / <code>animation-crossfade-duration</code> / <code>pause-at-end</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>tone-mapping</code> / <code>exposure</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>camera-change</code> / <code>model-visibility</code> / <code>environment-change</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>poster</code> / <code>reveal</code></td><td class="fail">未做（B 批）</td></tr>
+            <tr><td><code>ar</code> / <code>ar-modes</code> / <code>xr-environment</code></td><td class="fail">不做（无 XR）</td></tr>
+          </table>
+        </div>
+
+        <div class="demo-probe">
+          <p class="demo-note">
+            ↓ 下面 1200px 是离屏探针：只有滚动到它进入视口，
+            <code>loading="lazy"</code> 才会真正发起加载。
+          </p>
+          <div class="demo-probe-spacer"></div>
+          <div id="probe-slot"></div>
+          <p class="demo-note" id="probe-status">probe: 未加载</p>
+        </div>
+      </aside>
+    </main>
+
+    <div class="demo-status" id="status">初始化中…</div>
+
+    <script type="module" src="/src/demos/viewer.ts"></script>
+  </body>
+</html>

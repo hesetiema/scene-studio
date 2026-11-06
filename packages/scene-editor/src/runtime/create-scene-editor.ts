@@ -41,6 +41,31 @@ export type SceneEditorEventMap = {
    */
   "view-changing": { view: ViewState };
   /**
+   * Camera pose sample whenever the camera actually moved (drag, damping,
+   * auto-rotate). Same cadence as the runtime sample — cheap, camera-only.
+   * Never emitted from `applyViewState` (that is not user motion).
+   */
+  "camera-change": ViewState["camera"];
+  /**
+   * The environment slice of the view changed (background / grid / IBL / HDR /
+   * contact shadow). Edge-triggered: only fires when the payload differs.
+   */
+  "environment-change": {
+    environment: ViewState["environment"];
+    source: "api" | "load";
+  };
+  /**
+   * Element-only: `visibility-change` under the viewer-compatible name. The
+   * headless facade owns no DOM, so this never fires from `editor.on(...)`.
+   */
+  "model-visibility": { visible: boolean };
+  /**
+   * Element-only: the poster slot was dismissed (auto after load, on the first
+   * interaction, or through `dismissPoster()`). No DOM in the facade, so no
+   * emission from `editor.on(...)`.
+   */
+  "poster-dismissed": Record<string, never>;
+  /**
    * Aggregate load progress (0..1), monotonic per load. `reason` names the
    * activity ("model-load"). Safe for a progress bar; not a success signal —
    * a failed load still ends at 1.
@@ -175,6 +200,10 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
     this.runtime.events.on("view-changing", ({ view }) => {
       this.#emit("view-changing", { view });
     });
+    // Camera-only samples are always on (auto-rotate would otherwise be silent).
+    this.runtime.events.on("camera-change", (camera) => {
+      this.#emit("camera-change", camera);
+    });
     this.runtime.events.on("load-progress", (payload) => {
       this.#emit("progress", payload);
     });
@@ -192,6 +221,12 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
   async loadDocument(doc: unknown): Promise<void> {
     this.#assertLive();
     const previousSceneId = this.#controller.getSceneId();
+    // The controller only re-applies the view on a scene switch, so that is the
+    // only path where the runtime environment can actually change.
+    const previousEnvironment =
+      previousSceneId === null
+        ? undefined
+        : this.#controller.getDocument().view.environment;
     try {
       await this.#controller.loadDocument(doc);
     } catch (err) {
@@ -201,6 +236,13 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
     const current = this.#controller.getDocument();
     if (current.sceneId !== previousSceneId) {
       this.#emit("view-change", { view: current.view, source: "load" });
+      // First load has no baseline to compare against — stay edge-triggered.
+      if (previousEnvironment !== undefined && !sameValue(previousEnvironment, current.view.environment)) {
+        this.#emit("environment-change", {
+          environment: current.view.environment,
+          source: "load",
+        });
+      }
     }
   }
 
@@ -312,8 +354,16 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
 
   setViewState(view: ViewState): void {
     this.#assertLive();
+    const previousEnvironment =
+      this.#controller.getSceneId() === null
+        ? undefined
+        : this.#controller.getDocument().view.environment;
     this.#controller.setViewState(view);
-    this.#emit("view-change", { view: this.#controller.getDocument().view, source: "api" });
+    const current = this.#controller.getDocument().view;
+    this.#emit("view-change", { view: current, source: "api" });
+    if (previousEnvironment !== undefined && !sameValue(previousEnvironment, current.environment)) {
+      this.#emit("environment-change", { environment: current.environment, source: "api" });
+    }
   }
 
   get canUndo(): boolean {
@@ -405,6 +455,11 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
       this.#emit("error", { code: SceneErrorCode.Lifecycle, message, cause: err });
     }
   }
+}
+
+/** Structural equality for the small plain-JSON view slices (environment). */
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /**

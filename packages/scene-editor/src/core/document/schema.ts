@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 /** Current on-disk document format. Bump together with a migration (D7/D22). */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 5;
 
 /** Euler XYZ rotation in radians, stored as [x, y, z] (D3). */
 export type EulerXYZ = readonly [number, number, number];
@@ -92,6 +92,18 @@ export const MaterialSchema = z.strictObject({
   opacity: z.number().min(0).max(1).optional(),
   flatShading: z.boolean().optional(),
   wireframe: z.boolean().optional(),
+  /**
+   * Texture maps (v4). Values are **asset ids**, never URLs: the host's
+   * AssetResolver decides where bytes live, so a saved document survives a CDN
+   * move or a bucket rename.
+   */
+  map: z.string().min(1).optional(),
+  roughnessMap: z.string().min(1).optional(),
+  normalMap: z.string().min(1).optional(),
+  /** normalMap strength; ignored without `normalMap`. */
+  normalScale: z.number().optional(),
+  /** UV repeat applied to every map in this material. */
+  textureRepeat: z.tuple([z.number().positive(), z.number().positive()]).optional(),
 });
 
 /**
@@ -134,6 +146,43 @@ export const AdditionalLightSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
+/**
+ * HDR environment (v4). An asset id, never a URL — the host's resolver owns
+ * where the bytes live (same rule as `material.map`).
+ */
+export const EnvironmentHdrSchema = z.strictObject({
+  assetId: z.string().min(1),
+  /** Multiplier on the prefiltered map; falls back to `iblIntensity`. */
+  intensity: z.number().nonnegative().optional(),
+  /** Use the HDR as the visible backdrop too (default false: IBL only). */
+  asBackground: z.boolean().optional(),
+});
+
+/**
+ * Skybox (v5): a visible backdrop that is **independent** of the IBL. model-viewer
+ * splits `skybox-image` from `environment-image`; so does this.
+ */
+export const EnvironmentSkyboxSchema = z.strictObject({
+  assetId: z.string().min(1),
+  /** Background brightness (0..4). Defaults to 1. */
+  intensity: z.number().nonnegative().optional(),
+});
+
+/** Contact shadow (v4): a soft catch plane under the content. */
+export const ContactShadowSchema = z.strictObject({
+  enabled: z.boolean(),
+  /** 0..1; higher is darker. Defaults to 0.35. */
+  opacity: z.number().min(0).max(1).optional(),
+  /** Plane offset from y = 0, for content that sits below the origin. */
+  height: z.number().optional(),
+  /**
+   * 0..1 blur radius of the shadow map (v5, model-viewer `shadow-softness`).
+   * Missing keeps the pre-v5 PCF-soft look; declaring it switches the shadow
+   * sampling to radius-based PCF so the value actually has an effect.
+   */
+  softness: z.number().min(0).max(1).optional(),
+});
+
 /** Camera / lights / environment — the persisted "what it looks like" (D22). */
 export const ViewStateSchema = z.strictObject({
   camera: z.strictObject({
@@ -167,6 +216,18 @@ export const ViewStateSchema = z.strictObject({
      * `DEFAULT_IBL_INTENSITY`.
      */
     iblIntensity: z.number().nonnegative().optional(),
+    /**
+     * HDR / EXR environment (v4), resolved through the host's AssetResolver.
+     * Missing = the built-in studio room, so v3 documents keep their look.
+     */
+    hdr: EnvironmentHdrSchema.optional(),
+    /**
+     * Visible backdrop (v5), independent of `hdr`: a panorama here changes only
+     * what you see behind the model, not what it reflects.
+     */
+    skybox: EnvironmentSkyboxSchema.optional(),
+    /** Soft ground shadow under the content (v4). Missing = off. */
+    contactShadow: ContactShadowSchema.optional(),
   }),
 });
 
@@ -209,6 +270,9 @@ export const SceneDocumentSchema = z.strictObject({
 });
 
 export type ViewState = z.infer<typeof ViewStateSchema>;
+export type EnvironmentHdrDTO = z.infer<typeof EnvironmentHdrSchema>;
+export type EnvironmentSkyboxDTO = z.infer<typeof EnvironmentSkyboxSchema>;
+export type ContactShadowDTO = z.infer<typeof ContactShadowSchema>;
 export type AdditionalLightDTO = z.infer<typeof AdditionalLightSchema>;
 export type PrimitiveGeometry = z.infer<typeof PrimitiveGeometrySchema>;
 export type MaterialDTO = z.infer<typeof MaterialSchema>;

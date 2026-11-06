@@ -6,6 +6,8 @@ export type LightingView = ViewState["lights"];
 
 export interface LightingRig {
   readonly lights: readonly THREE.Light[];
+  /** The directional slot — the key light contact shadows are cast from. */
+  readonly keyLight: THREE.DirectionalLight;
   readView(): LightingView;
   applyView(view: LightingView): void;
   dispose(): void;
@@ -173,6 +175,9 @@ export function createLightingRig(scene: THREE.Scene, initial: LightingView): Li
   return {
     get lights(): readonly THREE.Light[] {
       return [ambient, directional, ...extra.map((built) => built.light)];
+    },
+    get keyLight(): THREE.DirectionalLight {
+      return directional;
     },
     readView(): LightingView {
       const additional = extra.map((built) => readAdditional(built.light, built.target));

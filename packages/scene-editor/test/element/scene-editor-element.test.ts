@@ -381,6 +381,165 @@ describe("SceneEditorElement multi-select surface (facade parity)", () => {
   });
 });
 
+describe("SceneEditorElement viewer attributes (model-viewer parity)", () => {
+  const ORIGINAL_VISIBILITY = SceneEditorElement.visibilityObserverFactory;
+  let visibilityCallback: ((visible: boolean) => void) | null = null;
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+    visibilityCallback = null;
+    SceneEditorElement.visibilityObserverFactory = (onChange) => {
+      visibilityCallback = onChange;
+      return { observe: () => {}, disconnect: () => {} };
+    };
+  });
+
+  afterEach(() => {
+    SceneEditorElement.visibilityObserverFactory = ORIGINAL_VISIBILITY;
+  });
+
+  function lastItem<T>(list: T[]): T | undefined {
+    return list[list.length - 1];
+  }
+
+  it("maps min/max-camera-orbit and disable-* onto the runtime", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+
+    el.setAttribute("min-camera-orbit", "auto 30deg 2m");
+    el.setAttribute("max-camera-orbit", "90deg 150deg 20m");
+    el.setAttribute("disable-zoom", "");
+
+    const controls = lastItem(fake.calls.setCameraControls);
+    expect(controls).toMatchObject({
+      pan: true,
+      zoom: false,
+      limits: { phi: [30, 150], radius: [2, 20] },
+    });
+    // `auto` on either side leaves that axis unlimited.
+    expect(controls?.limits?.theta).toBeUndefined();
+  });
+
+  it("parses radians and ignores inverted ranges", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+
+    el.setAttribute("min-camera-orbit", `-${Math.PI.toFixed(4)}rad auto 1m`);
+    el.setAttribute("max-camera-orbit", `${Math.PI.toFixed(3)}rad auto 30m`);
+
+    const limits = lastItem(fake.calls.setCameraControls)?.limits;
+    expect(limits?.theta?.[0]).toBeCloseTo(-180);
+    expect(limits?.radius).toEqual([1, 30]);
+    expect(limits?.phi).toBeUndefined();
+  });
+
+  it("maps auto-rotate attributes, and clearing them stops the turntable", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+
+    el.setAttribute("auto-rotate", "");
+    el.setAttribute("rotation-per-second", "45");
+    el.setAttribute("auto-rotate-delay", "1500");
+
+    expect(lastItem(fake.calls.setAutoRotate)).toEqual({
+      enabled: true,
+      degreesPerSecond: 45,
+      delayMs: 1500,
+    });
+
+    el.removeAttribute("auto-rotate");
+    expect(lastItem(fake.calls.setAutoRotate)).toBeNull();
+  });
+
+  it("maps the playback attributes, converting ms → seconds", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+
+    el.setAttribute("autoplay", "");
+    el.setAttribute("animation-name", "Wave");
+    el.setAttribute("animation-crossfade-duration", "250");
+    el.setAttribute("pause-at-end", "");
+
+    expect(lastItem(fake.calls.setAnimationOptions)).toEqual({
+      autoplay: true,
+      clipName: "Wave",
+      crossfadeSeconds: 0.25,
+      pauseAtEnd: true,
+    });
+  });
+
+  it("disable-tap keeps orbit but never turns a click into a selection", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    fake.pickResult = "box-1";
+    el.setAttribute("disable-tap", "");
+
+    const canvas = el.querySelector("canvas")!;
+    canvas.dispatchEvent(new MouseEvent("click", { clientX: 2, clientY: 2, bubbles: true }));
+
+    expect(fake.calls.pick).toHaveLength(0);
+    expect(el.selectedIds).toEqual([]);
+  });
+
+  it("reports model-visibility next to visibility-change", async () => {
+    const { el } = makeElement();
+    const seen: boolean[] = [];
+    el.addEventListener("model-visibility", (event) => {
+      seen.push((event as CustomEvent<{ visible: boolean }>).detail.visible);
+    });
+    await connected(el);
+
+    visibilityCallback?.(true);
+    visibilityCallback?.(false);
+
+    expect(seen).toEqual([true, false]);
+  });
+
+  it("defers the src load until first visible with loading=lazy", async () => {
+    const { el, fake } = makeElement();
+    el.setAttribute("src", "lazy.glb");
+    el.setAttribute("loading", "lazy");
+    await connected(el);
+    await nextTick();
+
+    expect(fake.calls.loadDocument).toHaveLength(0);
+
+    visibilityCallback?.(true);
+    await nextTick();
+    expect(fake.calls.loadDocument).toHaveLength(1);
+  });
+
+  it("loads eagerly when lazy is switched back to eager", async () => {
+    const { el, fake } = makeElement();
+    el.setAttribute("src", "lazy.glb");
+    el.setAttribute("loading", "lazy");
+    await connected(el);
+    await nextTick();
+    expect(fake.calls.loadDocument).toHaveLength(0);
+
+    el.setAttribute("loading", "eager");
+    await nextTick();
+    expect(fake.calls.loadDocument).toHaveLength(1);
+  });
+
+  it("never clobbers a host document when a lazy preview wakes up", async () => {
+    const { el, fake } = makeElement();
+    el.setAttribute("src", "lazy.glb");
+    el.setAttribute("loading", "lazy");
+    await connected(el);
+    await nextTick();
+
+    await el.loadDocument(doc);
+    visibilityCallback?.(true);
+    await nextTick();
+
+    expect(fake.calls.loadDocument).toHaveLength(1);
+    expect(el.getDocument().sceneId).toBe("s1");
+  });
+});
+
 describe("SceneEditorElement inbound remote updates (D17)", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -439,5 +598,215 @@ describe("SceneEditorElement inbound remote updates (D17)", () => {
     expect(() => el.applyRemote({ ...doc, revision: 7 }, { baseRevision: 0 })).toThrow(
       SceneEditorError,
     );
+  });
+});
+
+describe("SceneEditorElement slots (model-viewer parity)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  function posterOf(el: SceneEditorElement): HTMLElement {
+    return el.querySelector<HTMLElement>('[slot="poster"]')!;
+  }
+
+  it("keeps the poster for reveal=manual until dismissPoster()", async () => {
+    const { el } = makeElement();
+    el.setAttribute("reveal", "manual");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+    const spy = vi.fn();
+    el.addEventListener("poster-dismissed", spy);
+
+    await connected(el);
+    const poster = posterOf(el);
+    expect(poster.style.display).not.toBe("none");
+    expect(poster.style.position).toBe("absolute");
+
+    await el.loadDocument(doc);
+    expect(poster.style.display).not.toBe("none");
+    expect(spy).not.toHaveBeenCalled();
+
+    el.dismissPoster();
+    expect(poster.style.display).toBe("none");
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Idempotent: a second call must not re-announce.
+    el.dismissPoster();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses the poster after load by default (reveal=auto)", async () => {
+    const { el } = makeElement();
+    el.innerHTML = '<div slot="poster">loading…</div>';
+    const spy = vi.fn();
+    el.addEventListener("poster-dismissed", spy);
+
+    await connected(el);
+    await el.loadDocument(doc);
+
+    expect(posterOf(el).style.display).toBe("none");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for the first gesture with reveal=interaction", async () => {
+    const { el } = makeElement();
+    el.setAttribute("reveal", "interaction");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+    const spy = vi.fn();
+    el.addEventListener("poster-dismissed", spy);
+
+    await connected(el);
+    await el.loadDocument(doc);
+    const poster = posterOf(el);
+    expect(poster.style.display).not.toBe("none");
+
+    el.dispatchEvent(new Event("pointerdown"));
+    expect(poster.style.display).toBe("none");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts slot nodes added later and releases their styles on removal", async () => {
+    const { el } = makeElement();
+    el.setAttribute("reveal", "manual");
+    await connected(el);
+
+    const poster = document.createElement("div");
+    poster.setAttribute("slot", "poster");
+    poster.style.display = "flex";
+    el.appendChild(poster);
+    el.refreshSlots();
+
+    expect(poster.style.position).toBe("absolute");
+    expect(poster.style.display).toBe("flex");
+
+    poster.remove();
+    await nextTick();
+    // Departed nodes get their own inline CSS back.
+    expect(poster.style.position).toBe("");
+  });
+
+  it("shows slot=progress-bar only while a load is in flight", async () => {
+    class GatedRuntime extends FakeRuntime {
+      #pending: Array<() => void> = [];
+      get pendingCount(): number {
+        return this.#pending.length;
+      }
+      loadDocument(input: SceneDocument): Promise<void> {
+        this.calls.loadDocument.push(input);
+        return new Promise<void>((resolve) => {
+          this.#pending.push(resolve);
+        });
+      }
+      finish(): void {
+        for (const resolve of this.#pending.splice(0)) resolve();
+      }
+    }
+
+    const gated = new GatedRuntime();
+    SceneEditorElement.runtimeFactory = () => gated;
+    const el = document.createElement("scene-editor") as SceneEditorElement;
+    el.innerHTML = '<div slot="progress-bar">0%</div>';
+    await connected(el);
+    const bar = el.querySelector<HTMLElement>('[slot="progress-bar"]')!;
+
+    expect(bar.style.display).toBe("none");
+
+    const loading = el.loadDocument(doc);
+    expect(bar.style.display).not.toBe("none");
+
+    // The facade validates before reaching the runtime; wait for that hop.
+    while (gated.pendingCount === 0) await nextTick();
+    expect(bar.style.display).not.toBe("none");
+
+    gated.finish();
+    await loading;
+    expect(bar.style.display).toBe("none");
+  });
+
+  it("projects hotspot anchors onto the canvas and hides them behind the camera", async () => {
+    class ProjectingRuntime extends FakeRuntime {
+      projectPoint(
+        point: readonly [number, number, number],
+      ): { x: number; y: number; visible: boolean } {
+        return { x: point[0] * 10, y: point[1] * 10, visible: point[0] >= 0 };
+      }
+    }
+
+    const projecting = new ProjectingRuntime();
+    SceneEditorElement.runtimeFactory = () => projecting;
+    const el = document.createElement("scene-editor") as SceneEditorElement;
+    el.innerHTML = `
+      <div slot="hotspot-a" data-position="2 3 0">A</div>
+      <div slot="hotspot-b" data-position="-1 0 0">B</div>
+    `;
+    await connected(el);
+
+    const [hotspotA, hotspotB] = Array.from(
+      el.querySelectorAll<HTMLElement>('[slot^="hotspot-"]'),
+    );
+    expect(hotspotA?.style.transform).toContain("translate(20px, 30px)");
+    expect(hotspotA?.style.transform).toContain("translate(-50%, -50%)");
+    expect(hotspotB?.style.visibility).toBe("hidden");
+
+    projecting.simulateCameraChange(el.getViewState().camera);
+    expect(hotspotA?.style.transform).toContain("translate(20px, 30px)");
+  });
+});
+
+describe("SceneEditorElement capture surface (model-viewer parity)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  class CaptureRuntime extends FakeRuntime {
+    dimensions(): { width: number; height: number; depth: number } {
+      return { width: 2, height: 4, depth: 6 };
+    }
+    positionAndNormalFromPoint(): {
+      position: [number, number, number];
+      normal: [number, number, number];
+    } {
+      return { position: [0, 0, 0], normal: [0, 1, 0] };
+    }
+    toDataURL(type = "image/png"): string {
+      return `data:${type};base64,AA`;
+    }
+    toBlob(): Promise<Blob | null> {
+      return Promise.resolve(null);
+    }
+    exportScene(options: { binary?: boolean } = {}): Promise<ArrayBuffer | string> {
+      return Promise.resolve(options.binary === false ? "{}" : "glb");
+    }
+  }
+
+  it("delegates dimensions, picking, capture and export to the runtime", async () => {
+    const capture = new CaptureRuntime();
+    SceneEditorElement.runtimeFactory = () => capture;
+    const el = document.createElement("scene-editor") as SceneEditorElement;
+    await connected(el);
+
+    expect(el.getDimensions()).toEqual({ width: 2, height: 4, depth: 6 });
+    expect(el.positionAndNormalFromPoint(1, 2)).toEqual({
+      position: [0, 0, 0],
+      normal: [0, 1, 0],
+    });
+    expect(await el.toDataURL()).toBe("data:image/png;base64,AA");
+    expect(await el.toDataURL("image/jpeg", 0.5)).toBe("data:image/jpeg;base64,AA");
+    expect(await el.toBlob()).toBeNull();
+    expect(await el.exportScene()).toBe("glb");
+    expect(await el.exportScene({ binary: false })).toBe("{}");
+  });
+
+  it("degrades gracefully when the runtime lacks the capability", async () => {
+    const { el } = makeElement();
+    await connected(el);
+
+    expect(el.getDimensions()).toEqual({ width: 0, height: 0, depth: 0 });
+    expect(el.positionAndNormalFromPoint(0, 0)).toBeNull();
+    await expect(el.toDataURL()).rejects.toBeInstanceOf(SceneEditorError);
+    await expect(el.toBlob()).rejects.toMatchObject({ code: SceneErrorCode.Lifecycle });
+    await expect(el.exportScene()).rejects.toMatchObject({ code: SceneErrorCode.Lifecycle });
   });
 });

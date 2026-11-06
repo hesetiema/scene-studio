@@ -84,11 +84,42 @@ pnpm add @scenio/scene-editor three
 
 元素会自动合成单对象文档、自动取景，并通过 `progress` → `load` 上报生命周期（`load.detail.url` 为加载源）。预览默认使用 ACES 色调映射，可用 `tone-mapping="none"` 关闭；容器尺寸变化后可调用 `frameModel()` 重新取景。显式 `loadDocument()` 仍然优先，直到 `src` 再次变化。
 
+预览态按 **viewer** 而不是编辑器处理：没有地面网格，取景对齐 model-viewer（`camera-orbit="0deg 75deg"`、`field-of-view="auto"` → 横向 30° / 纵向 45°），并且只由环境贴图照明。`environment-image="neutral"`（预览默认）使用灰度柔光箱工作室，`environment-image="room"` 则切回编辑器那套偏暖的 `RoomEnvironment`。
+
 ```ts
 el.addEventListener("progress", ({ detail }) => setBar(detail.totalProgress));
 el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
 el.addEventListener("error", ({ detail }) => showError(detail.code));
 ```
+
+观看侧的开关全部走属性、不写入文档；画布默认透明，`background: null` 时会露出页面底色：
+
+```html
+<scene-editor
+  src="/models/robot.glb"
+  loading="lazy"
+  auto-rotate
+  rotation-per-second="20"
+  min-camera-orbit="auto 60deg 2m"
+  max-camera-orbit="auto 100deg 12m"
+  autoplay
+  animation-name="Idle"
+  animation-crossfade-duration="300"
+  pause-at-end
+></scene-editor>
+```
+
+观看侧插槽与 model-viewer 同名，直接写在子节点上：
+
+```html
+<scene-editor src="/models/robot.glb" reveal="interaction">
+  <img slot="poster" src="/poster.jpg" alt="加载中" />
+  <div slot="progress-bar">加载中…</div>
+  <button slot="hotspot-lens" data-position="0 1.2 0.4">镜头</button>
+</scene-editor>
+```
+
+`reveal` 与 model-viewer 一致：`auto`（默认）在 `load` 后收起海报，`interaction` 等首次交互，`manual` 只能靠 `dismissPoster()`；每次收起派发一次 `poster-dismissed`。截图与导出对齐：`getDimensions()`、`positionAndNormalFromPoint()`、`toDataURL()`、`toBlob()`、`exportScene()`。
 
 ## Headless
 
@@ -111,9 +142,9 @@ editor.on("save-request", ({ document, revision }) => {
 editor.requestSave();
 ```
 
-`createSceneEditor({ runtime })` 必须传入 runtime：单测用 `FakeRuntime`，生产用 `ThreeRuntime`，也可以实现自己的 `RuntimeContract`。事件包括 `selection-change`、`history-change`、`document-dirty`、`save-request`、`view-change`、`view-changing`（需开启）、`error`。
+`createSceneEditor({ runtime })` 必须传入 runtime：单测用 `FakeRuntime`，生产用 `ThreeRuntime`，也可以实现自己的 `RuntimeContract`。事件包括 `selection-change`、`history-change`、`document-dirty`、`save-request`、`view-change`、`view-changing`（需开启）、`camera-change`（常开，仅相机）、`environment-change`（边沿触发）、`error`。
 
-Element 额外提供两个 DOM 专属事件：`visibility-change`（进入/离开视口，`{ visible: boolean }`）和恒有的 `scene-ready`。`view-changing` 是高频相机采样，需要 `<scene-editor live-view-events>` 显式开启；持久化请用 `view-change`。完整契约（含冒泡/合成/可取消均为 `false` 与版本策略）见 [API.md](API.md#element-events-customevent)。
+Element 额外提供 DOM 专属事件：`visibility-change`（进入/离开视口，`{ visible: boolean }`）、与 model-viewer 同名的 `model-visibility` 别名，以及恒有的 `scene-ready`。`view-changing` 是高频相机采样，需要 `<scene-editor live-view-events>` 显式开启；持久化请用 `view-change`。完整契约（含冒泡/合成/可取消均为 `false` 与版本策略）见 [API.md](API.md#element-events-customevent)。
 
 ## 文档模型
 

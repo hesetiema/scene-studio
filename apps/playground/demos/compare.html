@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>并排对照：model-viewer vs scene-editor</title>
+    <!--
+      左：官方 <model-viewer>，由 compare.ts 在运行时从 CDN 动态引入（unpkg → jsDelivr
+      双镜像，谁通用谁）。这一页是宣传/目视对照用，需要外网，故意不参与 e2e。
+    -->
+    <script type="module" src="/src/demos/compare.ts"></script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080b12;
+        --panel: #0f141f;
+        --line: #1e2637;
+        --text: #e8ebf2;
+        --muted: #8b97ad;
+        --accent: #4f8ef7;
+      }
+
+      html,
+      body {
+        min-height: 100%;
+      }
+
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        background: radial-gradient(1100px 560px at 50% -10%, #16203a 0%, var(--bg) 62%);
+        color: var(--text);
+        font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      .cmp-bar {
+        padding: 18px 22px 12px;
+      }
+
+      .cmp-bar a {
+        color: var(--muted);
+        text-decoration: none;
+      }
+
+      .cmp-bar a:hover {
+        color: var(--text);
+      }
+
+      .cmp-bar h1 {
+        margin: 6px 0 4px;
+        font-size: 19px;
+        letter-spacing: 0.02em;
+      }
+
+      .cmp-sub {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .cmp-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 22px;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: #0b101b;
+      }
+
+      .cmp-toolbar label {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--muted);
+      }
+
+      .cmp-toolbar select,
+      .cmp-toolbar input[type="number"] {
+        background: #131a28;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 6px;
+        font: inherit;
+      }
+
+      .cmp-toolbar input[type="range"] {
+        width: 110px;
+        accent-color: var(--accent);
+      }
+
+      button.cmp-btn {
+        background: #131a28;
+        color: inherit;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 4px 10px;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      button.cmp-btn:hover {
+        border-color: #33405e;
+      }
+
+      .cmp-grid {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+        padding: 14px 22px 8px;
+        min-height: 0;
+      }
+
+      @media (max-width: 900px) {
+        .cmp-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .cmp-pane {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+
+      /* 棋盘格 = 透明画布的证据：两侧都透出同一层底纹 */
+      .cmp-frame {
+        position: relative;
+        flex: 1;
+        min-height: 54vh;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background-color: #0d121c;
+        background-image:
+          linear-gradient(45deg, #151c2a 25%, transparent 25%),
+          linear-gradient(-45deg, #151c2a 25%, transparent 25%),
+          linear-gradient(45deg, transparent 75%, #151c2a 75%),
+          linear-gradient(-45deg, transparent 75%, #151c2a 75%);
+        background-size: 22px 22px;
+        background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+      }
+
+      .cmp-frame model-viewer,
+      .cmp-frame scene-editor {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .cmp-fallback {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        margin: 0;
+        text-align: center;
+        color: var(--muted);
+        background: rgba(8, 11, 18, 0.86);
+        transition: opacity 160ms ease;
+      }
+
+      /* `display: flex` above would otherwise defeat the `hidden` attribute. */
+      .cmp-fallback[hidden] {
+        display: none;
+      }
+
+      .cmp-cap {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 2px 0;
+        color: var(--muted);
+      }
+
+      .cmp-cap strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .cmp-cap code {
+        color: #a9c8ff;
+      }
+
+      .cmp-foot {
+        padding: 4px 22px 22px;
+        color: var(--muted);
+      }
+
+      .cmp-foot h2 {
+        margin: 12px 0 4px;
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: var(--text);
+      }
+
+      .cmp-foot ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+
+      .cmp-pill {
+        display: inline-block;
+        margin-left: 8px;
+        padding: 1px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="cmp-bar">
+      <a href="/demos/">← 全部 demo</a>
+      <h1>同一批属性，两个 viewer<span class="cmp-pill">宣传页 · 不参与 e2e</span></h1>
+      <p class="cmp-sub">
+        左：<code>&lt;model-viewer&gt;</code>（官方 CDN） · 右：<code>&lt;scene-editor&gt;</code>（本仓库）。
+        上方开关会<strong>同时</strong>写给两个元素——除了前缀不同，属性名是同一套。
+      </p>
+    </header>
+
+    <div class="cmp-toolbar">
+      <label>模型
+        <select id="model">
+          <option value="fox">Fox（3 段动画）</option>
+          <option value="helmet">Damaged Helmet</option>
+          <option value="truck">Milk Truck</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="autoplay" checked /> autoplay</label>
+      <label><input type="checkbox" id="auto-rotate" /> auto-rotate</label>
+      <label><input type="checkbox" id="shadow" checked /> 接触阴影</label>
+      <label>exposure
+        <input type="range" id="exposure" min="0.1" max="3" step="0.1" value="1" />
+      </label>
+      <label>clip
+        <select id="clip"><option value="">（首条）</option></select>
+      </label>
+      <button class="cmp-btn" id="toggle-play">暂停</button>
+    </div>
+
+    <main class="cmp-grid">
+      <section class="cmp-pane">
+        <div class="cmp-frame">
+          <model-viewer
+            id="mv"
+            src="/assets/Fox.glb"
+            camera-controls
+            autoplay
+            auto-rotate-delay="0"
+            shadow-intensity="1"
+            shadow-softness="0.6"
+            exposure="1"
+            environment-image="neutral"
+            alt="model-viewer 渲染的 Fox"
+          ></model-viewer>
+          <p class="cmp-fallback" id="mv-fallback">
+            正在从 CDN 加载 &lt;model-viewer&gt;…（离线或被拦截时右侧仍可用）
+          </p>
+        </div>
+        <div class="cmp-cap">
+          <strong>model-viewer</strong>
+          <code>src · autoplay · auto-rotate · shadow-intensity · exposure</code>
+        </div>
+      </section>
+
+      <section class="cmp-pane">
+        <div class="cmp-frame" id="se-frame"></div>
+        <div class="cmp-cap">
+          <strong>scene-editor</strong>
+          <code>src · autoplay · auto-rotate · contactShadow · exposure</code>
+        </div>
+      </section>
+    </main>
+
+    <footer class="cmp-foot">
+      <h2>差异（诚实版）</h2>
+      <ul>
+        <li>
+          <code>poster</code> / <code>reveal</code> / <code>progress-bar</code> / hotspot 插槽：已实现；
+          <code>seamless-poster</code> 未做。
+        </li>
+        <li><code>ar</code> / <code>ar-modes</code> / <code>quick-look</code> / <code>xr-environment</code>：不做（无 XR）。</li>
+        <li><code>variant</code>（KHR_materials_variants）：未实现。</li>
+        <li>
+          阴影来源不同：model-viewer 从环境贴图估主光后烘焙，本 SDK 用解析式方向光投影——
+          观感接近，但光照主要来自 HDR 时朝向可能不一致。
+        </li>
+        <li>
+          环境实现不同：两侧都用 neutral 灰度工作室（右侧是 <code>environment-image="neutral"</code>
+          预设，程序化生成的柔光箱），但不是同一份环境数据，金属反射与高光形状仍有细微差异。
+        </li>
+        <li>
+          取景与光照已对齐：预览默认 <code>field-of-view="auto"</code>（横向 30°）、正面 15° 仰角、
+          无地面网格，且只由环境贴图照明。
+        </li>
+      </ul>
+    </footer>
+  </body>
+</html>

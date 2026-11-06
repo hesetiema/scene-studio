@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { SceneEditorElement } from "../../src/element/scene-editor-element";
 import { defineSceneEditor } from "../../src/element/register";
 import { createSrcDocument, SRC_ASSET_ID, SRC_SCENE_ID } from "../../src/element/src-document";
+import { PREVIEW_FOV } from "../../src/core/document/default-view";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
 import type { AssetResolver } from "../../src/assets/resolver-asset-loader";
 import { sceneDocument } from "../support/documents";
@@ -65,6 +66,19 @@ describe("createSrcDocument", () => {
     expect(createSrcDocument("https://cdn.test/").objects[0]?.name).toBe("model");
     expect(createSrcDocument("model.glb").objects[0]?.name).toBe("model.glb");
   });
+
+  it("uses viewer defaults, not editor defaults (model-viewer parity)", () => {
+    const view = createSrcDocument("fox.glb").view;
+
+    // 45° = model-viewer's `field-of-view="auto"`.
+    expect(view.camera.fov).toBe(PREVIEW_FOV);
+    // The floor grid is authoring chrome; a viewer has none.
+    expect(view.environment.gridVisible).toBe(false);
+    // Lighting comes from the environment map alone (no second, flatter key light).
+    expect(view.lights.ambient.intensity).toBe(0);
+    expect(view.lights.directional.intensity).toBe(0);
+    expect(view.environment.iblIntensity).toBe(1);
+  });
 });
 
 describe("<scene-editor src> preview entry", () => {
@@ -77,6 +91,30 @@ describe("<scene-editor src> preview entry", () => {
     expect(fake.calls.loadDocument).toHaveLength(1);
     expect(fake.calls.loadDocument[0]?.objects[0]?.assetId).toBe(SRC_ASSET_ID);
     expect(fake.calls.autoFrame).toBe(1);
+  });
+
+  it("previews with the neutral studio and switches back for host documents", async () => {
+    const { el, fake } = makeElement();
+    el.setAttribute("src", "https://cdn.test/models/robot.glb");
+    await connected(el);
+    await nextTick();
+
+    expect(fake.calls.setEnvironmentPreset.at(-1)).toBe("neutral");
+
+    await el.loadDocument(sceneDocument({ sceneId: "host-scene" }));
+    expect(fake.calls.setEnvironmentPreset.at(-1)).toBe("room");
+  });
+
+  it("environment-image overrides the mode default", async () => {
+    const { el, fake } = makeElement();
+    el.setAttribute("src", "https://cdn.test/models/robot.glb");
+    el.setAttribute("environment-image", "room");
+    await connected(el);
+    await nextTick();
+    expect(fake.calls.setEnvironmentPreset.at(-1)).toBe("room");
+
+    el.setAttribute("environment-image", "neutral");
+    expect(fake.calls.setEnvironmentPreset.at(-1)).toBe("neutral");
   });
 
   it("resolves only the reserved asset id to the src URL", async () => {

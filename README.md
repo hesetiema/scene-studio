@@ -89,7 +89,7 @@ scripts/                 release metadata guard and npm pack smoke test
 
 The viewer architecture is intentionally boring: one `ViewerStore` fans out to `ViewerController.update*()`, and HUD panels only patch state.
 
-Focused SDK demos live under `/demos/` (host editing API, document model, headless facade, assets) and are asserted by `e2e/sdk-coverage.spec.ts`; `minimal.html` is the smallest end-to-end integration.
+Focused SDK demos live under `/demos/` (host editing API, document model, headless facade, assets, viewer parity with `<model-viewer>`) and are asserted by `e2e/sdk-coverage.spec.ts`; `minimal.html` is the smallest end-to-end integration. `demos/compare.html` puts the official `<model-viewer>` (CDN) next to this SDK and is intentionally outside the test suite — it needs network.
 
 - `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture used by the e2e suites.
 - `?model=<id>` jumps straight to a Khronos sample.

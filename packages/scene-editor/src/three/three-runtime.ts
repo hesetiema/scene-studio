@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type {
+  ContactShadowDTO,
   MaterialDTO,
   SceneDocument,
   SceneObjectDTO,
@@ -7,6 +8,10 @@ import type {
 } from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
+  AnimationOptions,
+  AutoRotateOptions,
+  CameraControlsOptions,
+  EnvironmentPreset,
   RuntimeContract,
   RuntimeEventMap,
   ToneMappingMode,
@@ -27,6 +32,7 @@ import {
 import { createLightingRig, type LightingRig } from "./viewer/lighting-rig";
 import { createEnvironmentRig, type EnvironmentRig } from "./viewer/environment-rig";
 import { createObjectStore, type ObjectStore } from "./viewer/object-store";
+import { createContactShadowRig, type ContactShadowRig } from "./viewer/contact-shadow";
 import {
   createGizmoRig,
   type GizmoControls,
@@ -72,6 +78,12 @@ export interface ThreeRuntimeOptions {
   enableControls?: boolean;
   /** Optional asset cache for assetId-based mesh loading (D11/D12). */
   assetCache?: AssetCache;
+  /**
+   * assetId → URL for **environment** assets (`view.environment.hdr` /
+   * `.skybox`). Mesh assets go through `assetCache`; the environment rig only
+   * needs a URL, so it takes the resolver directly.
+   */
+  resolveAsset?: (assetId: string) => Promise<string>;
   /** Initial gizmo mode (default `"translate"`). */
   transformMode?: TransformMode;
   /**
@@ -87,6 +99,11 @@ export interface ThreeRuntimeOptions {
   toneMapping?: ToneMappingMode;
   /** Exposure multiplier applied on top of the tone mapping. */
   exposure?: number;
+  /**
+   * Built-in studio IBL (default `"room"`). The preview path opts into
+   * `"neutral"`, the grayscale studio model-viewer ships as its default.
+   */
+  environmentPreset?: EnvironmentPreset;
 }
 
 /** Display mode → three constant. Kept here so the core stays three-free. */
@@ -117,6 +134,7 @@ export class ThreeRuntime implements RuntimeContract {
   readonly #lighting: LightingRig;
   readonly #environment: EnvironmentRig;
   readonly #objects: ObjectStore;
+  readonly #contactShadow: ContactShadowRig;
   readonly #gizmo: GizmoRig;
   readonly #animation: AnimationRig;
   readonly #picker: Picker;
@@ -129,8 +147,12 @@ export class ThreeRuntime implements RuntimeContract {
   #toneMapping: ToneMappingMode;
   #exposure: number | null = null;
   /** Last camera sample, so static re-renders do not fake a camera move. */
-  #lastLiveCamera: CameraView | null = null;
+  #lastCameraSample: CameraView | null = null;
   #transformMode: TransformMode;
+  /** Transport policy (autoplay / crossfade / pause-at-end); host-owned. */
+  #animationOptions: AnimationOptions = {};
+  /** Persisted contact-shadow settings; `undefined` = never declared (off). */
+  #contactShadowView: ContactShadowDTO | undefined;
   #controlsReady: Promise<void>;
   #resolveControlsReady!: () => void;
   #animationFrame: number | null = null;
@@ -164,7 +186,11 @@ export class ThreeRuntime implements RuntimeContract {
     // After the renderer: IBL prefilters through PMREM, which needs the GPU context.
     this.#environment = createEnvironmentRig(this.scene, initial.environment, {
       renderer: this.renderer,
+      preset: options.environmentPreset ?? "room",
       onEnvironmentReady: () => this.#render(),
+      ...(options.resolveAsset ? { resolveAsset: options.resolveAsset } : {}),
+      onHdrError: (error, hdr) => this.#emitEnvironmentError(error, hdr.assetId),
+      onSkyboxError: (error, skybox) => this.#emitEnvironmentError(error, skybox.assetId),
     });
 
     const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? options.canvas;
@@ -182,7 +208,7 @@ export class ThreeRuntime implements RuntimeContract {
     });
 
     // Seed the sampler so mounting never fakes a camera move.
-    if (this.#liveViewEvents) this.#lastLiveCamera = this.#cameraRig.readView();
+    this.#lastCameraSample = this.#cameraRig.readView();
 
     this.#renderLoop = createRenderLoop({
       renderer: this.renderer,
@@ -206,6 +232,14 @@ export class ThreeRuntime implements RuntimeContract {
         this.#animation.register(objectId, object, asset.animations ?? []);
       },
     });
+
+    // After the object store: the catch plane is fitted to the content bounds.
+    this.#contactShadowView = initial.environment.contactShadow;
+    this.#contactShadow = createContactShadowRig({
+      scene: this.scene,
+      renderer: this.renderer,
+    });
+    this.#syncContactShadow();
 
     this.#gizmo = createGizmoRig({
       scene: this.scene,
@@ -269,12 +303,17 @@ export class ThreeRuntime implements RuntimeContract {
       this.events.emit("load-progress", { totalProgress, reason });
     });
     this.#picker.setTargets(this.#objects.list());
+    this.#syncContactShadow();
+    this.#maybeAutoplay();
     this.#render();
     this.events.emit("load", { sceneId: doc.sceneId });
   }
 
   applyTransform(id: string, t: Transform): void {
-    if (this.#objects.applyTransform(id, t)) this.#render();
+    if (!this.#objects.applyTransform(id, t)) return;
+    // Moving content moves the shadowed footprint as well.
+    this.#syncContactShadow();
+    this.#render();
   }
 
   /**
@@ -286,6 +325,8 @@ export class ThreeRuntime implements RuntimeContract {
     // New objects must be pickable immediately, and the gizmo may target them.
     this.#picker.setTargets(this.#objects.list());
     this.#syncGizmo();
+    this.#syncContactShadow();
+    this.#maybeAutoplay();
     this.#render();
   }
 
@@ -298,11 +339,13 @@ export class ThreeRuntime implements RuntimeContract {
     }
     this.#objects.remove(id);
     this.#picker.setTargets(this.#objects.list());
+    this.#syncContactShadow();
     this.#render();
   }
 
   reparent(id: string, parentId: string | undefined): void {
     this.#objects.reparent(id, parentId);
+    this.#syncContactShadow();
     this.#render();
   }
 
@@ -332,6 +375,7 @@ export class ThreeRuntime implements RuntimeContract {
     this.#animation.dispose();
     this.#gizmo.dispose();
     this.#cameraRig.dispose();
+    this.#contactShadow.dispose();
     this.#objects.dispose();
     this.#picker.dispose();
     this.#environment.dispose();
@@ -341,10 +385,15 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   getViewState(): ViewState {
+    const environment = this.#environment.readView();
     return {
       camera: this.#cameraRig.readView(),
       lights: this.#lighting.readView(),
-      environment: this.#environment.readView(),
+      // Omitted until a document declares it, so older views round-trip unchanged.
+      environment:
+        this.#contactShadowView === undefined
+          ? environment
+          : { ...environment, contactShadow: this.#contactShadowView },
     };
   }
 
@@ -355,11 +404,13 @@ export class ThreeRuntime implements RuntimeContract {
       this.#cameraRig.applyView(view.camera);
       this.#lighting.applyView(view.lights);
       this.#environment.applyView(view.environment);
+      this.#contactShadowView = view.environment.contactShadow;
+      this.#syncContactShadow();
       this.#render();
     } finally {
       this.#applyingView = false;
       // Re-seed so the next real gesture is measured against the applied view.
-      if (this.#liveViewEvents) this.#lastLiveCamera = this.#cameraRig.readView();
+      this.#lastCameraSample = this.#cameraRig.readView();
     }
   }
 
@@ -370,38 +421,174 @@ export class ThreeRuntime implements RuntimeContract {
    */
   setLiveViewEvents(enabled: boolean): void {
     this.#liveViewEvents = enabled;
-    this.#lastLiveCamera = enabled ? this.#cameraRig.readView() : null;
+    this.#lastCameraSample = this.#cameraRig.readView();
+  }
+
+  /** Pointer policy + orbit limits (element: `disable-pan` / `disable-zoom` / `min-max-camera-orbit`). */
+  setCameraControls(options: CameraControlsOptions): void {
+    this.#cameraRig.applyControls(options);
+  }
+
+  /** Turntable rotation (element: `auto-rotate` / `rotation-per-second` / `auto-rotate-delay`). */
+  setAutoRotate(options: AutoRotateOptions | null): void {
+    this.#cameraRig.setAutoRotate(options);
+  }
+
+  /**
+   * Transport policy. Autoplay is applied to content that is already mounted,
+   * so a host that sets it before `loadDocument` still gets playback.
+   */
+  setAnimationOptions(options: AnimationOptions): void {
+    this.#animationOptions = { ...this.#animationOptions, ...options };
+    this.#animation.setOptions({
+      ...(options.crossfadeSeconds === undefined
+        ? {}
+        : { crossfadeSeconds: options.crossfadeSeconds }),
+      ...(options.pauseAtEnd === undefined ? {} : { pauseAtEnd: options.pauseAtEnd }),
+    });
+    this.#maybeAutoplay();
   }
 
   /**
    * Fit the camera to the current content bounds. Used by the preview path
    * (`<scene-editor src>`) and exposed as a "reset view" action. Never touches
    * the document, so it does not mark the scene dirty.
+   *
+   * Framing mirrors model-viewer's default orbit (`0deg 75deg 105%`): front
+   * view, 15° above the horizon. `phi = 75°` is measured from +Y, hence the 15°
+   * elevation here. The fit uses the content's bounding sphere and the
+   * *narrower* axis, so portrait viewports never clip.
+   *
+   * `padding` is calibrated against model-viewer's rendered size rather than
+   * against the literal 105%: their percentage multiplies their own (tighter)
+   * radius metric, and fitting our sphere at 105% left every model ~25-30%
+   * smaller than the reference.
    */
-  autoFrame(padding = 1.25): void {
-    const objects = this.#objects.list();
-    if (objects.length === 0) return;
-
-    const box = new THREE.Box3();
-    for (const object of objects) box.expandByObject(object);
+  autoFrame(padding = 0.85): void {
+    const box = this.#objects.bounds();
     if (box.isEmpty()) return;
 
     const center = box.getCenter(new THREE.Vector3());
+    // Bounding-sphere radius of the content box. Measured over the whole pose, so
+    // it stays put while an animation plays (a per-mesh sphere does not).
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.0001);
 
-    // Fit the narrower of the two axes so portrait viewports do not clip.
     const vFov = THREE.MathUtils.degToRad(this.camera.fov);
     const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(this.camera.aspect, 0.0001));
     const fitFov = Math.max(Math.min(vFov, hFov), 0.0001);
-    const distance = (radius / Math.sin(fitFov / 2)) * Math.max(padding, 1);
+    const distance = (radius / Math.sin(fitFov / 2)) * Math.max(padding, 0.1);
 
-    const direction = new THREE.Vector3(1, 0.62, 1).normalize();
+    // theta = 0°, phi = 75° from +Y → straight in front, 15° above the horizon.
+    const elevation = THREE.MathUtils.degToRad(15);
+    const direction = new THREE.Vector3(0, Math.sin(elevation), Math.cos(elevation));
     this.camera.position.copy(center).addScaledVector(direction, distance);
     this.camera.near = Math.max(distance / 1000, 0.001);
     this.camera.far = Math.max(distance * 100, 100);
     this.camera.updateProjectionMatrix();
     this.camera.lookAt(center);
     this.#cameraRig.setTarget([center.x, center.y, center.z]);
+    this.#render();
+  }
+
+  /**
+   * Viewer framing: model-viewer's `field-of-view="auto"` is 30° in landscape
+   * and 45° in portrait, applied *before* the fit so the distance follows.
+   */
+  frameViewer(): void {
+    this.camera.fov = this.camera.aspect < 1 ? 45 : 30;
+    this.camera.updateProjectionMatrix();
+    this.autoFrame();
+  }
+
+  // -------------------------------------------------------------------------
+  // Viewer-side extras (model-viewer parity)
+  // -------------------------------------------------------------------------
+
+  /** World-space size of everything mounted; zeros when nothing is loaded. */
+  dimensions(): { width: number; height: number; depth: number } {
+    const bounds = this.#objects.bounds();
+    if (bounds.isEmpty()) return { width: 0, height: 0, depth: 0 };
+    const size = bounds.getSize(new THREE.Vector3());
+    return { width: size.x, height: size.y, depth: size.z };
+  }
+
+  /**
+   * Project a world point into **canvas-local CSS pixels** — what hotspot slots
+   * need to stay glued to the model while the camera moves.
+   */
+  projectPoint(
+    point: readonly [number, number, number],
+  ): { x: number; y: number; visible: boolean } {
+    const rect = this.#canvas.getBoundingClientRect?.();
+    const width = rect?.width || this.#canvas.clientWidth || 1;
+    const height = rect?.height || this.#canvas.clientHeight || 1;
+
+    const projected = new THREE.Vector3(point[0], point[1], point[2]).project(this.camera);
+    return {
+      x: (projected.x * 0.5 + 0.5) * width,
+      y: (-projected.y * 0.5 + 0.5) * height,
+      // Behind the camera or outside the depth range → the anchor is not visible.
+      visible: projected.z >= -1 && projected.z <= 1 && projected.z < 1,
+    };
+  }
+
+  /** World-space hit point + surface normal under a client coordinate. */
+  positionAndNormalFromPoint(
+    clientX: number,
+    clientY: number,
+  ): { position: [number, number, number]; normal: [number, number, number] } | null {
+    const detail = this.#picker.pickDetail({ clientX, clientY });
+    if (!detail) return null;
+    return {
+      position: [...detail.position] as [number, number, number],
+      normal: [...detail.normal] as [number, number, number],
+    };
+  }
+
+  /**
+   * Render, then read the drawing buffer in the same task. No
+   * `preserveDrawingBuffer` tax on every frame — the render happens right
+   * before the read, which is exactly when the buffer still holds the frame.
+   */
+  toDataURL(type = "image/png", quality?: number): string {
+    this.#render();
+    return this.#canvas.toDataURL(type, quality);
+  }
+
+  /** Async sibling of {@link toDataURL}. */
+  toBlob(type = "image/png", quality?: number): Promise<Blob | null> {
+    this.#render();
+    return new Promise<Blob | null>((resolve) => {
+      this.#canvas.toBlob((blob) => resolve(blob), type, quality);
+    });
+  }
+
+  /**
+   * Export the **document** objects (not the viewport helpers) as GLB or
+   * `.gltf` JSON. Roots are passed as-is: their live transforms already mirror
+   * the document, while the grid/gizmo/contact plane never lived in the store.
+   */
+  async exportScene(options: { binary?: boolean } = {}): Promise<ArrayBuffer | string> {
+    const { GLTFExporter } = await import("three/examples/jsm/exporters/GLTFExporter.js");
+    const roots = this.#objects.list();
+    const exporter = new GLTFExporter();
+    const result = await new Promise<unknown>((resolve, reject) => {
+      exporter.parse(
+        roots,
+        (output) => resolve(output),
+        (error) => reject(error),
+        { binary: options.binary ?? true },
+      );
+    });
+    return result instanceof ArrayBuffer ? result : JSON.stringify(result, null, 2);
+  }
+
+  /** Swap the built-in studio IBL (model-viewer `environment-image` parity). */
+  setEnvironmentPreset(preset: EnvironmentPreset): void {
+    if (preset !== "room" && preset !== "neutral") return;
+    this.#environment.setPreset(preset);
+    // The shadow direction is derived from the studio's key light.
+    this.#syncContactShadow();
     this.#render();
   }
 
@@ -545,23 +732,61 @@ export class ThreeRuntime implements RuntimeContract {
     this.#gizmo.syncSelection(this.#selectedObject());
   }
 
+  /** Re-fit the catch plane to the current content (mount / transform / view). */
+  #syncContactShadow(): void {
+    this.#contactShadow.applyView(this.#contactShadowView, this.#objects.bounds());
+    this.#contactShadow.setLightDirection(this.#shadowLightDirection());
+  }
+
+  /**
+   * Where the ground shadow falls from. A document that lights the scene itself
+   * keeps its own key direction; with IBL-only lighting (the preview default) the
+   * shadow follows the environment's highlight, the way model-viewer derives its
+   * shadow light from the light probe.
+   */
+  #shadowLightDirection(): [number, number, number] {
+    const directional = this.#lighting.keyLight;
+    if (directional.intensity > 0) {
+      const { position, target } = directional;
+      const direction: [number, number, number] = [
+        position.x - target.position.x,
+        position.y - target.position.y,
+        position.z - target.position.z,
+      ];
+      if (Math.hypot(...direction) > 1e-6) return direction;
+    }
+    return this.#environment.keyDirection();
+  }
+
   #emitViewChange(): void {
     if (this.#applyingView) return;
     this.events.emit("view-change", { view: this.getViewState() });
   }
 
-  /** Sample the camera at render time; cheap enough for every damped frame. */
+  /**
+   * Sample the camera at render time; cheap enough for every damped frame.
+   * `camera-change` is always reported (auto-rotate has no gesture to hang an
+   * event on); the full `view-changing` payload stays opt-in.
+   */
   #emitViewChanging(): void {
-    if (!this.#liveViewEvents || this.#applyingView) return;
+    if (this.#applyingView) return;
     const camera = this.#cameraRig.readView();
-    const previous = this.#lastLiveCamera;
-    if (previous === null) {
-      this.#lastLiveCamera = camera;
-      return;
-    }
-    if (sameCameraView(previous, camera)) return;
-    this.#lastLiveCamera = camera;
-    this.events.emit("view-changing", { view: this.getViewState() });
+    const previous = this.#lastCameraSample;
+    if (previous !== null && sameCameraView(previous, camera)) return;
+    this.#lastCameraSample = camera;
+    this.events.emit("camera-change", camera);
+    if (this.#liveViewEvents) this.events.emit("view-changing", { view: this.getViewState() });
+  }
+
+  /** Start playback when the host asked for it and content brought clips along. */
+  #maybeAutoplay(): void {
+    if (this.#animationOptions.autoplay !== true) return;
+    const name = this.#animationOptions.clipName;
+    const started =
+      typeof name === "string" && name.length > 0
+        ? this.#animation.playByName(name)
+        : this.#animation.play(null, 0);
+    if (started) this.#ensureAnimationLoop();
   }
 
   #emitAssetError(err: unknown, dto: { id: string; assetId?: string | undefined }): void {
@@ -574,6 +799,18 @@ export class ThreeRuntime implements RuntimeContract {
       message: err instanceof Error ? err.message : String(err),
       cause: err,
       detail: { objectId: dto.id, assetId: dto.assetId },
+    } as RuntimeEventMap["error"]);
+  }
+
+  /** A broken HDR / skybox keeps the previous look but must not be silent. */
+  #emitEnvironmentError(err: unknown, assetId: string): void {
+    const candidate = (err as { code?: string }).code;
+    const code = candidate && ASSET_ERROR_CODES.has(candidate) ? candidate : "asset-load-failed";
+    this.events.emit("error", {
+      code,
+      message: err instanceof Error ? err.message : String(err),
+      cause: err,
+      detail: { assetId, kind: "environment" },
     } as RuntimeEventMap["error"]);
   }
 

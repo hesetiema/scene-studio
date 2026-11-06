@@ -12,6 +12,7 @@ describe("migrateSceneDocument", () => {
     expect(applied).toEqual([
       { from: 1, to: 2 },
       { from: 2, to: 3 },
+      { from: 3, to: 4 },
     ]);
     expect(document).toEqual({
       ...v1,
@@ -20,12 +21,15 @@ describe("migrateSceneDocument", () => {
     });
   });
 
-  it("upgrades v2 to v3 without reshaping anything", () => {
+  it("upgrades v2 through the whole chain without reshaping anything", () => {
     const v2 = { ...v1, schemaVersion: 2, view: createDefaultViewState() };
     const { document, applied } = migrateSceneDocument(v2);
-    expect(applied).toEqual([{ from: 2, to: 3 }]);
-    // v3 only added optional fields, so the payload is identical apart from the stamp.
-    expect(document).toEqual({ ...v2, schemaVersion: 3 });
+    expect(applied).toEqual([
+      { from: 2, to: 3 },
+      { from: 3, to: 4 },
+    ]);
+    // v3/v4 only added optional fields, so the payload is identical apart from the stamp.
+    expect(document).toEqual({ ...v2, schemaVersion: SCHEMA_VERSION });
   });
 
   it("leaves an existing view untouched when upgrading", () => {

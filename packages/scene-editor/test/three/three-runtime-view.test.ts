@@ -42,6 +42,17 @@ describe("ThreeRuntime view state (D22)", () => {
     expect(runtime.scene.background).toBeInstanceOf(THREE.Color);
   });
 
+  it("round-trips contact-shadow settings and omits them by default", () => {
+    const runtime = makeRuntime();
+    expect(runtime.getViewState().environment.contactShadow).toBeUndefined();
+
+    const view = createDefaultViewState();
+    view.environment.contactShadow = { enabled: true, opacity: 0.6, height: -1 };
+    runtime.applyViewState(view);
+
+    expect(runtime.getViewState()).toEqual(view);
+  });
+
   it("restores a transparent background from null", () => {
     const runtime = makeRuntime();
     const view = createDefaultViewState();

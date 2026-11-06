@@ -50,7 +50,7 @@ means "absorbed" — the absorbed command's effect stays, its history entry does
 | getters | `canUndo` `canRedo` `dirty` `revision` `selectedIds` `runtime` | |
 | `destroy` | `() => void` | Idempotent: tears down plugins, flushes controller + runtime disposers, clears handlers. Later calls throw `lifecycle` |
 
-**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `view-changing` `{view: ViewState}` (opt-in, high frequency) · `progress` `{totalProgress, reason}` · `load` `{sceneId}` · `visibility-change` `{visible: boolean}` (**element-only** — the facade has no DOM and never emits it) · `error` `{code, message, cause?}`.
+**`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `view-changing` `{view: ViewState}` (opt-in, high frequency) · `camera-change` `{position, target, fov}` (always on, camera-only) · `environment-change` `{environment, source: "api" | "load"}` (edge-triggered) · `progress` `{totalProgress, reason}` · `load` `{sceneId}` · `visibility-change` `{visible: boolean}` (**element-only** — the facade has no DOM and never emits it) · `model-visibility` `{visible: boolean}` (element-only alias) · `error` `{code, message, cause?}`.
 
 `SceneEditorElementEventMap` = the map above, with `load` widened to `{sceneId, url: string | null}`, plus `scene-ready: null`. It is the typed source for `el.addEventListener(...)`.
 
@@ -119,6 +119,12 @@ interface RuntimeContract {
   applyViewState(view: ViewState): void;
   /** Optional: toggle high-frequency `view-changing` sampling (default off). */
   setLiveViewEvents?(enabled: boolean): void;
+  /** Optional: pointer verbs + orbit limits (model-viewer `disable-*` / `min-max-camera-orbit`). */
+  setCameraControls?(options: CameraControlsOptions): void;
+  /** Optional: turntable rotation; `null` stops it. */
+  setAutoRotate?(options: AutoRotateOptions | null): void;
+  /** Optional: transport policy (`autoplay`, clip name, crossfade, one-shot). */
+  setAnimationOptions?(options: AnimationOptions): void;
   /** Optional: fit the camera to the content bounds. */
   autoFrame?(): void;
   /** Optional: display transfer function (never persisted). */
@@ -145,6 +151,7 @@ type Transform = {
 | `error` | `{ code: string, message: string, cause? }` |
 | `view-change` | `{ view: ViewState }` — a **user** interaction ended; never emitted while `applyViewState` runs |
 | `view-changing` | `{ view: ViewState }` — in-flight camera sample; only after `setLiveViewEvents(true)`, never during `applyViewState`, and only when the camera actually moved |
+| `camera-change` | `{ position, target, fov }` — camera-only sample, **always on** (auto-rotate has no gesture to hang an event on). Never emitted during `applyViewState` or for a static re-render |
 | `load-progress` | `{ totalProgress: number, reason: string }` — monotonic 0..1 across the document's meshes |
 | `load` | `{ sceneId: string }` — the document is mounted and renderable (fires after `load-progress` reaches 1) |
 
@@ -234,6 +241,11 @@ The shortest path from a glTF URL to a rendered model:
 - `loadDocument()` overrides the preview. Changing `src` afterwards switches back to preview and re-frames.
 - No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` still wins.
 - `createSrcDocument(url)`, `SRC_ASSET_ID`, `SRC_SCENE_ID` are exported from `./element` for the same document shape in a headless setup.
+- The canvas is **transparent by default** (`WebGLRenderer({ alpha: true })`), so `view.environment.background: null` really shows the page behind the element. Pass `alpha: false` through a custom `runtimeFactory` if you need an opaque canvas.
+- `loading="lazy"` defers the `src` load until the element first intersects the viewport (falls back to eager where `IntersectionObserver` is unavailable).
+- Viewer chrome is attribute-only and never touches the document: `auto-rotate`, `auto-rotate-delay`, `rotation-per-second`, `min-camera-orbit`, `max-camera-orbit`, `disable-pan`, `disable-zoom`, `disable-tap`, `autoplay`, `animation-name`, `animation-crossfade-duration`, `pause-at-end`, `environment-image`.
+- A preview is a **viewer**, so its synthesized view uses viewer defaults rather than editor defaults: no floor grid, `field-of-view="auto"` (30° landscape / 45° portrait), and the environment map as the only light source (analytic ambient/key at `0`). Framing matches model-viewer's default orbit (`0deg 75deg`): front view, 15° above the horizon, at a distance calibrated to the reference viewer's rendered size.
+- The contact shadow falls from the document's own key light when it emits (`view.lights.directional.intensity > 0`); with IBL-only lighting it falls from the environment's key direction instead, the way model-viewer derives its shadow light from the light probe. The shadow light is display-only (`intensity: 0`, never in `getViewState()`), so aiming it never touches the document.
 
 ### `SceneEditorElement` properties & methods
 
@@ -244,7 +256,14 @@ The shortest path from a glTF URL to a rendered model:
 | `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. An explicit `loadDocument()` takes precedence until `src` changes again |
 | `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `aces`; documents stay on the engine default unless set |
 | `exposure` | attribute | Exposure multiplier applied on top of the tone mapping |
+| `environment-image` | attribute | `neutral` \| `room` — the built-in studio IBL. Previews default to `neutral` (grayscale softbox studio, model-viewer's look), documents to `room` (three's warm `RoomEnvironment`). Inert while the view supplies an HDR |
 | `frameModel()` | method | Fit the camera to the current bounds ("reset view"); never marks the document dirty |
+| `getDimensions()` | method | World-space `{ width, height, depth }` of the mounted content; zeros when the scene is empty |
+| `positionAndNormalFromPoint(x, y)` | method | `{ position, normal }` under a client coordinate, or `null` when the ray misses |
+| `toDataURL(type?, quality?)` / `toBlob(type?, quality?)` | method | Render, then capture the canvas (`image/png` by default). Throws a `lifecycle` error when the runtime cannot capture |
+| `exportScene({ binary? })` | method | Export the document objects as GLB (`binary: true`, the default) or `.gltf` JSON. Throws a `lifecycle` error when unsupported |
+| `dismissPoster()` | method | Hide `slot="poster"` now and dispatch `poster-dismissed`; idempotent |
+| `refreshSlots()` | method | Re-scan `slot="…"` children. A `MutationObserver` already covers `slot` / `data-position` changes, so this is only an explicit flush |
 | `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the reliable failure channel |
 | `controlsReady` | promise | Resolves when gizmo mounted; non-three runtimes resolve immediately |
 | `loadDocument(doc)` | method | Validated load; throws/rejects with typed errors. Overlapping calls are serialized (call order wins) |
@@ -265,8 +284,34 @@ The shortest path from a glTF URL to a rendered model:
 | `revision` / `dirty` / `selectedIds` | getters | |
 | `visible` | getter | Whether the element currently intersects the viewport; mirrors `visibility-change` without waiting for an event |
 | `live-view-events` | attribute | Opt in to the high-frequency `view-changing` event. Toggleable at runtime |
+| `loading` | attribute | `auto` (default) \| `lazy` \| `eager`. `lazy` defers the `src` load until first visibility; switching back to `eager` flushes it |
+| `reveal` | attribute | `auto` (default) \| `interaction` \| `manual`. `auto` dismisses the poster on `load`, `interaction` on the first gesture, `manual` only through `dismissPoster()`. Inert when no `slot="poster"` exists |
+| `auto-rotate` / `auto-rotate-delay` / `rotation-per-second` | attributes | Turntable rotation (default idle 3000 ms, 30°/s). Rotation pauses during a drag and resumes after the idle delay |
+| `min-camera-orbit` / `max-camera-orbit` | attributes | `"<theta> <phi> <radius>"` per axis, model-viewer syntax: `auto`, `90deg`, `1.2rad`, `2m`. `auto` on either side leaves the axis unlimited |
+| `disable-pan` / `disable-zoom` / `disable-tap` | attributes | Pointer verbs. `disable-tap` keeps orbit but never converts a click into a selection |
+| `autoplay` / `animation-name` / `animation-crossfade-duration` / `pause-at-end` | attributes | Playback transport for glTF clips (`animation-name` is case-insensitive; crossfade is in **ms**) |
 | `visibilityObserverFactory` | **static** | Seam for `visibility-change`; default uses `IntersectionObserver`, return `null` to disable |
 | `connectedCallback` / `disconnectedCallback` | lifecycle | Teardown destroys runtime + all plugins |
+
+### Slots (light DOM)
+
+`<scene-editor>` has no shadow root, so slots are **plain children tagged with `slot="…"`** — `querySelector`, framework refs and CSS selectors keep working.
+
+```html
+<scene-editor src="/models/robot.glb" reveal="interaction">
+  <img slot="poster" src="/poster.jpg" alt="Loading robot" />
+  <div slot="progress-bar">Loading…</div>
+  <div slot="hotspot-lens" data-position="0 1.2 0.4">Lens</div>
+</scene-editor>
+```
+
+| Slot | Behaviour |
+|---|---|
+| `poster` | Absolute overlay (z-index 1), shown until the reveal policy dismisses it |
+| `progress-bar` | Absolute bottom overlay (z-index 2), visible only while a load is in flight |
+| `hotspot-*` | Anchor glued to the world point in `data-position="x y z"` (re-projected on `camera-change` and resize). Hidden while the point is behind the camera |
+
+The element only sets `position: relative` on itself when the computed position is `static`. Nodes it adopts keep their own inline CSS, which is restored verbatim when they are removed or re-slotted.
 
 ### Element events (CustomEvent)
 
@@ -283,7 +328,11 @@ Every event is dispatched **on the element itself** with `bubbles: false`, `comp
 | `save-request` | `{ reason: "manual", document, revision }` | no | no | Host should persist; confirm with `markSaved()` | ≤ 0.5.0 |
 | `view-change` | `{ view: ViewState, source: "interaction" \| "api" \| "load" }` | no | no | Settled view (one per gesture / API call / scene load) | ≤ 0.5.0 |
 | `view-changing` | `{ view: ViewState }` | no | no | In-flight camera sample. **Opt-in** via `live-view-events`; high frequency | 0.6.0 |
+| `camera-change` | `{ position, target, fov }` | no | no | Camera pose on every frame it moved (drag, damping, auto-rotate). Always on; camera-only | 0.7.0 |
+| `environment-change` | `{ environment, source: "api" \| "load" }` | no | no | Background / grid / IBL / HDR / contact shadow changed (edge-triggered) | 0.7.0 |
 | `visibility-change` | `{ visible: boolean }` | no | no | Element entered/left the viewport. **Element-only** | 0.6.0 |
+| `model-visibility` | `{ visible: boolean }` | no | no | model-viewer-compatible alias of `visibility-change`. **Element-only** | 0.7.0 |
+| `poster-dismissed` | `{}` | no | no | The `slot="poster"` overlay was dismissed (auto after load, first interaction, or `dismissPoster()`). Edge-triggered. **Element-only** | 0.7.0 |
 | `error` | `{ code, message, cause? }` | no | no | Any SDK failure, including runtime/asset errors (`AssetErrorCode` values are forwarded verbatim) | ≤ 0.5.0 |
 
 Typed listeners come from `SceneEditorElementEventMap`:
@@ -316,7 +365,7 @@ Events are a published contract, versioned with the package:
 
 1. **Names never change inside a major.** Additions ship in a minor; removal or renaming waits for a major.
 2. **Payloads only grow.** New fields are optional; existing field types never widen or narrow in a minor.
-3. **Edge-triggered stays edge-triggered.** `document-dirty` and `visibility-change` fire only on crossings. `view-changing` is the only high-frequency event and stays opt-in.
+3. **Edge-triggered stays edge-triggered.** `document-dirty`, `visibility-change` and `environment-change` fire only on crossings. Per-frame events are `camera-change` (always on, camera-only, six numbers) and `view-changing` (opt-in, full `ViewState`).
 4. **Deprecation has a tail.** A retired event is marked `@deprecated` for at least one minor while still being dispatched, then removed in the next major. Downstream code cannot detect a silently vanished event — model-viewer's old `scene-graph-ready` / `preload` are still listened to by popular wrappers while the current implementation no longer dispatches them.
 5. **Dispatch flags are part of the contract.** `bubbles` / `composed` / `cancelable` are fixed at `false`; changing any of them is a breaking change.
 6. **Errors carry a stable `code`.** Codes are documented, never reused, and hosts branch on `code` — never on `message`.
@@ -348,6 +397,14 @@ interface ThreeRuntimeOptions {
 
 Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted.
 
+Viewer-side policy setters (all optional on `RuntimeContract`, all presentation-only — they never touch the document):
+
+| Method | Description |
+|---|---|
+| `setCameraControls({ pan?, zoom?, limits? })` | Orbit limits in **degrees** (`theta` = azimuth, `phi` = polar from +Y) and world-unit `radius`; applied on mount if the addon is still loading |
+| `setAutoRotate({ enabled, degreesPerSecond?, delayMs? } \| null)` | Turntable yaw stepped from rAF with a real delta; pauses during a drag, resumes `delayMs` after `end` |
+| `setAnimationOptions({ autoplay?, clipName?, crossfadeSeconds?, pauseAtEnd? })` | Transport policy; `autoplay` also applies to already-mounted content |
+
 **Gizmo mode.** `TransformMode = "translate" | "rotate" | "scale"`. `setTransformMode()` is safe before the TransformControls addon finishes loading — the mode is remembered and applied on mount, so a host toolbar can bind it during boot:
 
 ```ts
@@ -378,7 +435,7 @@ runtime.playAnimation("obj-1", 0);
 
 | Export | Responsibility |
 |---|---|
-| `createCameraRig` | Camera + OrbitControls lifecycle, `readView()` / `applyView()` |
+| `createCameraRig` | Camera + OrbitControls lifecycle, `readView()` / `applyView()`, `applyControls()` (limits/verbs), `setAutoRotate()` |
 | `createLightingRig` | Ambient + directional lights, view read/apply |
 | `createEnvironmentRig` | Background + floor grid |
 | `createObjectStore` | id → Object3D registry, asset instantiation, disposal |
@@ -392,7 +449,7 @@ runtime.playAnimation("obj-1", 0);
 
 | Export | Description |
 |---|---|
-| `createRenderer(canvas, options?)` | Single creation site for WebGLRenderer; failures → `SceneEditorError("render-init-failed")`. Options: `antialias` (default true), `maxPixelRatio` (default 2) |
+| `createRenderer(canvas, options?)` | Single creation site for WebGLRenderer; failures → `SceneEditorError("render-init-failed")`. Options: `antialias` (default true), `maxPixelRatio` (default 2), `alpha` (default **true** — a `null` scene background shows the page through the canvas) |
 | `RendererHandle` | Structural slice: `render`, `setSize`, `setPixelRatio`, `dispose` |
 | `CreateRendererOptions` | type above |
 

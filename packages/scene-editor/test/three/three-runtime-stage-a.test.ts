@@ -72,6 +72,49 @@ describe("ThreeRuntime stage A: autoFrame", () => {
     runtime.autoFrame();
     expect(runtime.camera.position.equals(before)).toBe(true);
   });
+
+  it("frames like model-viewer: front view, 15° above the horizon, tight fit", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+
+    const distance = (): number => {
+      const { position, target } = runtime.getViewState().camera;
+      return Math.hypot(
+        position[0] - target[0],
+        position[1] - target[1],
+        position[2] - target[2],
+      );
+    };
+
+    runtime.autoFrame();
+    const { position, target } = runtime.getViewState().camera;
+    // theta = 0° → dead ahead on +Z, no sideways offset.
+    expect(Math.abs(position[0] - target[0])).toBeLessThan(1e-6);
+    // phi = 75° from +Y → 15° above the horizon.
+    const elevation = Math.atan2(position[1] - target[1], position[2] - target[2]);
+    expect(elevation).toBeCloseTo(Math.PI / 12, 5);
+
+    // Tight fit by default (model-viewer's rendered size), and `padding` scales
+    // the distance linearly from there.
+    const fitted = distance();
+    runtime.autoFrame(1);
+    expect(fitted / distance()).toBeCloseTo(0.85, 5);
+    runtime.autoFrame(1.7);
+    expect(fitted / distance()).toBeCloseTo(0.5, 5);
+  });
+
+  it("viewer framing applies model-viewer's `field-of-view=auto` per aspect", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+
+    runtime.camera.aspect = 1.4;
+    runtime.frameViewer();
+    expect(runtime.camera.fov).toBe(30);
+
+    runtime.camera.aspect = 0.7;
+    runtime.frameViewer();
+    expect(runtime.camera.fov).toBe(45);
+  });
 });
 
 describe("ThreeRuntime stage A: display settings", () => {
@@ -167,5 +210,63 @@ describe("ThreeRuntime stage A: load lifecycle", () => {
     await runtime.loadDocument(sceneDocument({ sceneId: "empty" }));
 
     expect(progress).toEqual([1]);
+  });
+});
+
+describe("contact shadow direction", () => {
+  const shadowLightOf = (runtime: ThreeRuntime): THREE.DirectionalLight | undefined =>
+    runtime.scene.children.find(
+      (child) =>
+        (child as THREE.DirectionalLight).isDirectionalLight === true &&
+        (child as THREE.DirectionalLight).castShadow === true,
+    ) as THREE.DirectionalLight | undefined;
+
+  const withContactShadow = (
+    runtime: ThreeRuntime,
+    directional: { intensity: number; position: [number, number, number] },
+  ): void => {
+    const view = runtime.getViewState();
+    runtime.applyViewState({
+      ...view,
+      lights: {
+        ...view.lights,
+        ambient: { ...view.lights.ambient, intensity: 0 },
+        directional: { ...view.lights.directional, ...directional },
+      },
+      environment: { ...view.environment, contactShadow: { enabled: true } },
+    });
+  };
+
+  it("follows the environment key light when the document has no emitting key", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+    runtime.setEnvironmentPreset("neutral");
+
+    withContactShadow(runtime, { intensity: 0, position: [5, 10, 7] });
+
+    const light = shadowLightOf(runtime);
+    expect(light).toBeDefined();
+    const direction = light!.position.clone().normalize();
+    // The neutral studio's key softbox sits front-left and high.
+    expect(direction.x).toBeLessThan(0);
+    expect(direction.y).toBeGreaterThan(0);
+    expect(direction.z).toBeGreaterThan(0);
+    // Shadow-only: it must not add a second key light on top of the IBL.
+    expect(light!.intensity).toBe(0);
+  });
+
+  it("keeps the document's own key direction when it emits", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+    runtime.setEnvironmentPreset("neutral");
+
+    withContactShadow(runtime, { intensity: 1, position: [0, 10, 0] });
+
+    const direction = shadowLightOf(runtime)!.position.clone().normalize();
+    expect(direction.y).toBeCloseTo(1, 5);
+    expect(Math.abs(direction.x)).toBeLessThan(1e-6);
+    // Aiming the shadow never rewrites the persisted view.
+    expect(runtime.getViewState().lights.directional.position).toEqual([0, 10, 0]);
+    expect(runtime.getViewState().lights.directional.intensity).toBe(1);
   });
 });

@@ -7,7 +7,7 @@ const pkg = (path: string) =>
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
 /** Focused SDK demos (`/demos/*.html`) — one page per API surface. */
-const demoPages = ["index", "host-api", "document", "headless", "assets"];
+const demoPages = ["index", "host-api", "document", "headless", "assets", "viewer", "compare"];
 
 export default defineConfig({
   resolve: {

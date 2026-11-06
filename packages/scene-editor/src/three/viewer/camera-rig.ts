@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { ViewState } from "../../core/document/schema";
+import type { AutoRotateOptions, CameraControlsOptions } from "../../runtime/runtime-contract";
 
 /** Minimal OrbitControls surface the runtime needs (real or injected, D22). */
 export interface OrbitControlsLike {
@@ -7,6 +8,15 @@ export interface OrbitControlsLike {
   dispose: () => void;
   target?: THREE.Vector3;
   addEventListener?: (type: string, handler: () => void) => void;
+  /* Optional knobs — an injected stub may omit any of them. */
+  enablePan?: boolean;
+  enableZoom?: boolean;
+  minDistance?: number;
+  maxDistance?: number;
+  minPolarAngle?: number;
+  maxPolarAngle?: number;
+  minAzimuthAngle?: number;
+  maxAzimuthAngle?: number;
 }
 
 export type CameraView = ViewState["camera"];
@@ -32,11 +42,28 @@ export interface CameraRig {
   mount(orbit: OrbitControlsLike | null): void;
   /** Lazily import three's OrbitControls and mount it. Never rejects. */
   mountDefault(): Promise<void>;
+  /** Pointer policy + orbit limits (model-viewer `disable-*` / `min-max-camera-orbit`). */
+  applyControls(options: CameraControlsOptions): void;
+  /** Turntable rotation; `null` stops it. Survives a late controls mount. */
+  setAutoRotate(options: AutoRotateOptions | null): void;
   readView(): CameraView;
   applyView(view: CameraView): void;
   /** Keep the target in sync when no controls exist (headless / disabled, D22). */
   setTarget(target: readonly [number, number, number]): void;
   dispose(): void;
+}
+
+const DEG_TO_RAD = Math.PI / 180;
+/** model-viewer's `rotation-per-second` default. */
+const DEFAULT_DEGREES_PER_SECOND = 30;
+/** Clamp a stalled frame so a backgrounded tab cannot spin the model 180°. */
+const MAX_STEP_SECONDS = 0.1;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+function nowMs(): number {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
 }
 
 /**
@@ -45,11 +72,89 @@ export interface CameraRig {
  * The addon may mount *after* a document applied its `view`; without re-seeding
  * the target it would re-derive the camera around (0,0,0) and throw away the
  * restored framing (showed up as flaky first-frame camera in the visual gate).
+ *
+ * Auto-rotate is a yaw of the camera around the orbit target, stepped from a
+ * rAF loop with a real delta. Doing it by hand (instead of OrbitControls'
+ * `autoRotate`) keeps the speed honest: the addon's per-frame rotation assumes
+ * 60fps and this rig renders on demand, so its speed would drift with the
+ * display.
  */
 export function createCameraRig(options: CameraRigOptions): CameraRig {
   const { camera } = options;
   const fallbackTarget = new THREE.Vector3(0, 0, 0);
   let orbit: OrbitControlsLike | null = null;
+  let controls: CameraControlsOptions = {};
+  let autoRotate: Required<AutoRotateOptions> | null = null;
+  let frame: number | null = null;
+  let lastTick = 0;
+  let resumeAt = 0;
+  let interacting = false;
+  let disposed = false;
+
+  const applyToOrbit = (): void => {
+    if (!orbit) return;
+    if (controls.pan !== undefined) orbit.enablePan = controls.pan;
+    if (controls.zoom !== undefined) orbit.enableZoom = controls.zoom;
+
+    const limits = controls.limits;
+    if (!limits) return;
+    if (limits.radius) {
+      orbit.minDistance = limits.radius[0];
+      orbit.maxDistance = limits.radius[1];
+    }
+    if (limits.phi) {
+      orbit.minPolarAngle = limits.phi[0] * DEG_TO_RAD;
+      orbit.maxPolarAngle = limits.phi[1] * DEG_TO_RAD;
+    }
+    if (limits.theta) {
+      orbit.minAzimuthAngle = limits.theta[0] * DEG_TO_RAD;
+      orbit.maxAzimuthAngle = limits.theta[1] * DEG_TO_RAD;
+    }
+  };
+
+  const stopAutoRotate = (): void => {
+    if (frame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(frame);
+    }
+    frame = null;
+  };
+
+  const rotateYaw = (radians: number): void => {
+    if (radians === 0) return;
+    const target = orbit?.target ?? fallbackTarget;
+    const offset = camera.position.clone().sub(target);
+    offset.applyAxisAngle(Y_AXIS, radians);
+    camera.position.copy(target).add(offset);
+    camera.lookAt(target);
+  };
+
+  const tick = (now: number): void => {
+    frame = null;
+    if (disposed || !autoRotate?.enabled) return;
+
+    // A drag owns the camera; `end` restarts the loop after the idle delay.
+    if (interacting) return;
+
+    const delta = Math.min(Math.max(0, now - lastTick) / 1000, MAX_STEP_SECONDS);
+    lastTick = now;
+
+    if (now >= resumeAt) {
+      rotateYaw(autoRotate.degreesPerSecond * DEG_TO_RAD * delta);
+      // Rendering re-runs `OrbitControls.update()`, which re-derives its
+      // spherical state from the camera and enforces the limits.
+      options.onRender();
+    }
+
+    frame =
+      typeof requestAnimationFrame === "function" ? requestAnimationFrame(tick) : null;
+  };
+
+  const startAutoRotate = (): void => {
+    if (disposed || frame !== null || !autoRotate?.enabled) return;
+    if (typeof requestAnimationFrame !== "function") return;
+    lastTick = nowMs();
+    frame = requestAnimationFrame(tick);
+  };
 
   const rig: CameraRig = {
     get orbit(): OrbitControlsLike | null {
@@ -63,7 +168,17 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       if (!next) return;
       next.target?.set(fallbackTarget.x, fallbackTarget.y, fallbackTarget.z);
       next.addEventListener?.("change", options.onRender);
-      next.addEventListener?.("end", options.onInteractionEnd);
+      next.addEventListener?.("start", () => {
+        interacting = true;
+      });
+      next.addEventListener?.("end", () => {
+        interacting = false;
+        // model-viewer's `auto-rotate-delay`: idle before the turntable resumes.
+        resumeAt = nowMs() + (autoRotate?.delayMs ?? 0);
+        startAutoRotate();
+        options.onInteractionEnd();
+      });
+      applyToOrbit();
       options.onRender();
     },
     async mountDefault(): Promise<void> {
@@ -75,6 +190,27 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       } catch {
         // optional addon unavailable — a controls-less runtime still works
       }
+    },
+    applyControls(next: CameraControlsOptions): void {
+      controls = { ...controls, ...next };
+      applyToOrbit();
+      options.onRender();
+    },
+    setAutoRotate(next: AutoRotateOptions | null): void {
+      if (!next?.enabled) {
+        autoRotate = null;
+        stopAutoRotate();
+        return;
+      }
+      autoRotate = {
+        enabled: true,
+        degreesPerSecond: Number.isFinite(next.degreesPerSecond)
+          ? (next.degreesPerSecond as number)
+          : DEFAULT_DEGREES_PER_SECOND,
+        delayMs: Number.isFinite(next.delayMs) ? Math.max(0, next.delayMs as number) : 0,
+      };
+      resumeAt = Math.max(resumeAt, nowMs());
+      startAutoRotate();
     },
     readView(): CameraView {
       const target = rig.target;
@@ -99,6 +235,9 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       orbit?.target?.set(x, y, z);
     },
     dispose(): void {
+      disposed = true;
+      autoRotate = null;
+      stopAutoRotate();
       orbit?.dispose();
       orbit = null;
     },

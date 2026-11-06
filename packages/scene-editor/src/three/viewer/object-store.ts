@@ -1,4 +1,4 @@
-import type * as THREE from "three";
+import * as THREE from "three";
 import type { MaterialDTO, SceneDocument, SceneObjectDTO } from "../../core/document/schema";
 import type { AssetCache, LoadedAsset } from "../../assets/asset-cache";
 import type { Transform } from "../../runtime/runtime-contract";
@@ -51,6 +51,8 @@ export interface ObjectStore {
   setMaterial(id: string, material: MaterialDTO | undefined): void;
   get(id: string): THREE.Object3D | undefined;
   list(): THREE.Object3D[];
+  /** World-space bounds of everything mounted; empty when nothing is loaded. */
+  bounds(): THREE.Box3;
   applyTransform(id: string, transform: Transform): boolean;
   clear(): void;
   dispose(): void;
@@ -98,6 +100,14 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
   /** Leave the real parent — once parented, `scene.remove()` is a no-op. */
   function removeFromGraph(object: THREE.Object3D): void {
     object.parent?.remove(object);
+  }
+
+  /** Flag every mesh in the subtree as a shadow caster (idempotent). */
+  function markShadowCaster(object: THREE.Object3D): void {
+    object.traverse((child) => {
+      const mesh = child as THREE.Mesh;
+      if (mesh.isMesh === true) mesh.castShadow = true;
+    });
   }
 
   function mountLocal(dto: SceneObjectDTO): void {
@@ -157,10 +167,15 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       mountLocal(dto);
     }
 
+    const object = objects.get(dto.id);
+    if (!object) return;
+
+    // Casters are opt-in per mesh; the contact-shadow plane only sees these.
+    markShadowCaster(object);
+
     // Groups carry no surface of their own; their children keep their own DTOs.
     if (dto.material && dto.type !== "group") {
-      const object = objects.get(dto.id);
-      if (object) overrides.set(dto.id, applyMaterialOverride(object, dto.material));
+      overrides.set(dto.id, applyMaterialOverride(object, dto.material));
     }
   }
 
@@ -297,6 +312,15 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     },
     list(): THREE.Object3D[] {
       return [...objects.values()];
+    },
+    bounds(): THREE.Box3 {
+      const box = new THREE.Box3();
+      for (const object of objects.values()) {
+        // Roots only: `expandByObject` already walks descendants.
+        if (object.parent !== options.scene) continue;
+        box.expandByObject(object);
+      }
+      return box;
     },
     applyTransform(id: string, transform: Transform): boolean {
       const object = objects.get(id);

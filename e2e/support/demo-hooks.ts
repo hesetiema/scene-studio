@@ -83,11 +83,56 @@ export interface AssetsDemoHook {
   makeDoc: (assetId: string, sceneId?: string) => unknown;
 }
 
+export interface ViewerState {
+  src: string;
+  loading: string;
+  loaded: boolean;
+  clips: string[];
+  clipName: string | null;
+  autoplay: boolean;
+  playing: boolean;
+  crossfadeMs: number;
+  pauseAtEnd: boolean;
+  autoRotate: boolean;
+  rotationPerSecond: number;
+  limits: "free" | "horizontal" | "eye";
+  disabled: { pan: boolean; zoom: boolean; tap: boolean };
+  background: string | null;
+  gridVisible: boolean;
+  contactShadow: boolean;
+  cameraChanges: number;
+  environmentChanges: number;
+  modelVisible: boolean | null;
+  probeLoaded: boolean;
+}
+
+export interface ViewerDemoHook {
+  state: () => ViewerState;
+  actions: {
+    setModel: (id: "fox" | "helmet" | "truck") => void;
+    setLimits: (preset: "free" | "horizontal" | "eye") => void;
+    setLoading: (mode: "eager" | "lazy") => void;
+    toggle: (id: string, on: boolean) => void;
+    setTransparent: (on: boolean) => void;
+    setGrid: (on: boolean) => void;
+    setContactShadow: (on: boolean) => void;
+    setSpeed: (degreesPerSecond: number) => void;
+    setDelay: (ms: number) => void;
+    setClip: (name: string) => void;
+    setCrossfade: (ms: number) => void;
+    setToneMapping: (mode: string) => void;
+    setExposure: (value: number) => void;
+    resetCamera: () => void;
+    scrollToProbe: () => void;
+  };
+}
+
 declare global {
   interface Window {
     __demo: HostApiDemoHook;
     __docDemo: DocumentDemoHook;
     __coverage: { report: () => CoverageReport };
     __assets: AssetsDemoHook;
+    __viewerDemo: ViewerDemoHook;
   }
 }

@@ -1,6 +1,6 @@
 import type { SceneDocument } from "../core/document/schema";
 import { SCHEMA_VERSION } from "../core/document/schema";
-import { createDefaultViewState } from "../core/document/default-view";
+import { createPreviewViewState } from "../core/document/default-view";
 
 /** Asset id reserved for the `src` preview path. */
 export const SRC_ASSET_ID = "__src__";
@@ -33,7 +33,8 @@ export function createSrcDocument(url: string): SceneDocument {
         scale: [1, 1, 1],
       },
     ],
-    view: createDefaultViewState(),
+    // Viewer defaults, not editor defaults: no grid, 45° FOV, IBL-only lighting.
+    view: createPreviewViewState(),
   };
 }
 

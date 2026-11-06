@@ -6,6 +6,10 @@ import type {
 } from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
+  AnimationOptions,
+  AutoRotateOptions,
+  CameraControlsOptions,
+  EnvironmentPreset,
   RuntimeContract,
   RuntimeEventMap,
   ToneMappingMode,
@@ -31,6 +35,11 @@ export class FakeRuntime implements RuntimeContract {
     removeObject: [] as string[],
     reparent: [] as Array<{ id: string; parentId: string | undefined }>,
     setMaterial: [] as Array<{ id: string; material: MaterialDTO | undefined }>,
+    setCameraControls: [] as CameraControlsOptions[],
+    setAutoRotate: [] as Array<AutoRotateOptions | null>,
+    setAnimationOptions: [] as AnimationOptions[],
+    setEnvironmentPreset: [] as EnvironmentPreset[],
+    frameViewer: 0,
   };
   pickResult: string | null = null;
   /** When true, applyViewState re-emits view-change (contract-violation probe). */
@@ -112,6 +121,12 @@ export class FakeRuntime implements RuntimeContract {
     this.calls.autoFrame += 1;
   }
 
+  frameViewer(): void {
+    this.calls.frameViewer += 1;
+    // The viewer framing is an `autoFrame()` with model-viewer's FOV rule.
+    this.autoFrame();
+  }
+
   setToneMapping(mode: ToneMappingMode): void {
     this.calls.setToneMapping.push(mode);
   }
@@ -120,8 +135,29 @@ export class FakeRuntime implements RuntimeContract {
     this.calls.setExposure.push(value);
   }
 
+  setEnvironmentPreset(preset: EnvironmentPreset): void {
+    this.calls.setEnvironmentPreset.push(preset);
+  }
+
+  setCameraControls(options: CameraControlsOptions): void {
+    this.calls.setCameraControls.push(structuredClone(options));
+  }
+
+  setAutoRotate(options: AutoRotateOptions | null): void {
+    this.calls.setAutoRotate.push(options === null ? null : { ...options });
+  }
+
+  setAnimationOptions(options: AnimationOptions): void {
+    this.calls.setAnimationOptions.push({ ...options });
+  }
+
   get liveViewEvents(): boolean {
     return this.#liveViewEvents;
+  }
+
+  /** Test helper: pretend the camera moved (auto-rotate / damping sample). */
+  simulateCameraChange(camera: ViewState["camera"]): void {
+    this.events.emit("camera-change", structuredClone(camera));
   }
 
   /** Test helper: in-flight sample; a no-op unless live sampling is enabled. */

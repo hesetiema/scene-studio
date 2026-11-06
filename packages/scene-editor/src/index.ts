@@ -75,6 +75,7 @@ export { DisposerStack } from "./runtime/disposer-stack";
 export { SelectionManager } from "./runtime/selection-manager";
 export { TypedEventBus } from "./runtime/typed-event-bus";
 export type {
+  EnvironmentPreset,
   RuntimeContract,
   RuntimeEventBus,
   RuntimeEventMap,

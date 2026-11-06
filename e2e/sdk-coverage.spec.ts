@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import type { HostApiState } from "./support/demo-hooks";
+import type { HostApiState, ViewerState } from "./support/demo-hooks";
 
 /**
  * SDK full-coverage regression: one test per focused demo page under /demos.
@@ -24,12 +24,16 @@ test("demo hub lists every focused page", async ({ page }) => {
   const errors = watchErrors(page);
   await page.goto("/demos/");
   const links = page.locator(".demo-card");
-  await expect(links).toHaveCount(4);
+  await expect(links).toHaveCount(6);
+  // `compare.html` is listed but never visited: it pulls model-viewer from a CDN
+  // and exists for eyeball/promo comparison only.
   for (const href of [
     "/demos/host-api.html",
     "/demos/document.html",
     "/demos/headless.html",
     "/demos/assets.html",
+    "/demos/viewer.html",
+    "/demos/compare.html",
   ]) {
     await expect(page.locator(`a[href="${href}"]`)).toHaveCount(1);
   }
@@ -98,14 +102,13 @@ test("document demo — migrate, validate, reject, import", async ({ page }) => 
   await page.waitForFunction(() => document.body.dataset.demo === "ready");
 
   const migrate = await page.evaluate(() => window.__docDemo.run.migrate());
-  expect(migrate).toMatchObject({
-    ok: true,
-    schemaVersion: 3,
-    applied: [
-      { from: 1, to: 2 },
-      { from: 2, to: 3 },
-    ],
-  });
+  // Version-agnostic: the chain must be contiguous and end at the current schema
+  // version, so bumping SCHEMA_VERSION never re-breaks this assertion.
+  expect(migrate.ok).toBe(true);
+  const applied = migrate.applied ?? [];
+  expect(applied.length).toBeGreaterThanOrEqual(2);
+  expect(applied.map((step) => step.from)).toEqual(applied.map((_, index) => index + 1));
+  expect(applied[applied.length - 1]!.to).toBe(migrate.schemaVersion);
 
   expect(await page.evaluate(() => window.__docDemo.run.badHierarchy())).toMatchObject({
     ok: false,
@@ -121,7 +124,8 @@ test("document demo — migrate, validate, reject, import", async ({ page }) => 
   });
 
   const imported = await page.evaluate(() => window.__docDemo.run.importDoc());
-  expect(imported).toMatchObject({ ok: true, schemaVersion: 3, objectCount: 2 });
+  expect(imported).toMatchObject({ ok: true, objectCount: 2 });
+  expect(imported.schemaVersion).toBe(migrate.schemaVersion);
   await expect
     .poll(() => page.evaluate(() => window.__docDemo.state().loaded))
     .toBe(true);
@@ -140,6 +144,46 @@ test("headless demo — createSceneEditor + FakeRuntime passes every check", asy
   expect(report.checks.map((check) => check.name)).toContain(
     "applyRemote：本地脏 → 结构化冲突",
   );
+  expect(errors).toEqual([]);
+});
+
+test("viewer demo — model-viewer attribute parity end to end", async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto("/demos/viewer.html");
+  await page.waitForFunction(() => document.body.dataset.demo === "ready");
+
+  const state = (): Promise<ViewerState> => page.evaluate(() => window.__viewerDemo.state());
+  await expect.poll(async () => (await state()).loaded, { timeout: 20_000 }).toBe(true);
+
+  // autoplay + animation-name: the first clip starts without any host call.
+  const first = await state();
+  expect(first.clips.length).toBeGreaterThanOrEqual(2);
+  expect(first.clipName).toBe(first.clips[0]);
+  expect(first.playing).toBe(true);
+
+  // View-level switch: opaque background + a real environment-change event.
+  await page.evaluate(() => window.__viewerDemo.actions.setTransparent(false));
+  await expect.poll(async () => (await state()).background).toBe("#101624");
+  expect((await state()).environmentChanges).toBeGreaterThan(0);
+
+  // auto-rotate is a rAF loop: camera-change must keep arriving.
+  const before = (await state()).cameraChanges;
+  await page.evaluate(() => window.__viewerDemo.actions.toggle("auto-rotate", true));
+  await expect
+    .poll(async () => (await state()).cameraChanges, { timeout: 10_000 })
+    .toBeGreaterThan(before);
+  await page.evaluate(() => window.__viewerDemo.actions.toggle("auto-rotate", false));
+
+  // Camera policy attributes land on the orbit controls.
+  await page.evaluate(() => window.__viewerDemo.actions.setLimits("horizontal"));
+  await page.evaluate(() => window.__viewerDemo.actions.toggle("disable-zoom", true));
+  expect(await state()).toMatchObject({ limits: "horizontal", disabled: { zoom: true } });
+
+  // loading="lazy" on the off-screen probe stays idle until it intersects.
+  expect((await state()).probeLoaded).toBe(false);
+  await page.evaluate(() => window.__viewerDemo.actions.scrollToProbe());
+  await expect.poll(async () => (await state()).probeLoaded, { timeout: 20_000 }).toBe(true);
+
   expect(errors).toEqual([]);
 });
 

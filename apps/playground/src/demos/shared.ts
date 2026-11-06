@@ -2,8 +2,8 @@
  * Shared plumbing for the focused demos under `/demos/*.html`.
  *
  * Each demo page owns exactly one SDK surface (host API, document model,
- * headless facade, assets). This module only holds the boring parts: DOM
- * lookups, a log panel, the fixture document, and transform helpers.
+ * headless facade, assets, viewer parity). This module only holds the boring
+ * parts: DOM lookups, a log panel, the fixture document, and transform helpers.
  */
 import { SCHEMA_VERSION, type SceneDocument, type Transform } from "@scenio/scene-editor";
 

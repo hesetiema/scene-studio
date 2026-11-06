@@ -89,7 +89,7 @@ scripts/                 发布元数据校验与 npm pack 冒烟测试
 
 查看器架构刻意保持简单：一个 `ViewerStore` 向 `ViewerController.update*()` 分发，HUD 面板只修改状态。
 
-`/demos/` 下是聚焦单一 API 的 SDK 示例（宿主编辑 API、文档模型、headless facade、资产），由 `e2e/sdk-coverage.spec.ts` 覆盖；`minimal.html` 是最小端到端集成。
+`/demos/` 下是聚焦单一 API 的 SDK 示例（宿主编辑 API、文档模型、headless facade、资产、viewer 对标 model-viewer），由 `e2e/sdk-coverage.spec.ts` 覆盖；`minimal.html` 是最小端到端集成；`demos/compare.html` 把官方 `<model-viewer>`（CDN）与本 SDK 并排对照，需要外网，因此刻意不纳入测试。
 
 - `?scene=default` 加载确定性夹具 `box-1 / box-2 / gem-1`，e2e 依赖它。
 - `?model=<id>` 直接打开 Khronos 示例模型。

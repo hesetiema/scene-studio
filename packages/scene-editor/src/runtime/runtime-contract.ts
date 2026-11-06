@@ -18,6 +18,56 @@ export interface Transform {
  */
 export type ToneMappingMode = "none" | "linear" | "aces" | "agx" | "neutral";
 
+/**
+ * Built-in studio IBL used when the view does not name an HDR:
+ * `room` = three's warm `RoomEnvironment` (editor default),
+ * `neutral` = grayscale softbox studio matching model-viewer's `neutral`.
+ */
+export type EnvironmentPreset = "room" | "neutral";
+
+/**
+ * Orbit limits in model-viewer terms (`min-camera-orbit` / `max-camera-orbit`):
+ * `theta` = azimuth, `phi` = polar angle from +Y, both in **degrees**; `radius`
+ * is the orbit distance in world units. A missing axis stays unlimited.
+ */
+export interface CameraOrbitLimits {
+  theta?: readonly [number, number];
+  phi?: readonly [number, number];
+  radius?: readonly [number, number];
+}
+
+/** Pointer-verb switches, mirroring model-viewer's `disable-pan` / `disable-zoom`. */
+export interface CameraControlsOptions {
+  pan?: boolean;
+  zoom?: boolean;
+  limits?: CameraOrbitLimits;
+}
+
+/** model-viewer `auto-rotate` + `rotation-per-second` + `auto-rotate-delay`. */
+export interface AutoRotateOptions {
+  enabled: boolean;
+  /** Degrees per second (`rotation-per-second`, default 30). */
+  degreesPerSecond?: number;
+  /** Idle time after a gesture before rotation resumes (`auto-rotate-delay`, ms). */
+  delayMs?: number;
+}
+
+/**
+ * Playback knobs a viewer host owns (never part of the document): the same
+ * names model-viewer exposes as `autoplay` / `animation-name` /
+ * `animation-crossfade-duration` / `pause-at-end`.
+ */
+export interface AnimationOptions {
+  /** Play the first (or `clipName`) clip as soon as content mounts. */
+  autoplay?: boolean;
+  /** Clip to autoplay by name; `null`/missing = first clip. */
+  clipName?: string | null;
+  /** Crossfade between clips, in seconds (`0` = hard cut). */
+  crossfadeSeconds?: number;
+  /** One-shot playback that stops on the last frame instead of looping. */
+  pauseAtEnd?: boolean;
+}
+
 export type RuntimeEventMap = {
   "selection-change": { ids: string[] };
   "history-change": {
@@ -41,6 +91,13 @@ export type RuntimeEventMap = {
    * sampled). Runtimes that do not support it simply never emit.
    */
   "view-changing": { view: ViewState };
+  /**
+   * Camera pose sample, emitted whenever the camera actually moved — including
+   * auto-rotate, which has no gesture. Cheap (six numbers, once per rendered
+   * frame); the full {@link ViewState} sample stays opt-in on `view-changing`.
+   * Never emitted while `applyViewState` runs (that is not user motion).
+   */
+  "camera-change": ViewState["camera"];
   /**
    * Aggregate progress for the load in flight (0..1). Coarse by design: byte
    * progress is spread across the document's meshes, so it stays monotonic.
@@ -77,12 +134,55 @@ export interface RuntimeContract {
    * `view-change` only.
    */
   setLiveViewEvents?(enabled: boolean): void;
+  /**
+   * Pointer/limit policy for the orbit controls (model-viewer `disable-pan`,
+   * `disable-zoom`, `min/max-camera-orbit`). Optional: runtimes without user
+   * controls ignore it.
+   */
+  setCameraControls?(options: CameraControlsOptions): void;
+  /** Auto-rotation; `null` stops it. Optional for the same reason as above. */
+  setAutoRotate?(options: AutoRotateOptions | null): void;
+  /** Playback transport options (autoplay / crossfade / pause-at-end). */
+  setAnimationOptions?(options: AnimationOptions): void;
   /** Fit the camera to the current content bounds (preview / "reset view"). */
   autoFrame?(): void;
+  /**
+   * Viewer framing, model-viewer style: `field-of-view="auto"` (30° landscape,
+   * 45° portrait) plus `camera-orbit="auto auto auto"` (front, 15° elevation,
+   * 105% of the ideal fit). Editors keep `autoFrame()` — it respects the
+   * document's own FOV.
+   */
+  frameViewer?(): void;
+  /** World-space size of the mounted content (`0` per axis when empty). */
+  dimensions?(): { width: number; height: number; depth: number };
+  /**
+   * Canvas-local CSS-pixel projection of a world point; `visible: false` when it
+   * is behind the camera. Drives `slot="hotspot-*"` anchors.
+   */
+  projectPoint?(
+    point: readonly [number, number, number],
+  ): { x: number; y: number; visible: boolean };
+  /** World-space hit point + surface normal under a client coordinate. */
+  positionAndNormalFromPoint?(
+    clientX: number,
+    clientY: number,
+  ): { position: [number, number, number]; normal: [number, number, number] } | null;
+  /** Render, then capture the canvas as a data URL. */
+  toDataURL?(type?: string, quality?: number): string;
+  /** Render, then capture the canvas as a Blob. */
+  toBlob?(type?: string, quality?: number): Promise<Blob | null>;
+  /** Export the document objects as GLB (`binary` default) or `.gltf` JSON. */
+  exportScene?(options?: { binary?: boolean }): Promise<ArrayBuffer | string>;
   /** Display transfer function; presentation-only, never persisted. */
   setToneMapping?(mode: ToneMappingMode): void;
   /** Exposure multiplier applied on top of the tone mapping. */
   setExposure?(value: number): void;
+  /**
+   * Swap the built-in studio IBL (model-viewer's `environment-image` parity).
+   * Inert while the view supplies its own HDR; environments without a
+   * procedural probe simply ignore it.
+   */
+  setEnvironmentPreset?(preset: EnvironmentPreset): void;
 
   // --- Incremental editing (optional) ---------------------------------------
   // Whole-document runtimes omit these; the commands that need them raise a

@@ -54,6 +54,8 @@ prototype pollution, malformed JSON).
 | `demos/document.html` | `migrateSceneDocument` (v1→v2), `parseSceneDocument`, `validateHierarchy`, import into the editor |
 | `demos/headless.html` | `createSceneEditor` + `FakeRuntime`: document, history, selection, save, remote sync, keyboard map, plugins, teardown — no DOM/GPU |
 | `demos/assets.html` | `element.assetResolver` (allowlist trust boundary) + GLB instantiation, `AssetCache` refcounts, `asset-resolve-failed` / `asset-unsupported-format` / `asset-load-failed` codes |
+| `demos/viewer.html` | model-viewer parity: `src` preview, `loading="lazy"` (off-screen probe), `auto-rotate` / `rotation-per-second` / `auto-rotate-delay`, `min/max-camera-orbit`, `disable-pan/zoom/tap`, `autoplay` / `animation-name` / `animation-crossfade-duration` / `pause-at-end`, transparent canvas, `camera-change` / `environment-change` / `model-visibility` |
+| `demos/compare.html` | side-by-side with the official `<model-viewer>` (CDN): one toolbar drives both elements. **Not** e2e-covered — it needs network for the CDN bundle |
 
 ```bash
 pnpm --filter @scenio/playground dev
@@ -61,8 +63,8 @@ pnpm --filter @scenio/playground dev
 # http://127.0.0.1:3000/demos/host-api.html
 ```
 
-Each page exposes a `window.__demo` / `__docDemo` / `__coverage` / `__assets`
-hook so Playwright asserts behavior, not pixels.
+Each page exposes a `window.__demo` / `__docDemo` / `__coverage` / `__assets` /
+`__viewer` hook so Playwright asserts behavior, not pixels.
 
 WebGPU is still supported through the SDK's `rendererFactory` seam (see
 `packages/scene-editor/README.md`); the evaluation probe page was removed once

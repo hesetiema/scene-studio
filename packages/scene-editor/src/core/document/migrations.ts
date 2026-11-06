@@ -30,10 +30,33 @@ function v2ToV3(doc: RawDocument): RawDocument {
   return next;
 }
 
+/**
+ * v4 added `view.environment.hdr` / `.contactShadow` and the texture maps on
+ * `material`. All optional, so again the payload is untouched apart from the stamp.
+ */
+function v3ToV4(doc: RawDocument): RawDocument {
+  const next: RawDocument = { ...doc };
+  next.schemaVersion = 4;
+  return next;
+}
+
+/**
+ * v5 added `view.environment.skybox` (a backdrop independent of the IBL) and
+ * `contactShadow.softness`. Both optional — the pre-v5 PCF-soft shadow look is
+ * what "no softness" means — so again only the stamp changes.
+ */
+function v4ToV5(doc: RawDocument): RawDocument {
+  const next: RawDocument = { ...doc };
+  next.schemaVersion = 5;
+  return next;
+}
+
 /** Append-only; each entry must advance exactly one version (D7/D22). */
 export const migrations: readonly Migration[] = [
   { from: 1, to: 2, migrate: v1ToV2 },
   { from: 2, to: 3, migrate: v2ToV3 },
+  { from: 3, to: 4, migrate: v3ToV4 },
+  { from: 4, to: 5, migrate: v4ToV5 },
 ];
 
 export interface MigrationReport {

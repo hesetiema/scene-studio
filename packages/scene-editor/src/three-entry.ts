@@ -46,6 +46,11 @@ export {
   type EnvironmentView,
 } from "./three/viewer/environment-rig";
 export { createObjectStore, type ObjectStore, type ObjectStoreOptions } from "./three/viewer/object-store";
+export {
+  createContactShadowRig,
+  type ContactShadowRig,
+  type ContactShadowOptions,
+} from "./three/viewer/contact-shadow";
 export { createGizmoRig, type GizmoRig, type GizmoRigOptions, type GizmoControls } from "./three/viewer/gizmo-rig";
 export { createAnimationRig, type AnimationRig } from "./three/viewer/animation-rig";
 export { createRenderLoop, type RenderLoop, type RenderLoopOptions } from "./three/viewer/render-loop";

@@ -4,6 +4,13 @@ import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 export interface CreateRendererOptions {
   antialias?: boolean;
   maxPixelRatio?: number;
+  /**
+   * Transparent canvas (default `true`). With `alpha: true` three clears to
+   * alpha 0, so `scene.background === null` lets the page show through — the
+   * model-viewer default. Pass `false` for an opaque canvas (lower composition
+   * cost on low-end GPUs, but no transparent backgrounds).
+   */
+  alpha?: boolean;
 }
 
 /**
@@ -18,6 +25,7 @@ export function createRenderer(
     const renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: options.antialias ?? true,
+      alpha: options.alpha ?? true,
     });
     const cap = options.maxPixelRatio ?? 2;
     renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio ?? 1, cap));

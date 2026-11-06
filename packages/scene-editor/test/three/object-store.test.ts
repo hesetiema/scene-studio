@@ -317,3 +317,60 @@ describe("object store: incremental editing", () => {
     expect(original.color.getHexString()).toBe("4f8ef7");
   });
 });
+
+describe("object store: contact-shadow support", () => {
+  it("reports the world-space bounds of the mounted content", async () => {
+    const { store } = makeStore();
+    await store.load(
+      sceneDocument({
+        objects: [
+          sceneObject({
+            id: "prim",
+            type: "primitive",
+            geometry: { kind: "box" },
+            position: [10, 0, -4],
+          }),
+        ],
+      }),
+    );
+
+    const center = store.bounds().getCenter(new THREE.Vector3());
+    expect(center.x).toBeCloseTo(10);
+    expect(center.z).toBeCloseTo(-4);
+  });
+
+  it("returns an empty box when nothing is mounted", () => {
+    const { store } = makeStore();
+    expect(store.bounds().isEmpty()).toBe(true);
+  });
+
+  it("expands bounds through the hierarchy, not just the roots", async () => {
+    const { store } = makeStore();
+    await store.load(
+      sceneDocument({
+        objects: [
+          groupObject({ position: [0, 2, 0] }),
+          sceneObject({ id: "child", parentId: "grp", position: [0, 1, 0] }),
+        ],
+      }),
+    );
+
+    // The child's unit box sits at world y = 3, so its top is 3.5.
+    expect(store.bounds().max.y).toBeCloseTo(3.5);
+  });
+
+  it("flags mounted meshes as shadow casters", async () => {
+    const { store } = makeStore();
+    await store.load(
+      sceneDocument({
+        objects: [
+          sceneObject({ id: "prim", type: "primitive", geometry: { kind: "box" } }),
+          sceneObject({ id: "prim-2", type: "primitive", geometry: { kind: "sphere" } }),
+        ],
+      }),
+    );
+
+    expect((store.get("prim") as THREE.Mesh).castShadow).toBe(true);
+    expect((store.get("prim-2") as THREE.Mesh).castShadow).toBe(true);
+  });
+});
