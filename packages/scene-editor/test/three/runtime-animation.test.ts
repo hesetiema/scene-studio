@@ -5,7 +5,7 @@ import { createDefaultViewState } from "../../src/core/document/default-view";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import { AssetCache } from "../../src/assets/asset-cache";
 import type { RendererHandle } from "../../src/three/renderer-handle";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 
 function stubRenderer(): RendererHandle {
   return { render() {}, setSize() {}, setPixelRatio() {}, dispose() {} };
@@ -26,7 +26,7 @@ describe("ThreeRuntime animation surface", () => {
     });
 
     await runtime.loadDocument({
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
       view: createDefaultViewState(),
       sceneId: "s-anim",
       revision: 0,
@@ -67,7 +67,7 @@ describe("ThreeRuntime animation surface", () => {
     });
 
     const doc: SceneDocument = {
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
       view: createDefaultViewState(),
       sceneId: "s-anim",
       revision: 0,

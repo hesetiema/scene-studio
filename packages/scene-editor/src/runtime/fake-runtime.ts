@@ -1,4 +1,9 @@
-import type { SceneDocument, ViewState } from "../core/document/schema";
+import type {
+  MaterialDTO,
+  SceneDocument,
+  SceneObjectDTO,
+  ViewState,
+} from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
   RuntimeContract,
@@ -22,6 +27,10 @@ export class FakeRuntime implements RuntimeContract {
     autoFrame: 0,
     setToneMapping: [] as ToneMappingMode[],
     setExposure: [] as number[],
+    addObject: [] as SceneObjectDTO[],
+    removeObject: [] as string[],
+    reparent: [] as Array<{ id: string; parentId: string | undefined }>,
+    setMaterial: [] as Array<{ id: string; material: MaterialDTO | undefined }>,
   };
   pickResult: string | null = null;
   /** When true, applyViewState re-emits view-change (contract-violation probe). */
@@ -39,6 +48,25 @@ export class FakeRuntime implements RuntimeContract {
 
   applyTransform(id: string, transform: Transform): void {
     this.calls.applyTransform.push({ id, transform });
+  }
+
+  addObject(dto: SceneObjectDTO): void {
+    this.calls.addObject.push(structuredClone(dto));
+  }
+
+  removeObject(id: string): void {
+    this.calls.removeObject.push(id);
+  }
+
+  reparent(id: string, parentId: string | undefined): void {
+    this.calls.reparent.push({ id, parentId });
+  }
+
+  setMaterial(id: string, material: MaterialDTO | undefined): void {
+    this.calls.setMaterial.push({
+      id,
+      material: material === undefined ? undefined : structuredClone(material),
+    });
   }
 
   clearSelection(): void {

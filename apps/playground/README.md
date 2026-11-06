@@ -136,7 +136,9 @@ repository (`Models/<Name>/LICENSE.md`); `tri.glb` is a local test fixture.
   loaded scene stays "未修改".
 - **Export uses the document, not the viewport.** Objects are cloned with their stored
   transforms, so an exploded preview or an in-flight drag never leaks into the file.
-- **Lighting/material tweaks are previews too.** Preset selection persists through
-  `view.lights`; the per-light intensity/colour overrides and the selected-part material
-  override only go through `runtime.applyViewState()` / material snapshots. "主光跟随视角"
-  is a rAF head-light that skips re-rendering while the camera is still.
+- **Lighting tweaks are previews; material edits are not.** Preset selection persists through
+  `view.lights`; the per-light intensity/colour overrides only go through
+  `runtime.applyViewState()`. Material edits go through `editor.setMaterial()`, so they land in
+  the document and the undo stack — and a slider drag collapses into a single undo step
+  (`SetMaterialCommand.mergeWith`). "主光跟随视角" is a rAF head-light that skips re-rendering
+  while the camera is still.

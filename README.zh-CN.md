@@ -1,6 +1,6 @@
 # scene-studio
 
-可嵌入网页的 3D 场景编辑器 SDK。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布（`@scenio` 仍是占位 scope）。仓库当前版本为 `0.6.0`，也已是 npm 上的最新发布版本。
+可嵌入网页的 3D 场景编辑器 SDK。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布（`@scenio` 仍是占位 scope）。仓库当前版本为 `0.7.0`；npm 上最新发布版本为 `0.6.0`。
 
 **文档：** [English](README.md) · 简体中文（本页） · [包快速上手](packages/scene-editor/README.zh-CN.md) · [API 参考](packages/scene-editor/API.md)
 
@@ -10,7 +10,7 @@
 
 想自己控制 UI？`createSceneEditor()` 提供同一套编辑逻辑 —— 文档状态、历史、选择、插件、类型化事件 —— 且不依赖 DOM。渲染位于一个很小的 `RuntimeContract` 之后：单测可用 `FakeRuntime`，宿主可用 `ThreeRuntime` 或自定义 runtime。默认 WebGL2；WebGPU 通过文档化的 `rendererFactory` 接缝接入。
 
-**当前编辑范围：** 变换与视图状态。对象创建、删除、复制、改父子级、材质编辑、morph target、HDR 环境目前都不在文档 API 内。参见[状态与路线图](#状态与路线图)。
+**当前编辑范围：** 变换、视图状态、对象的增删与改父子级、程序化几何（`primitive`）与材质覆盖，全部可撤销。对象的复制、多对象变换、morph target、HDR 环境目前不在文档 API 内。参见[状态与路线图](#状态与路线图)。
 
 ## 快速开始
 
@@ -25,7 +25,7 @@
   await el.ready;
 
   await el.loadDocument({
-    schemaVersion: 2,
+    schemaVersion: 3,
     sceneId: "demo",
     revision: 0,
     objects: [
@@ -136,7 +136,11 @@ CI（`.github/workflows/ci.yml`）会跑 `three` 版本矩阵（固定 `0.186.0`
 
 ## 状态与路线图
 
-仓库内为 `0.6.0` alpha，已发布到 npm。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
+仓库内为 `0.7.0` alpha（尚未发布），npm `latest` 为 `0.6.0`。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
+
+`0.7.0` 把文档升到 schema v3：`parentId` 现在会建立真实的 three.js 父子关系（group 不再被丢弃），`type: "primitive"` 支持八种程序化几何，对象级 `material` 覆盖可持久化，`view.lights.additional` 接受 point/spot/directional/hemisphere 灯。v2 文档自动迁移；因为新字段全部可选，迁移后的载荷与原文逐字节等价。
+
+同一版本补齐了写操作：`addObject` / `removeObject` / `reparent` / `setMaterial` 都是可撤销命令，并复用加载文档时的同一套 `validateHierarchy`，因此重复 id、缺失父级、自指与成环在编辑时就被拒绝。
 
 `0.6.0` 补齐了预览主链路：`<scene-editor src>` 单行预览、自动取景、`progress`/`load` 生命周期事件、tone mapping / exposure 显示设置，以及 `visibility-change` 与按需开启的 `view-changing` 元素事件。
 
@@ -148,9 +152,8 @@ CI（`.github/workflows/ci.yml`）会跑 `three` 版本矩阵（固定 `0.186.0`
 
 成为通用场景编辑器之前仍缺：
 
-- 对象的创建、删除、复制与改父子级。
-- 材质编辑写入文档（playground 的材质面板目前只是预览）。
-- 多对象变换。
+- 对象的复制与多对象变换。
+- playground 的材质面板仍需改为走 `setMaterial`（目前在直接改运行时）。
 
 明确不做：CRDT/实时多人协作、插件面板槽位、按产品拆包。
 

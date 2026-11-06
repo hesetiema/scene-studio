@@ -6,7 +6,7 @@
  *
  * 覆盖的功能面：加载文档 → 点选 → gizmo 变换 → undo/redo → 脏标记 → host 保存回写。
  */
-import type { SceneDocument, Transform } from "@scenio/scene-editor";
+import { SCHEMA_VERSION, type SceneDocument, type Transform } from "@scenio/scene-editor";
 import { defineSceneEditor, type SceneEditorElement } from "@scenio/scene-editor/element";
 import type { ThreeRuntime, TransformMode } from "@scenio/scene-editor/three";
 
@@ -20,7 +20,7 @@ function log(line: string): void {
 
 /** 一份最小的合法文档：mesh 没有 assetId 时会渲染占位立方体（1×1×1）。 */
 const demoDocument: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "minimal-demo",
   revision: 1,
   objects: [

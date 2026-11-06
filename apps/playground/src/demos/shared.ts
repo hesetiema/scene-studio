@@ -5,7 +5,7 @@
  * headless facade, assets). This module only holds the boring parts: DOM
  * lookups, a log panel, the fixture document, and transform helpers.
  */
-import type { SceneDocument, Transform } from "@scenio/scene-editor";
+import { SCHEMA_VERSION, type SceneDocument, type Transform } from "@scenio/scene-editor";
 
 export function q<T extends Element>(selector: string): T {
   const el = document.querySelector<T>(selector);
@@ -43,7 +43,7 @@ export function createLog(target: Element = q("#log")): DemoLogger {
 
 /** Deterministic 3-box scene: enough objects for multi-select and batch demos. */
 export const demoDoc: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "sdk-demo",
   revision: 0,
   objects: [

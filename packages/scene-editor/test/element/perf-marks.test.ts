@@ -4,14 +4,14 @@ import { createDefaultViewState } from "../../src/core/document/default-view";
 import { SceneEditorElement } from "../../src/element/scene-editor-element";
 import { defineSceneEditor } from "../../src/element/register";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 
 beforeAll(() => {
   defineSceneEditor();
 });
 
 const doc: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   view: createDefaultViewState(),
   sceneId: "s1",
   revision: 0,

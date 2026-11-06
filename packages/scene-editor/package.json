@@ -1,6 +1,6 @@
 {
   "name": "@scenio/scene-editor",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Embeddable 3D scene editor SDK: document model, selection, transform gizmos, undo/redo, and host-driven save/conflict flows.",
   "type": "module",
   "license": "MIT",

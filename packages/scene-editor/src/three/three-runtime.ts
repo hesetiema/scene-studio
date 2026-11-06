@@ -1,5 +1,10 @@
 import * as THREE from "three";
-import type { SceneDocument, ViewState } from "../core/document/schema";
+import type {
+  MaterialDTO,
+  SceneDocument,
+  SceneObjectDTO,
+  ViewState,
+} from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
   RuntimeContract,
@@ -270,6 +275,40 @@ export class ThreeRuntime implements RuntimeContract {
 
   applyTransform(id: string, t: Transform): void {
     if (this.#objects.applyTransform(id, t)) this.#render();
+  }
+
+  /**
+   * Mount one object incrementally. Rejects when an asset cannot load — a single
+   * object has no meaningful "partial success", unlike a whole document.
+   */
+  async addObject(dto: SceneObjectDTO): Promise<void> {
+    await this.#objects.add(dto);
+    // New objects must be pickable immediately, and the gizmo may target them.
+    this.#picker.setTargets(this.#objects.list());
+    this.#syncGizmo();
+    this.#render();
+  }
+
+  removeObject(id: string): void {
+    // Detach the gizmo first: TransformControls must not keep a target that is
+    // about to leave the graph.
+    if (this.#selectedIds.includes(id)) {
+      this.#selectedIds = this.#selectedIds.filter((selected) => selected !== id);
+      this.#syncGizmo();
+    }
+    this.#objects.remove(id);
+    this.#picker.setTargets(this.#objects.list());
+    this.#render();
+  }
+
+  reparent(id: string, parentId: string | undefined): void {
+    this.#objects.reparent(id, parentId);
+    this.#render();
+  }
+
+  setMaterial(id: string, material: MaterialDTO | undefined): void {
+    this.#objects.setMaterial(id, material);
+    this.#render();
   }
 
   select(ids: string[]): void {

@@ -100,8 +100,11 @@ test("document demo — migrate, validate, reject, import", async ({ page }) => 
   const migrate = await page.evaluate(() => window.__docDemo.run.migrate());
   expect(migrate).toMatchObject({
     ok: true,
-    schemaVersion: 2,
-    applied: [{ from: 1, to: 2 }],
+    schemaVersion: 3,
+    applied: [
+      { from: 1, to: 2 },
+      { from: 2, to: 3 },
+    ],
   });
 
   expect(await page.evaluate(() => window.__docDemo.run.badHierarchy())).toMatchObject({
@@ -118,7 +121,7 @@ test("document demo — migrate, validate, reject, import", async ({ page }) => 
   });
 
   const imported = await page.evaluate(() => window.__docDemo.run.importDoc());
-  expect(imported).toMatchObject({ ok: true, schemaVersion: 2, objectCount: 2 });
+  expect(imported).toMatchObject({ ok: true, schemaVersion: 3, objectCount: 2 });
   await expect
     .poll(() => page.evaluate(() => window.__docDemo.state().loaded))
     .toBe(true);

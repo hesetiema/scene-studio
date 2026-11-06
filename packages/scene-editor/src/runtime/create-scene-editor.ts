@@ -1,5 +1,10 @@
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
-import type { SceneDocument, ViewState } from "../core/document/schema";
+import type {
+  MaterialDTO,
+  SceneDocument,
+  SceneObjectDTO,
+  ViewState,
+} from "../core/document/schema";
 import { EditorController } from "./editor-controller";
 import type { Command } from "../core/history/command-history";
 import { PluginHost, type PluginHostEditor } from "./plugin-host";
@@ -92,6 +97,16 @@ export interface SceneEditor {
   clearSelection(): void;
 
   applyTransform(id: string, from: Transform, to: Transform): void;
+
+  /**
+   * Object commands. `add`/`remove` above are *selection* helpers — these edit
+   * the scene graph and the document, and join the undo stack.
+   */
+  addObject(dto: SceneObjectDTO): Promise<void>;
+  removeObject(id: string): void;
+  reparent(id: string, parentId: string | undefined): void;
+  setMaterial(id: string, material: MaterialDTO | undefined): void;
+
   /** First-class entry for host-defined undoable actions (compare: PC history.add). */
   executeCommand(command: Command): void;
   undo(): boolean;
@@ -238,6 +253,31 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
   applyTransform(id: string, from: Transform, to: Transform): void {
     this.#assertLive();
     this.#controller.applyTransform(id, from, to);
+  }
+
+  async addObject(dto: SceneObjectDTO): Promise<void> {
+    this.#assertLive();
+    try {
+      await this.#controller.addObject(dto);
+    } catch (err) {
+      this.#emitError(err);
+      throw err;
+    }
+  }
+
+  removeObject(id: string): void {
+    this.#assertLive();
+    this.#controller.removeObject(id);
+  }
+
+  reparent(id: string, parentId: string | undefined): void {
+    this.#assertLive();
+    this.#controller.reparent(id, parentId);
+  }
+
+  setMaterial(id: string, material: MaterialDTO | undefined): void {
+    this.#assertLive();
+    this.#controller.setMaterial(id, material);
   }
 
   executeCommand(command: Command): void {

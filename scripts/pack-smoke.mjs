@@ -32,9 +32,13 @@ const pkg = JSON.parse(readFileSync(join(pkgDir, "package.json"), "utf8"));
 const threeFloor = (pkg.peerDependencies?.three ?? "").replace(/^[\^~]/, "");
 if (!threeFloor) throw new Error("peerDependencies.three missing");
 
-/** Schema v2 document literal (D22) — inlined so the smoke stays dependency-free. */
-const V2_SMOKE_DOC = JSON.stringify({
-  schemaVersion: 2,
+/**
+ * Document literal emitted into the consumer smoke — inlined so the smoke stays
+ * dependency-free, but stamped with the package's own `SCHEMA_VERSION` so a
+ * schema bump cannot leave a stale literal behind.
+ */
+const SMOKE_DOC = `{
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "t",
   revision: 0,
   objects: [],
@@ -46,7 +50,7 @@ const V2_SMOKE_DOC = JSON.stringify({
     },
     environment: { background: null, gridVisible: true },
   },
-});
+}`;
 
 step(`build ${pkg.name}@${pkg.version} (three floor ${threeFloor})`);
 run("pnpm", ["--filter", pkg.name, "build"], root);
@@ -106,10 +110,12 @@ writeFileSync(
     join(consumer, "smoke-node.mjs"),
     [
       `import assert from "node:assert/strict";`,
-      `import { SCENE_EDITOR_VERSION, SceneDocumentSchema, FakeRuntime, AssetCache, createResolverAssetLoader } from "@scenio/scene-editor";`,
+      `import { SCENE_EDITOR_VERSION, SCHEMA_VERSION, SceneDocumentSchema, parseSceneDocument, FakeRuntime, AssetCache, createResolverAssetLoader } from "@scenio/scene-editor";`,
       `import { ThreeRuntime, createRenderer } from "@scenio/scene-editor/three";`,
       `assert.equal(SCENE_EDITOR_VERSION, ${JSON.stringify(pkg.version)});`,
-      `assert.equal(typeof SceneDocumentSchema.parse(${V2_SMOKE_DOC}).sceneId, "string");`,
+      `const doc = ${SMOKE_DOC};`,
+      `assert.equal(typeof SceneDocumentSchema.parse(doc).sceneId, "string");`,
+      `assert.equal(parseSceneDocument({ ...doc, schemaVersion: 2 }).schemaVersion, SCHEMA_VERSION);`,
       `assert.throws(() => SceneDocumentSchema.parse({ schemaVersion: 1 }));`,
       `assert.equal(typeof FakeRuntime, "function");`,
       `assert.equal(typeof AssetCache, "function");`,
@@ -145,10 +151,10 @@ writeFileSync(
   writeFileSync(
     join(consumer, "smoke.ts"),
     [
-      `import { SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@scenio/scene-editor";`,
+      `import { SCHEMA_VERSION, SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@scenio/scene-editor";`,
       `import { ThreeRuntime, type ThreeRuntimeOptions } from "@scenio/scene-editor/three";`,
       `import { defineSceneEditor, SceneEditorElement } from "@scenio/scene-editor/element";`,
-      `const doc = SceneDocumentSchema.parse(${V2_SMOKE_DOC}) satisfies SceneDocument;`,
+      `const doc = SceneDocumentSchema.parse(${SMOKE_DOC}) satisfies SceneDocument;`,
       `const _opts: Partial<ThreeRuntimeOptions> = { enableControls: false };`,
       `const _rt: typeof ThreeRuntime = ThreeRuntime;`,
       `const _el: typeof SceneEditorElement = SceneEditorElement;`,

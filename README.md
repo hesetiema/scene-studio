@@ -1,6 +1,6 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder. This repo tracks `0.6.0`, which is also the latest published version.
+Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder. This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
 
 **Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
 
@@ -10,7 +10,7 @@ Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`
 
 Prefer your own UI? `createSceneEditor()` exposes the same editing logic — document state, history, selection, plugins, typed events — with zero DOM. Rendering sits behind a small `RuntimeContract`, so unit tests can use `FakeRuntime` and hosts can use `ThreeRuntime` or a custom runtime. WebGL2 is the default; WebGPU is available through the documented `rendererFactory` seam.
 
-**Current editing scope:** transforms and view state. Creating, deleting, duplicating or reparenting objects, material editing, morph targets and HDR environments are not part of the document API yet. See [Status and roadmap](#status-and-roadmap).
+**Current editing scope:** transforms, view state, object create/delete/reparent, procedural geometry (`primitive`) and material overrides — all undoable. Object duplication, multi-object transform, morph targets and HDR environments are not part of the document API yet. See [Status and roadmap](#status-and-roadmap).
 
 ## Quick start
 
@@ -25,7 +25,7 @@ Prefer your own UI? `createSceneEditor()` exposes the same editing logic — doc
   await el.ready;
 
   await el.loadDocument({
-    schemaVersion: 2,
+    schemaVersion: 3,
     sceneId: "demo",
     revision: 0,
     objects: [
@@ -136,7 +136,11 @@ CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.
 
 ## Status and roadmap
 
-`0.6.0` alpha, published to npm. `0.4.0` / `0.5.0` were never released on their own; `0.6.0` supersedes them. The API may still shift before `1.0.0`; after that, semver applies.
+`0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still shift before `1.0.0`; after that, semver applies.
+
+`0.7.0` raised the document to schema v3: `parentId` now builds real three.js parenting (groups are mounted instead of dropped), `type: "primitive"` renders eight procedural geometry kinds, per-object `material` overrides are persisted, and `view.lights.additional` accepts point/spot/directional/hemisphere lights. v2 documents migrate automatically; the payload stays byte-identical because every new field is optional.
+
+The same release added the write side: `addObject` / `removeObject` / `reparent` / `setMaterial` are undoable commands, validated through the same `validateHierarchy` a loaded document obeys, so duplicate ids, missing parents, self-parenting and cycles are rejected at edit time.
 
 `0.6.0` added a one-line glTF preview path (`<scene-editor src>`) with auto-framing, `progress`/`load` lifecycle events, and display settings (tone mapping / exposure), plus the `visibility-change` and opt-in `view-changing` element events.
 
@@ -148,9 +152,8 @@ Planned next steps ([TODOS.md](TODOS.md)):
 
 Known gaps before this is a general-purpose scene editor:
 
-- Object creation, deletion, duplication and reparenting.
-- Material edits persisted in the document (the playground material panel is preview-only).
-- Multi-object transform.
+- Object duplication and multi-object transform.
+- The playground material panel still edits the runtime directly instead of going through `setMaterial`.
 
 Explicitly not planned: CRDT/real-time collaboration, plugin panel slots, and splitting the package per product.
 

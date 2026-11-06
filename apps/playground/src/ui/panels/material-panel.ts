@@ -73,7 +73,9 @@ export class MaterialPanel extends BasePanel {
     const hint = document.querySelector("#material-hint");
     if (!hint) return;
     hint.textContent =
-      count > 0 ? `已选中 ${count} 个网格，调整立即生效` : "未选中部件：先在视口中点击模型";
+      count > 0
+        ? `已选中 ${count} 个网格，调整写入文档（Ctrl+Z 可撤销）`
+        : "未选中部件：先在视口中点击模型";
     hint.classList.toggle("muted", count === 0);
   }
 

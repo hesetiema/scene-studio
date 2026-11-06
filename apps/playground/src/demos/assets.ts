@@ -10,6 +10,7 @@
 import * as THREE from "three";
 import {
   AssetCache,
+  SCHEMA_VERSION,
   SUPPORTED_ASSET_FORMATS,
   type SceneDocument,
 } from "@scenio/scene-editor";
@@ -66,7 +67,7 @@ const KNOWN_ASSETS: Record<string, string> = {
 
 function assetDoc(assetId: string, sceneId = `asset-${assetId}`): SceneDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     sceneId,
     revision: 0,
     objects: [

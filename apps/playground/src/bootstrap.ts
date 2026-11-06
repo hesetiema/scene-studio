@@ -1,4 +1,4 @@
-﻿import { DEFAULT_VIEW_STATE, type SceneDocument } from "@scenio/scene-editor";
+﻿import { DEFAULT_VIEW_STATE, SCHEMA_VERSION, type SceneDocument } from "@scenio/scene-editor";
 
 /**
  * Default camera baseline. Khronos sample assets are normalized on load
@@ -16,7 +16,7 @@ export const showcaseDoc: SceneDocument = createSingleModelDoc("damaged-helmet",
  * sample, so a first visit costs no model download.
  */
 export const emptyDoc: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "scene-empty",
   revision: 0,
   view: {
@@ -38,7 +38,7 @@ export const emptyDoc: SceneDocument = {
 
 /** Default multi-mesh assembly document (for tests and comparative view) */
 export const defaultMultiDoc: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   sceneId: "assembly",
   revision: 0,
   view: {
@@ -90,7 +90,7 @@ export const defaultMultiDoc: SceneDocument = {
 /** Create a single-model preset SceneDocument. */
 export function createSingleModelDoc(assetId: string, modelTitle: string): SceneDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     sceneId: `scene-${assetId}`,
     revision: 0,
     view: {

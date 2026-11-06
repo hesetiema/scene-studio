@@ -128,3 +128,120 @@ describe("SceneDocumentSchema", () => {
     expect(SceneDocumentSchema.safeParse({ ...validDoc, schemaVersion: 1 }).success).toBe(false);
   });
 });
+
+describe("SceneDocumentSchema v3: primitives", () => {
+  const primitive = {
+    ...validObject,
+    id: "prim-1",
+    type: "primitive" as const,
+    geometry: { kind: "sphere" as const, radius: 2 },
+  };
+
+  it("accepts a primitive with geometry", () => {
+    const result = SceneDocumentSchema.safeParse({ ...validDoc, objects: [primitive] });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a primitive without geometry", () => {
+    const { geometry: _geometry, ...withoutGeometry } = primitive;
+    const result = SceneDocumentSchema.safeParse({ ...validDoc, objects: [withoutGeometry] });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects geometry on a mesh", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...validObject, geometry: { kind: "box" } }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects assetId on a primitive", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...primitive, assetId: "asset-1" }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects an unknown geometry kind", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...primitive, geometry: { kind: "dodecahedron" } }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown geometry parameters (strict)", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...primitive, geometry: { kind: "sphere", radious: 2 } }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects non-positive geometry sizes", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...primitive, geometry: { kind: "sphere", radius: 0 } }],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("SceneDocumentSchema v3: material", () => {
+  it("accepts a partial material override", () => {
+    const result = SceneDocumentSchema.safeParse({
+      ...validDoc,
+      objects: [{ ...validObject, material: { color: "#ff8800", metalness: 0.8 } }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects out-of-range roughness / opacity", () => {
+    for (const material of [{ roughness: 2 }, { opacity: -0.1 }]) {
+      const result = SceneDocumentSchema.safeParse({
+        ...validDoc,
+        objects: [{ ...validObject, material }],
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+
+  it("rejects named colours and unknown material keys", () => {
+    for (const material of [{ color: "red" }, { albedo: "#ffffff" }]) {
+      const result = SceneDocumentSchema.safeParse({
+        ...validDoc,
+        objects: [{ ...validObject, material }],
+      });
+      expect(result.success).toBe(false);
+    }
+  });
+});
+
+describe("ViewStateSchema v3: additional lights", () => {
+  it("keeps the two fixed light slots optional-free", () => {
+    const view = createDefaultViewState();
+    expect(ViewStateSchema.safeParse(view).success).toBe(true);
+    expect(view.lights.additional).toBeUndefined();
+  });
+
+  it("accepts extra lights", () => {
+    const view = createDefaultViewState();
+    view.lights.additional = [
+      { kind: "point", color: "#ffffff", intensity: 2, position: [1, 2, 3] },
+      { kind: "hemisphere", skyColor: "#ffffff", groundColor: "#222222", intensity: 0.5 },
+    ];
+    expect(ViewStateSchema.safeParse(view).success).toBe(true);
+  });
+
+  it("rejects unknown light kinds and missing positions", () => {
+    const view = createDefaultViewState();
+    view.lights.additional = [{ kind: "laser", color: "#ffffff", intensity: 1 }] as never;
+    expect(ViewStateSchema.safeParse(view).success).toBe(false);
+
+    const missing = createDefaultViewState();
+    missing.lights.additional = [{ kind: "point", color: "#ffffff", intensity: 1 }] as never;
+    expect(ViewStateSchema.safeParse(missing).success).toBe(false);
+  });
+});

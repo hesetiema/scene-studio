@@ -4,7 +4,12 @@ import type {
   ToneMappingMode,
   Transform,
 } from "../runtime/runtime-contract";
-import type { SceneDocument, ViewState } from "../core/document/schema";
+import type {
+  MaterialDTO,
+  SceneDocument,
+  SceneObjectDTO,
+  ViewState,
+} from "../core/document/schema";
 import { ThreeRuntime } from "../three/three-runtime";
 import type { SceneEditorPlugin } from "../plugins/plugin";
 import type { AssetResolver } from "../assets/resolver-asset-loader";
@@ -334,6 +339,22 @@ export class SceneEditorElement extends HTMLElement {
 
   applyTransform(id: string, from: Transform, to: Transform): void {
     this.#requireEditor().applyTransform(id, from, to);
+  }
+
+  addObject(dto: SceneObjectDTO): Promise<void> {
+    return this.#requireEditor().addObject(dto);
+  }
+
+  removeObject(id: string): void {
+    this.#requireEditor().removeObject(id);
+  }
+
+  reparent(id: string, parentId: string | undefined): void {
+    this.#requireEditor().reparent(id, parentId);
+  }
+
+  setMaterial(id: string, material: MaterialDTO | undefined): void {
+    this.#requireEditor().setMaterial(id, material);
   }
 
   undo(): void {

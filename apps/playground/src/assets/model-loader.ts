@@ -1,4 +1,4 @@
-﻿import { DEFAULT_VIEW_STATE, type SceneDocument, type AssetLoader, createUniversalAssetLoader, inspectModel } from "@scenio/scene-editor";
+﻿import { DEFAULT_VIEW_STATE, SCHEMA_VERSION, type SceneDocument, type AssetLoader, createUniversalAssetLoader, inspectModel } from "@scenio/scene-editor";
 import { AssetCache } from "@scenio/scene-editor";
 import * as THREE from "three";
 import { createSingleModelDoc, showcaseDoc } from "../bootstrap";
@@ -134,7 +134,7 @@ export class ModelLoader {
     const cleanExt = filename.split(".").pop()?.toLowerCase() || "glb";
 
     const newDoc: SceneDocument = {
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
       sceneId: `scene-${Date.now()}`,
       revision: 0,
       view: {

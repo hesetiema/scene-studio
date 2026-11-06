@@ -4,10 +4,10 @@ import { createConflictError } from "../../src/core/events/conflict";
 import { SceneEditorError, SceneErrorCode } from "../../src/core/events/errors";
 import { EditorController } from "../../src/runtime/editor-controller";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 
 const base: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   view: createDefaultViewState(),
   sceneId: "s1",
   revision: 3,

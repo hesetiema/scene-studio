@@ -4,7 +4,7 @@ import { createDefaultViewState } from "../../src/core/document/default-view";
 import * as THREE from "three";
 import { ThreeRuntime } from "../../src/three/three-runtime";
 import type { RendererHandle } from "../../src/three/renderer-handle";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 import { AssetCache } from "../../src/assets/asset-cache";
 
 function stubRenderer(): RendererHandle & { disposed: boolean; renders: number } {
@@ -24,7 +24,7 @@ function stubRenderer(): RendererHandle & { disposed: boolean; renders: number }
 
 function makeDoc(): SceneDocument {
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     view: createDefaultViewState(),
     sceneId: "s1",
     revision: 0,
@@ -230,7 +230,7 @@ describe("ThreeRuntime", () => {
       assetCache: new AssetCache(async () => ({ scene: group })),
     });
     await runtime.loadDocument({
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
       view: createDefaultViewState(),
       sceneId: "s-pick",
       revision: 0,

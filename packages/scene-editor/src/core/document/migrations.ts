@@ -18,8 +18,23 @@ function v1ToV2(doc: RawDocument): RawDocument {
   return next;
 }
 
+/**
+ * v3 widened the document instead of reshaping it: `primitive` + `geometry` +
+ * `material` on objects, `view.lights.additional` on the view. Both are
+ * optional, so a v2 document is already structurally valid v3 — the step only
+ * stamps the version.
+ */
+function v2ToV3(doc: RawDocument): RawDocument {
+  const next: RawDocument = { ...doc };
+  next.schemaVersion = 3;
+  return next;
+}
+
 /** Append-only; each entry must advance exactly one version (D7/D22). */
-export const migrations: readonly Migration[] = [{ from: 1, to: 2, migrate: v1ToV2 }];
+export const migrations: readonly Migration[] = [
+  { from: 1, to: 2, migrate: v1ToV2 },
+  { from: 2, to: 3, migrate: v2ToV3 },
+];
 
 export interface MigrationReport {
   from: number;

@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.6.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
+Version: `0.7.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
 
 Docs: [English README](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.md)
 
@@ -30,6 +30,10 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `toggle` | `(id: string) => void` | Flip membership |
 | `clearSelection` | `() => void` | |
 | `applyTransform` | `(id, from, to) => void` | One undoable command |
+| `addObject` | `(dto) => Promise<void>` | Mounts, then appends to the document. Rejects on duplicate id / missing parent / invalid DTO; the document is never given an object whose asset failed |
+| `removeObject` | `(id) => void` | Removes the object **and its subtree**, children first. One undo step; undo restores the original array order |
+| `reparent` | `(id, parentId) => void` | `undefined` = scene root. Rejects missing parents, self-parenting and cycles |
+| `setMaterial` | `(id, material \| undefined) => void` | Sets or clears the override; `undefined` restores what the asset shipped with |
 | `executeCommand` | `(command: Command) => void` | **First-class entry** for host-defined undoable actions (compare PlayCanvas `history.add`) |
 | `undo` / `redo` | `() => boolean` | Whether an action ran |
 | `requestSave` | `() => void` | Emits `save-request` with `{ reason: "manual", document, revision }` |
@@ -37,6 +41,11 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `setViewState` | `(view: ViewState) => void` | Record + apply a view; marks dirty, never undoable |
 | `on(type, handler)` | returns `() => void` | Typed subscription; call the returned function to unsubscribe |
 | `use` / `unuse` | `(plugin) => void` / `(id: string) => void` | Same `install(context)` contract as the element; duplicate id throws |
+
+`Command` is `{ label, execute(), undo(), mergeWith?(next): boolean }`. `mergeWith` lets the
+top command absorb a later one instead of spending an undo step: `setMaterial` uses it so a
+slider drag becomes one undo whose `from` is the value before the gesture. Returning `true`
+means "absorbed" — the absorbed command's effect stays, its history entry does not.
 | `handleKeyDown` | `(event: KeyboardLike) => boolean` | Pure key mapping (Ctrl/Cmd+Z undo, +Shift/Z or Y redo, reserved G/R/S). Returns `true` when consumed. Focus-domain policy stays with the DOM owner |
 | getters | `canUndo` `canRedo` `dirty` `revision` `selectedIds` `runtime` | |
 | `destroy` | `() => void` | Idempotent: tears down plugins, flushes controller + runtime disposers, clears handlers. Later calls throw `lifecycle` |
@@ -58,16 +67,19 @@ Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping f
 
 | Export | Kind | Description |
 |---|---|---|
-| `SceneDocumentSchema` | `z.ZodType<SceneDocument>` | Strict object: `schemaVersion` (literal 2), `sceneId`, `revision`, `objects[]`, `view` |
-| `ViewStateSchema` | `z.ZodType<ViewState>` | Strict `view` section: `camera`, `lights`, `environment` |
-| `SceneObjectSchema` | `z.ZodType<SceneObjectDTO>` | Strict object: `id`, `type` (`"mesh" \| "group"`), `name`, optional `assetId` / `parentId` / `metadata`, required `position` / `rotation` / `scale` tuples |
-| `SceneDocument`, `ViewState` | type | Infer of document / view-state schema |
+| `SceneDocumentSchema` | `z.ZodType<SceneDocument>` | Strict object: `schemaVersion` (literal 3), `sceneId`, `revision`, `objects[]`, `view` |
+| `ViewStateSchema` | `z.ZodType<ViewState>` | Strict `view` section: `camera`, `lights` (fixed `ambient` + `directional`, optional `additional` array), `environment` |
+| `SceneObjectSchema` | `z.ZodType<SceneObjectDTO>` | Strict object: `id`, `type` (`"mesh" \| "group" \| "primitive"`), `name`, optional `assetId` / `parentId` / `geometry` / `material` / `metadata`, required `position` / `rotation` / `scale` tuples. Cross-field refines: `primitive` requires `geometry`, forbids `assetId`; `geometry` is invalid on non-primitives |
+| `PrimitiveGeometrySchema` | `z.discriminatedUnion` | `kind`: `box` \| `sphere` \| `cylinder` \| `cone` \| `torus` \| `plane` \| `capsule` \| `icosahedron`. Every size/segment parameter is optional; the three factory applies its documented default |
+| `MaterialSchema` | `z.ZodType<MaterialDTO>` | Strict: optional `color`, `roughness`, `metalness`, `emissive`, `emissiveIntensity`, `opacity`, `flatShading`, `wireframe`. `opacity < 1` implies `transparent` |
+| `AdditionalLightSchema` | `z.discriminatedUnion` | `kind`: `directional` \| `point` \| `spot` \| `hemisphere`; used by `view.lights.additional` |
+| `SceneDocument`, `SceneObjectDTO`, `SceneObjectType`, `ViewState`, `PrimitiveGeometry`, `MaterialDTO`, `AdditionalLightDTO` | type | Inferred from the schemas above |
 | `Vec3` / `EulerXYZ` | type | `readonly [number, number, number]`; rotation is Euler XYZ in **radians** |
 
 | Function | Signature | Description |
 |---|---|---|
 | `parseSceneDocument` | `(input: unknown, opts?: ParseSceneDocumentOptions) => SceneDocument` | Migrations run first, then zod parse; throws `SceneEditorError("validation")` on invalid input |
-| `migrateSceneDocument` | `(doc: unknown) => MigrationResult` | Generic migration registry: upgrades v1 → v2, reports `applied` |
+| `migrateSceneDocument` | `(doc: unknown) => MigrationResult` | Generic migration registry: walks v1 → v2 → v3, reports every `applied` step. v3 only added optional fields, so a v2 payload survives unchanged |
 | `createDefaultViewState` | `() => ViewState` | Engine-default `view` |
 | `validateHierarchy` | `(doc: SceneDocument) => void` | Parent references must resolve; throws `SceneEditorError("validation")` |
 
@@ -90,6 +102,15 @@ The only seam between Core/Element and any concrete runtime.
 interface RuntimeContract {
   loadDocument(doc: SceneDocument): Promise<void>;
   applyTransform(id: string, t: Transform): void;
+
+  // Incremental editing (optional). A runtime that omits these still loads whole
+  // documents, but the object commands throw `lifecycle` rather than editing the
+  // document without a visible effect.
+  addObject?(dto: SceneObjectDTO): void | Promise<void>;
+  removeObject?(id: string): void;
+  reparent?(id: string, parentId: string | undefined): void;
+  setMaterial?(id: string, material: MaterialDTO | undefined): void;
+
   select(ids: string[]): void;
   clearSelection(): void;
   pick(clientX: number, clientY: number): string | null;
@@ -154,6 +175,7 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `loadDocument` | `(input: unknown) => Promise<void>` | Parse + hand to runtime; clears history & selection. Serialized — call order decides the final document |
 | `getDocument` | `() => SceneDocument` | Deep clone snapshot; throws `lifecycle` if nothing loaded |
 | `applyTransform` | `(id, from, to) => void` | One undoable command updating runtime + stored doc |
+| `addObject` / `removeObject` / `reparent` / `setMaterial` | as named | Object-graph commands. `addObject` is async (asset load) and validates through `SceneObjectSchema` + `validateHierarchy`; the rest are synchronous and go through the same hierarchy rules |
 | `applyRemote` | `(input, { baseRevision }) => Promise<void>` | Fast-forward only if clean and `revision === baseRevision + 1`; otherwise throws structured `conflict` (never auto-merges) |
 | `executeCommand` / `undo` / `redo` / `markClean` / `markSaved` | as named | `markSaved(serverRevision)` adopts server revision and clears dirty |
 | `select` / `clearSelection` | `(ids) => void` / `() => void` | |
@@ -232,6 +254,8 @@ The shortest path from a glTF URL to a rendered model:
 | `select(ids)` | method | Set the selection to exactly `ids` (multi-select) |
 | `addToSelection(ids)` / `removeFromSelection(ids)` / `toggleSelection(id)` | method | Compose the current selection (parity with the facade's `add` / `remove` / `toggle`) |
 | `applyTransform(id, from, to)` | method | One undoable command |
+| `addObject(dto)` | method | Async; resolves after the object is mounted and recorded |
+| `removeObject(id)` / `reparent(id, parentId)` / `setMaterial(id, material)` | method | Undoable object-graph edits (see the facade table above) |
 | `applyRemote(input, { baseRevision })` | method | Inbound remote update: fast-forward or throw structured `conflict` |
 | `executeCommand(cmd)` | method | Escape hatch for custom `Command`s |
 | `undo()` / `redo()` | method | Also bound to keyboard (see `CAPTURED_COMBOS`) |
@@ -385,6 +409,16 @@ runtime.playAnimation("obj-1", 0);
 |---|---|
 | `createPicker(options)` | Raycast helper. `setTargets(objects)`, `pick(clientX, clientY) => id \| null` |
 | `Picker` / `PickerOptions` / `RaycastHit` | Types; `PickerOptions.raycast` injects a stub for tests |
+
+### Object factory
+
+| Export | Description |
+|---|---|
+| `createPrimitiveGeometry(geometry)` | Document `PrimitiveGeometry` → `THREE.BufferGeometry`; documented defaults fill every omitted parameter |
+| `createPrimitiveObject(dto)` | `PlaceholderObject` (`{ object, dispose }`) for a `primitive` DTO; material override applied |
+| `applyMaterialFields(material, dto)` | Writes only the declared fields; derives `transparent` / `depthWrite` from `opacity`; unsupported parameters (e.g. `metalness` on an unlit material) are skipped |
+| `applyMaterialOverride(object, dto)` | Walks a subtree, **clones** each mesh material before writing, returns the clones for the caller to dispose. Cloning is required: `Object3D.clone()` shares materials with the cached asset |
+| `PlaceholderObject` | type: `{ object: THREE.Mesh; dispose: () => void }` |
 
 ### Example plugin
 

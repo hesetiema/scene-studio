@@ -2,6 +2,16 @@ export interface Command {
   readonly label: string;
   execute(): void;
   undo(): void;
+  /**
+   * Absorb `next` into this command (already executed) instead of pushing it.
+   *
+   * This is what keeps a material slider drag from spending 40 undo steps on one
+   * gesture: each tick is a real command, but consecutive writes to the same
+   * object collapse into the first one, which keeps its original `from`.
+   *
+   * Return `true` when `next` was absorbed.
+   */
+  mergeWith?(next: Command): boolean;
 }
 
 export interface HistoryState {
@@ -47,7 +57,19 @@ export class CommandHistory {
     if (this.#cleanIndex > this.#undoStack.length) {
       this.#cleanIndex = -1;
     }
+
+    // Apply first: a merge still has to reach the runtime and the document.
     command.execute();
+
+    const top = this.#undoStack[this.#undoStack.length - 1];
+    if (top !== undefined && top !== command && top.mergeWith?.(command) === true) {
+      // The absorbed command is now redundant — the top command owns both ends.
+      this.#redoStack = [];
+      this.#lastCommand = command.label;
+      this.#notify();
+      return;
+    }
+
     this.#undoStack.push(command);
     this.#redoStack = [];
     this.#lastCommand = command.label;

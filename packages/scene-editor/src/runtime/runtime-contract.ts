@@ -1,4 +1,9 @@
-import type { SceneDocument, ViewState } from "../core/document/schema";
+import type {
+  MaterialDTO,
+  SceneDocument,
+  SceneObjectDTO,
+  ViewState,
+} from "../core/document/schema";
 
 export interface Transform {
   position: readonly [number, number, number];
@@ -78,5 +83,22 @@ export interface RuntimeContract {
   setToneMapping?(mode: ToneMappingMode): void;
   /** Exposure multiplier applied on top of the tone mapping. */
   setExposure?(value: number): void;
+
+  // --- Incremental editing (optional) ---------------------------------------
+  // Whole-document runtimes omit these; the commands that need them raise a
+  // `lifecycle` error instead of silently editing the document without a scene.
+
+  /**
+   * Mount one object. Asset-backed objects resolve once mounted; a failure
+   * rejects and the facade surfaces it on the `error` event.
+   */
+  addObject?(dto: SceneObjectDTO): void | Promise<void>;
+  /** Unmount one object. Cascade ordering stays with the caller. */
+  removeObject?(id: string): void;
+  /** Re-attach an object under another parent (`undefined` = scene root). */
+  reparent?(id: string, parentId: string | undefined): void;
+  /** Replace or clear one object's material override. */
+  setMaterial?(id: string, material: MaterialDTO | undefined): void;
+
   readonly events: RuntimeEventBus;
 }

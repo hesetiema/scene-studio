@@ -18,14 +18,15 @@ describe("parseSceneDocument", () => {
     expect(parseSceneDocument(v2Doc)).toEqual(v2Doc);
   });
 
-  it("migrates a v1 document and reports the step", () => {
+  it("migrates a v1 document and reports every step", () => {
     const onMigrate = vi.fn();
     expect(parseSceneDocument(v1Doc, { onMigrate })).toEqual({
       ...v1Doc,
-      schemaVersion: 2,
+      schemaVersion: SCHEMA_VERSION,
       view: createDefaultViewState(),
     });
     expect(onMigrate).toHaveBeenCalledWith({ from: 1, to: 2 });
+    expect(onMigrate).toHaveBeenCalledWith({ from: 2, to: 3 });
   });
 
   it("does not report a migration for a current document", () => {

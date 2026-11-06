@@ -20,6 +20,7 @@
  */
 import {
   AssetCache,
+  SCHEMA_VERSION,
   createResolverAssetLoader,
   type SceneDocument,
 } from "@scenio/scene-editor";
@@ -187,7 +188,7 @@ function buildDoc(count: number): SceneDocument {
     };
   });
   return {
-    schemaVersion: 2,
+    schemaVersion: SCHEMA_VERSION,
     sceneId: "perf-bench",
     revision: 0,
     objects,

@@ -17,6 +17,13 @@ export {
 } from "./three/transform-controls-binding";
 export { createPicker, type Picker, type PickerOptions, type RaycastHit } from "./three/picker";
 export {
+  applyMaterialFields,
+  applyMaterialOverride,
+  createPrimitiveGeometry,
+  createPrimitiveObject,
+  type PlaceholderObject,
+} from "./three/viewer/object-factory";
+export {
   createSelectionHighlightPlugin,
   type SelectionHighlightOptions,
 } from "./three/selection-highlight-plugin";

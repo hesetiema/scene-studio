@@ -2,12 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import { createDefaultViewState } from "../../src/core/document/default-view";
 import { createSceneEditor } from "../../src/runtime/create-scene-editor";
 import { FakeRuntime } from "../../src/runtime/fake-runtime";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 import type { SceneEditorPlugin } from "../../src/plugins/plugin";
 import { SceneEditorError } from "../../src/core/events/errors";
 
 const doc: SceneDocument = {
-  schemaVersion: 2,
+  schemaVersion: SCHEMA_VERSION,
   view: createDefaultViewState(),
   sceneId: "headless",
   revision: 0,

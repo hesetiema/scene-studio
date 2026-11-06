@@ -14,7 +14,17 @@ type RuntimeHook = {
 };
 
 type EditorHook = {
-  getDocument(): { objects: Array<{ id: string; position: number[] }> };
+  getDocument(): {
+    objects: Array<{
+      id: string;
+      position: number[];
+      material?: { opacity?: number; color?: string };
+    }>;
+  };
+  selectedIds: readonly string[];
+  selectObject(id: string): void;
+  undo(): void;
+  redo(): void;
 };
 
 async function boot(page: Page): Promise<void> {
@@ -94,16 +104,15 @@ test("animation panel lists clips, auto-plays, and toggles transport", async ({ 
   await expect(page.locator("#anim-play")).toHaveText("暂停");
 });
 
-test("material panel applies to the selection and restores originals", async ({ page }) => {
+test("material panel writes to the document and collapses a drag into one undo", async ({ page }) => {
   await boot(page);
 
-  await page.evaluate(
-    () => (window as unknown as { __editor: { selectObject(id: string): void } }).__editor.selectObject("box-1"),
+  await page.evaluate(() =>
+    (window as unknown as { __editor: EditorHook }).__editor.selectObject("box-1"),
   );
   await expect(page.locator("#material-hint")).toHaveText(/已选中 \d+ 个网格/);
 
-  /** 材质是运行时预览，读渲染对象即可，不应出现在文档里。 */
-  const readOpacity = () =>
+  const readLiveOpacity = () =>
     page.evaluate(() => {
       const runtime = (window as unknown as { __runtime: RuntimeHook }).__runtime;
       let opacity = 1;
@@ -118,13 +127,31 @@ test("material panel applies to the selection and restores originals", async ({ 
       return opacity;
     });
 
-  expect(await readOpacity()).toBe(1);
+  const readStoredOpacity = () =>
+    page.evaluate(() => {
+      const doc = (window as unknown as { __editor: EditorHook }).__editor.getDocument();
+      return doc.objects.find((object) => object.id === "box-1")?.material?.opacity ?? null;
+    });
 
-  await page.locator("#material-opacity").fill("40");
-  await expect.poll(readOpacity).toBeCloseTo(0.4, 2);
+  // Nothing overridden yet: the object still renders with its own material.
+  expect(await readStoredOpacity()).toBeNull();
+  expect(await readLiveOpacity()).toBe(1);
 
-  await page.click("#btn-material-reset");
-  await expect.poll(readOpacity).toBe(1);
+  // Three ticks of one gesture must not spend three undo steps.
+  for (const value of ["80", "60", "40"]) {
+    await page.locator("#material-opacity").fill(value);
+  }
+
+  await expect.poll(readLiveOpacity).toBeCloseTo(0.4, 2);
+  expect(await readStoredOpacity()).toBeCloseTo(0.4, 2);
+
+  // One undo covers the whole drag and puts the asset's own material back.
+  await page.evaluate(() => (window as unknown as { __editor: EditorHook }).__editor.undo());
+  await expect.poll(readLiveOpacity).toBe(1);
+  expect(await readStoredOpacity()).toBeNull();
+
+  await page.evaluate(() => (window as unknown as { __editor: EditorHook }).__editor.redo());
+  await expect.poll(readLiveOpacity).toBeCloseTo(0.4, 2);
 });
 
 test("lighting controls tune intensity and optionally follow the camera", async ({ page }) => {

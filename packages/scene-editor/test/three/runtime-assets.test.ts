@@ -6,7 +6,7 @@ import { ThreeRuntime } from "../../src/three/three-runtime";
 import { AssetCache } from "../../src/assets/asset-cache";
 import { AssetError, AssetErrorCode } from "../../src/assets/asset-error";
 import type { RendererHandle } from "../../src/three/renderer-handle";
-import type { SceneDocument } from "../../src/core/document/schema";
+import { SCHEMA_VERSION, type SceneDocument } from "../../src/core/document/schema";
 import type { LoadedAsset } from "../../src/assets/asset-cache";
 
 function stubRenderer(): RendererHandle & { disposed: boolean; renders: number } {
@@ -32,7 +32,7 @@ function makeAsset(assetId: string): LoadedAsset {
 }
 
 function makeDoc(objects: SceneDocument["objects"]): SceneDocument {
-  return { schemaVersion: 2, sceneId: "s", revision: 0, objects, view: createDefaultViewState() };
+  return { schemaVersion: SCHEMA_VERSION, sceneId: "s", revision: 0, objects, view: createDefaultViewState() };
 }
 
 function assetObj(id: string, assetId: string) {

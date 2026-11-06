@@ -26,6 +26,10 @@ export default defineConfig({
       // driver and font differences cannot leak into the diff.
       name: "visual",
       testMatch: "visual/**/*.spec.ts",
+      // SwiftShader contexts compete for a single software rasterizer: shots taken
+      // in parallel differ by more than the 1% budget and fail intermittently, so
+      // this project captures serially.
+      fullyParallel: false,
       use: {
         ...devices["Desktop Chrome"],
         deviceScaleFactor: 1,

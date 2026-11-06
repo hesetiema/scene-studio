@@ -4,9 +4,9 @@
 
 > 英文完整文档见 [README.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md)，完整 API 见 [API.md](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md)。本页是中文快速上手与核心概念。
 
-**状态：** 仓库内为 `0.6.0` alpha，已发布到 npm。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。`1.0.0` 之前 API 仍可能调整。
+**状态：** 仓库内为 `0.7.0` alpha（尚未发布），npm `latest` 为 `0.6.0`。`1.0.0` 之前 API 仍可能调整。
 
-**编辑范围：** 变换与视图状态；对象增删/改父子级、材质写入文档、morph target、HDR 环境尚未进入文档 API。
+**编辑范围：** 变换、视图状态、对象的增删与改父子级、程序化几何、材质覆盖——全部可撤销。对象的复制、morph target、HDR 环境尚未进入文档 API。
 
 - 仓库：<https://github.com/hesetiema/scene-studio>
 - 问题反馈：<https://github.com/hesetiema/scene-studio/issues>
@@ -21,7 +21,7 @@ pnpm add @scenio/scene-editor three
 
 `three@^0.186.0` 是 peer dependency，需要自行安装。
 
-> 本页跟随仓库 `0.6.0`，与 npm `latest` 一致。想试用未发布内容，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
+> 本页跟随仓库 `0.7.0`；npm `latest` 为 `0.6.0`。想试用未发布内容，请从源码构建（`pnpm install && pnpm build`），再打包 `packages/scene-editor`。
 
 ## 入口
 
@@ -45,7 +45,7 @@ pnpm add @scenio/scene-editor three
   await el.ready;
 
   await el.loadDocument({
-    schemaVersion: 2,
+    schemaVersion: 3,
     sceneId: "demo",
     revision: 0,
     objects: [
@@ -121,7 +121,7 @@ Element 额外提供两个 DOM 专属事件：`visibility-change`（进入/离�
 
 ```ts
 type SceneDocument = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   sceneId: string;
   revision: number; // 宿主权威版本号
   objects: SceneObjectDTO[];
@@ -130,6 +130,13 @@ type SceneDocument = {
     lights: {
       ambient: { color: "#rrggbb"; intensity: number };
       directional: { color: "#rrggbb"; intensity: number; position: [number, number, number] };
+      // 可选，缺省表示没有附加灯
+      additional?: (
+        | { kind: "directional"; color: string; intensity: number; position: [number, number, number]; target?: [number, number, number] }
+        | { kind: "point"; color: string; intensity: number; position: [number, number, number]; distance?: number; decay?: number }
+        | { kind: "spot"; color: string; intensity: number; position: [number, number, number]; target?: [number, number, number]; angle?: number; penumbra?: number; distance?: number; decay?: number }
+        | { kind: "hemisphere"; skyColor: string; groundColor: string; intensity: number }
+      )[];
     };
     environment: {
       background: "#rrggbb" | null;
@@ -141,18 +148,37 @@ type SceneDocument = {
 
 type SceneObjectDTO = {
   id: string;
-  type: "mesh" | "group";
+  type: "mesh" | "group" | "primitive";
   name: string;
-  assetId?: string;
-  parentId?: string;
+  assetId?: string; // 仅 mesh
+  parentId?: string; // 建立真实的 three.js 父子关系
+  geometry?: PrimitiveGeometry; // 仅 primitive，必填
+  material?: {
+    color?: "#rrggbb";
+    roughness?: number; // 0..1
+    metalness?: number; // 0..1
+    emissive?: "#rrggbb";
+    emissiveIntensity?: number;
+    opacity?: number; // <1 时自动 transparent
+    flatShading?: boolean;
+    wireframe?: boolean;
+  };
   position: [number, number, number];
   rotation: [number, number, number]; // Euler XYZ，弧度
   scale: [number, number, number];
   metadata?: Record<string, unknown>;
 };
+
+// geometry.kind: box | sphere | cylinder | cone | torus | plane | capsule | icosahedron
+// 每个参数都可选，工厂按文档默认值填充；未知参数会被拒绝而不是忽略。
 ```
 
-- v1 文档加载时会自动迁移并补全 `view` 默认值。
+- v1 / v2 文档加载时自动迁移到当前版本。v3 只新增可选字段，所以 v2 文档迁移后载荷不变。
+- `parentId` 建立真实的 three.js 父子关系：子对象挂到父对象而不是场景根，group 的变换会沿层级叠加。父对象加载失败时子对象提升为根而不是消失；父子成环时断开而不是挂死。
+- `type: "primitive"` 渲染程序化几何（`box`/`sphere`/`cylinder`/`cone`/`torus`/`plane`/`capsule`/`icosahedron`），参数按 kind 校验，缺省值由工厂填充。
+- `material` 只写入声明的字段：只改颜色的覆盖会保留 GLB 自带的 roughness；每个实例使用 **clone** 后的材质，因此改一个对象不会污染缓存副本或同资产的其他实例。
+- 对象写操作走 `addObject` / `removeObject` / `reparent` / `setMaterial`，全部进撤销栈。`addObject` 是异步的（资产加载失败时文档不会记录这个对象）；`removeObject` 级联删除整棵子树并记住原始索引，undo 能还原数组顺序；`setMaterial(id, undefined)` 清除覆盖并恢复资产自带材质。
+- 对同一对象的连续写入会**合并**（`Command.mergeWith`）：拖动材质滑块只占一步撤销，`from` 保留拖动前的值。否则一次手势就会吃掉整段历史。
 - 相机/灯光/环境变化会把文档标记为 dirty，但**不进入撤销栈**。
 - 文档中的 `view` 只在新 `sceneId` 加载时应用；同一场景回流不会打断当前视角。
 - 实时视口状态用 `getViewState()` 读取；文档保存的是最后一次记录的视图。

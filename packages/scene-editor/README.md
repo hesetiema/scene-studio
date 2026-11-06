@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor SDK for the web. Drop a `<scene-editor>` element into any page, load a JSON scene document, and get orbit/zoom, click-to-select, transform gizmos, undo/redo, and host-driven save/conflict flow — all headless-testable behind a runtime contract.
 
-**Status:** `0.6.0` alpha, published to npm. `0.4.0` / `0.5.0` were never released on their own; `0.6.0` supersedes them. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
+**Status:** `0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen — see TODOS.md.
 
@@ -10,7 +10,7 @@ Repository: <https://github.com/hesetiema/scene-studio> · Issues: <https://gith
 
 **Docs:** English (this page) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [API reference](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.zh-CN.md)
 
-**Editing scope:** transforms and view state. Object creation/deletion/reparenting, material persistence, morph targets and HDR environments are not in the document API yet.
+**Editing scope:** transforms, view state, object create/delete/reparent, procedural geometry (`primitive`) and material overrides — all undoable. Object duplication, multi-object transform, morph targets and HDR environments are not in the document API yet.
 
 ## Install
 
@@ -22,7 +22,7 @@ pnpm add @scenio/scene-editor three
 
 Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
 
-> This README tracks the repo (`0.6.0`), which matches npm `latest`. To try unreleased work, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
+> This README tracks the repo (`0.7.0`); npm `latest` is `0.6.0`. To try the unreleased work, build from source (`pnpm install && pnpm build`) and pack `packages/scene-editor`.
 
 ## Quick start
 
@@ -37,7 +37,7 @@ Peer dependency: `three@^0.186.0` (see [Compatibility](#compatibility)).
   await el.ready; // resolves on init; failures also arrive as the `error` event
 
   await el.loadDocument({
-    schemaVersion: 2,
+    schemaVersion: 3,
     sceneId: "demo",
     revision: 0,
     objects: [
@@ -161,7 +161,7 @@ A scene is plain JSON validated with zod (`SceneDocumentSchema`). Nothing GPU-sp
 
 ```ts
 type SceneDocument = {
-  schemaVersion: 2; // positive int literal; currently 2 (v1 is migrated on load)
+  schemaVersion: 3; // positive int literal; currently 3 (v1/v2 are migrated on load)
   sceneId: string;
   revision: number; // nonnegative int; host-authoritative
   objects: SceneObjectDTO[];
@@ -170,6 +170,12 @@ type SceneDocument = {
     lights: {
       ambient: { color: "#rrggbb"; intensity: number };
       directional: { color: "#rrggbb"; intensity: number; position: [number, number, number] };
+      additional?: ( // omitted = no extra lights
+        | { kind: "directional"; color: string; intensity: number; position: [number, number, number]; target?: [number, number, number] }
+        | { kind: "point"; color: string; intensity: number; position: [number, number, number]; distance?: number; decay?: number }
+        | { kind: "spot"; color: string; intensity: number; position: [number, number, number]; target?: [number, number, number]; angle?: number; penumbra?: number; distance?: number; decay?: number }
+        | { kind: "hemisphere"; skyColor: string; groundColor: string; intensity: number }
+      )[];
     };
     environment: {
       background: "#rrggbb" | null;
@@ -181,20 +187,43 @@ type SceneDocument = {
 
 type SceneObjectDTO = {
   id: string;
-  type: "mesh" | "group";
+  type: "mesh" | "group" | "primitive";
   name: string;
-  assetId?: string; // loads via AssetCache / AssetResolver (glTF)
-  parentId?: string;
+  assetId?: string; // mesh only: loads via AssetCache / AssetResolver (glTF)
+  parentId?: string; // builds real three.js parenting
+  geometry?: PrimitiveGeometry; // primitive only, required
+  material?: { // per-object override; only the fields you set are written
+    color?: "#rrggbb";
+    roughness?: number; // 0..1
+    metalness?: number; // 0..1
+    emissive?: "#rrggbb";
+    emissiveIntensity?: number;
+    opacity?: number; // < 1 implies transparent
+    flatShading?: boolean;
+    wireframe?: boolean;
+  };
   position: [number, number, number];
   rotation: [number, number, number]; // Euler XYZ, radians
   scale: [number, number, number];
   metadata?: Record<string, unknown>;
 };
+
+// geometry.kind: box | sphere | cylinder | cone | torus | plane | capsule | icosahedron
+// Every geometry parameter is optional (the factory applies its documented default);
+// unknown parameters are rejected, never silently ignored.
 ```
 
 Parse and validate yourself with `parseSceneDocument(input)` / `SceneDocumentSchema` when you need the same errors on the server.
 
-**View state.** v1 documents load unchanged — a generic migration registry fills the engine defaults for `view`. The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
+**Migrations.** v1 and v2 documents load unchanged — a generic migration registry walks them to the current `schemaVersion`. v3 only *added optional fields* (`primitive`, `geometry`, `material`, `view.lights.additional`), so a migrated v2 payload is byte-identical to the input apart from the version stamp. `onMigrate` reports every step, oldest first.
+
+**View state.** The documented view is applied to the viewport only when the loaded document's `sceneId` changes (so a reload restores the same scene instead of snapping the camera). A camera/lights/environment change marks the document dirty but is **not** undoable — view edits are a separate dirty channel from commands. The facade `view-change` event carries `source: "interaction" | "api" | "load"` so hosts can tell a user gesture from a programmatic `setViewState()` or a scene switch. Live truth is always `getViewState()`; the document holds the last *recorded* view.
+
+**Hierarchy, geometry and materials.** `parentId` builds real three.js parenting: the child is added to its parent object instead of the scene root, so a group's transform composes down the tree. A child whose parent failed to load is promoted to a root rather than dropped, and a parent cycle is broken instead of mounted. `type: "primitive"` renders procedural geometry (`box`, `sphere`, `cylinder`, `cone`, `torus`, `plane`, `capsule`, `icosahedron`) with per-kind parameters. `material` writes only the fields present: a colour-only override on a GLB keeps the asset's own roughness, and each instance gets a **cloned** material so repainting one object never leaks into the shared cache copy or into other instances of the same asset.
+
+**Object commands.** `addObject` / `removeObject` / `reparent` / `setMaterial` are the write side of the same model, and all four go through `CommandHistory`. `addObject` is async — the document is never given an object whose asset failed to load. `removeObject` cascades the whole subtree and records each original index, so undo restores the array order rather than appending. `reparent` and the rest re-run `validateHierarchy`, so duplicate ids, missing parents, self-parenting and cycles are rejected at edit time instead of at the next load. `setMaterial(id, undefined)` clears the override and puts the asset's own materials back.
+
+Consecutive writes to the same object **merge** (`Command.mergeWith`): a material slider drag spends one undo step, whose `from` is the value before the drag — otherwise a single gesture would consume the whole history.
 
 **Image-based lighting.** `environment.iblIntensity` drives a PMREM-prefiltered built-in studio environment (`RoomEnvironment` — no network assets, no decoder). `0` turns it off and leaves the analytic ambient/directional lights as the only illumination; the key is optional and defaults to `1`, so v2 documents written before IBL still load and simply pick up the default. WebGPU renderers and GPU-less test runtimes skip IBL silently (`scene.environment` stays `null`). Metals and glass depend on it: with analytic lights alone they render nearly black.
 

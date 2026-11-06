@@ -9,8 +9,23 @@ const v1 = { schemaVersion: 1, sceneId: "s", revision: 3, objects: [] };
 describe("migrateSceneDocument", () => {
   it("materialises view defaults for a v1 document and bumps the version", () => {
     const { document, applied } = migrateSceneDocument(v1);
-    expect(applied).toEqual([{ from: 1, to: 2 }]);
-    expect(document).toEqual({ ...v1, schemaVersion: 2, view: createDefaultViewState() });
+    expect(applied).toEqual([
+      { from: 1, to: 2 },
+      { from: 2, to: 3 },
+    ]);
+    expect(document).toEqual({
+      ...v1,
+      schemaVersion: SCHEMA_VERSION,
+      view: createDefaultViewState(),
+    });
+  });
+
+  it("upgrades v2 to v3 without reshaping anything", () => {
+    const v2 = { ...v1, schemaVersion: 2, view: createDefaultViewState() };
+    const { document, applied } = migrateSceneDocument(v2);
+    expect(applied).toEqual([{ from: 2, to: 3 }]);
+    // v3 only added optional fields, so the payload is identical apart from the stamp.
+    expect(document).toEqual({ ...v2, schemaVersion: 3 });
   });
 
   it("leaves an existing view untouched when upgrading", () => {
@@ -27,10 +42,10 @@ describe("migrateSceneDocument", () => {
   });
 
   it("is idempotent for the current version", () => {
-    const v2 = { ...v1, schemaVersion: 2, view: createDefaultViewState() };
-    const { document, applied } = migrateSceneDocument(v2);
+    const current = { ...v1, schemaVersion: SCHEMA_VERSION, view: createDefaultViewState() };
+    const { document, applied } = migrateSceneDocument(current);
     expect(applied).toEqual([]);
-    expect(document).toEqual(v2);
+    expect(document).toEqual(current);
   });
 
   it("rejects a missing or non-integer schemaVersion", () => {
@@ -64,7 +79,7 @@ describe("migrateSceneDocument", () => {
       expect((err as SceneEditorError).detail).toMatchObject({
         reason: "unsupported-schema-version",
         found: 99,
-        supported: [1, 2],
+        supported: [1, SCHEMA_VERSION],
       });
     }
   });

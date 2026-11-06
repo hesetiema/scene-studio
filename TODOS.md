@@ -18,11 +18,29 @@
 
 ## 编辑能力缺口
 
-当前文档 API 只覆盖“变换 + 视图状态”，以下能力尚未排期：
+0.7.0（schema v3）把以下能力带进了文档模型：
 
-- 对象的创建、删除、复制与改父子级。
-- 材质编辑写入文档（playground 的材质面板目前只是运行时预览，不进撤销栈）。
-- 多对象变换。
+- `parentId` 现在是真实层级：group 会被挂载，子对象挂到父对象下而不是场景根；父对象加载失败时子对象提升为根，成环时断开而不是挂死。
+- `type: "primitive"` + `geometry`：八种程序化几何（box / sphere / cylinder / cone / torus / plane / capsule / icosahedron），参数可选、默认值在工厂内。
+- 对象级 `material` 覆盖：只写声明的字段；asset 实例会先 clone 材质，避免污染缓存与其他实例。
+- `view.lights.additional`：point / spot / directional / hemisphere 附加灯。
+
+0.7.0 的命令层（`addObject` / `removeObject` / `reparent` / `setMaterial`）补齐了写操作：
+
+- 四个命令都进撤销栈，走同一套 `CommandHistory`；`addObject` 是异步的（资产加载），其余同步。
+- 写操作复用 `SceneObjectSchema` + `MaterialSchema` + `validateHierarchy`，因此重复 id、缺失父级、自指与成环在命令层就被拒绝，而不是等到下次加载。
+- `removeObject` 级联删除整棵子树并记录原始索引，undo 能还原数组顺序。
+- `setMaterial(id, undefined)` 清除覆盖并恢复资产自带材质（材质覆盖句柄可撤销）。
+- 删除选中对象后选择会被清理，不会留下悬空 id。
+
+playground 的材质面板已切到 `setMaterial`：改动进文档、进撤销栈，且拖动滑块通过
+`Command.mergeWith` 合并成一步撤销（顺带修掉了直接改 `mesh.material` 会污染 AssetCache
+共享材质的问题）。
+
+仍未排期：
+
+- 对象的复制/克隆命令。
+- 多对象变换（批量变换命令）。
 - 资产内嵌相机的命名列表与切换（与上面的相机项一起设计）。
 
 ## 已明确不做（YAGNI）
@@ -34,4 +52,4 @@
 ## 发布
 
 - npm scope：`@scenio` 为占位，首次发布前选定。
-- 发布状态：npm `latest` 为 `0.6.0`（`0.6.0` tag 已推送）。`0.4.0` / `0.5.0` 未单独发布，由 `0.6.0` 覆盖。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。
+- 发布状态：仓库内为 `0.7.0`（未发布），npm `latest` 仍为 `0.6.0`。发布会带 schema v3，属于文档格式的 minor 变更。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。
