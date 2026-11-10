@@ -104,12 +104,23 @@ export interface ViewerState {
   environmentChanges: number;
   modelVisible: boolean | null;
   probeLoaded: boolean;
+  cameras: string[];
+  cameraName: string | null;
+  morphs: Array<{ name: string; influence: number; driven: boolean }>;
+  availableAnimations: string[];
+  paused: boolean;
+  currentTime: number;
+  duration: number;
+  timeScale: number;
+  orbit: { theta: number; phi: number; radius: number } | null;
+  fov: number;
+  alt: string | null;
 }
 
 export interface ViewerDemoHook {
   state: () => ViewerState;
   actions: {
-    setModel: (id: "fox" | "helmet" | "truck") => void;
+    setModel: (id: "fox" | "helmet" | "truck" | "fixture") => void;
     setLimits: (preset: "free" | "horizontal" | "eye") => void;
     setLoading: (mode: "eager" | "lazy") => void;
     toggle: (id: string, on: boolean) => void;
@@ -124,6 +135,15 @@ export interface ViewerDemoHook {
     setExposure: (value: number) => void;
     resetCamera: () => void;
     scrollToProbe: () => void;
+    setCamera: (name: string | null) => void;
+    setMorph: (index: number, value: number) => void;
+    setDamping: (on: boolean) => void;
+    play: () => boolean;
+    pause: () => void;
+    seek: (seconds: number) => void;
+    setTimeScale: (value: number) => void;
+    setOrbit: (orbit: { theta?: number; phi?: number; radius?: number }) => void;
+    setFieldOfView: (degrees: number) => void;
   };
 }
 

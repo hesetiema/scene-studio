@@ -125,14 +125,59 @@ interface RuntimeContract {
   setAutoRotate?(options: AutoRotateOptions | null): void;
   /** Optional: transport policy (`autoplay`, clip name, crossfade, one-shot). */
   setAnimationOptions?(options: AnimationOptions): void;
+
+  // Optional: playback transport (model-viewer's `availableAnimations` /
+  // `animationName` / `paused` / `play()` / `pause()` / `currentTime` /
+  // `timeScale`). A runtime without an animation rig omits the whole block and
+  // the element reports an empty clip list instead of pretending to play.
+  readonly animations?: AnimationClipInfo[];
+  readonly animationPlaying?: boolean;
+  readonly animationTime?: number;
+  readonly animationDuration?: number;
+  readonly animationSpeed?: number;
+  playAnimation?(objectId?: string | null, index?: number): boolean;
+  playAnimationByName?(name: string): boolean;
+  pauseAnimations?(): void;
+  resumeAnimations?(): boolean;
+  setAnimationTime?(seconds: number): void;
+  setAnimationSpeed?(speed: number): void;
+
   /** Optional: fit the camera to the content bounds. */
   autoFrame?(): void;
   /** Optional: display transfer function (never persisted). */
   setToneMapping?(mode: "none" | "linear" | "aces" | "agx" | "neutral"): void;
   /** Optional: exposure multiplier. */
   setExposure?(value: number): void;
+  /** Optional: swap the built-in studio IBL (`room` / `neutral`). */
+  setEnvironmentPreset?(preset: "room" | "neutral"): void;
+  /** Optional: `KHR_materials_variants` string table + current pick. */
+  readonly variants?: string[];
+  readonly variantName?: string | null;
+  setVariant?(name: string | null): boolean;
+  /** Optional: cameras authored in the asset. */
+  readonly cameras?: string[];
+  readonly cameraName?: string | null;
+  setCameraByName?(name: string | null): boolean;
+  /** Optional: morph channels + manual weights. */
+  readonly morphTargets?: MorphTargetInfo[];
+  setMorphInfluence?(
+    objectId: string,
+    meshIndex: number,
+    targetIndex: number,
+    value: number,
+  ): boolean;
+
   readonly events: RuntimeEventBus;
 }
+
+/** One clip on the mounted content: `${objectId}#${index}` is the stable id. */
+type AnimationClipInfo = {
+  id: string;
+  objectId: string;
+  index: number;
+  name: string;
+  duration: number;
+};
 
 type Transform = {
   position: readonly [number, number, number];
@@ -237,13 +282,13 @@ The shortest path from a glTF URL to a rendered model:
 
 - The element synthesizes a one-mesh `SceneDocument` (`assetId: "__src__"`, name taken from the filename), loads it through `createResolverAssetLoader`, then calls `autoFrame()`.
 - `progress` / `load` / `error` are the lifecycle surface; `load.url` carries the resolved source.
-- Previews default to `tone-mapping="aces"`; pass `tone-mapping="none"` to keep three's raw output.
+- Previews default to `tone-mapping="neutral"` (what model-viewer's `auto` resolves to on glTF); pass `tone-mapping="aces"` for the filmic look or `none` to keep three's raw output.
 - `loadDocument()` overrides the preview. Changing `src` afterwards switches back to preview and re-frames.
 - No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` still wins.
 - `createSrcDocument(url)`, `SRC_ASSET_ID`, `SRC_SCENE_ID` are exported from `./element` for the same document shape in a headless setup.
 - The canvas is **transparent by default** (`WebGLRenderer({ alpha: true })`), so `view.environment.background: null` really shows the page behind the element. Pass `alpha: false` through a custom `runtimeFactory` if you need an opaque canvas.
 - `loading="lazy"` defers the `src` load until the element first intersects the viewport (falls back to eager where `IntersectionObserver` is unavailable).
-- Viewer chrome is attribute-only and never touches the document: `auto-rotate`, `auto-rotate-delay`, `rotation-per-second`, `min-camera-orbit`, `max-camera-orbit`, `disable-pan`, `disable-zoom`, `disable-tap`, `autoplay`, `animation-name`, `animation-crossfade-duration`, `pause-at-end`, `environment-image`.
+- Viewer chrome is attribute-only and never touches the document: `auto-rotate`, `auto-rotate-delay`, `rotation-per-second`, `min-camera-orbit`, `max-camera-orbit`, `camera-orbit`, `camera-target`, `field-of-view`, `min-field-of-view`, `max-field-of-view`, `disable-pan`, `disable-zoom`, `disable-tap`, `camera-damping`, `autoplay`, `animation-name`, `animation-crossfade-duration`, `pause-at-end`, `environment-image`, `tone-mapping`, `exposure`, `shadow-intensity`, `shadow-softness`, `variant-name`, `camera-name`, `interaction-prompt`, `interaction-prompt-threshold`, `seamless-poster`, `alt`.
 - A preview is a **viewer**, so its synthesized view uses viewer defaults rather than editor defaults: no floor grid, `field-of-view="auto"` (30° landscape / 45° portrait), and the environment map as the only light source (analytic ambient/key at `0`). Framing matches model-viewer's default orbit (`0deg 75deg`): front view, 15° above the horizon, at a distance calibrated to the reference viewer's rendered size.
 - The contact shadow falls from the document's own key light when it emits (`view.lights.directional.intensity > 0`); with IBL-only lighting it falls from the environment's key direction instead, the way model-viewer derives its shadow light from the light probe. The shadow light is display-only (`intensity: 0`, never in `getViewState()`), so aiming it never touches the document.
 
@@ -254,8 +299,21 @@ The shortest path from a glTF URL to a rendered model:
 | `runtimeFactory` | **static** | `(canvas, options?) => RuntimeContract`. Defaults to `ThreeRuntime` + lazy GLTF. Override before connect to inject assets / WebGPU / test fakes |
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
 | `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. An explicit `loadDocument()` takes precedence until `src` changes again |
-| `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `aces`; documents stay on the engine default unless set |
+| `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `neutral` (model-viewer's `auto` on glTF); documents stay on the engine default unless set |
 | `exposure` | attribute | Exposure multiplier applied on top of the tone mapping |
+| `shadow-intensity` / `shadow-softness` | attributes | Contact shadow, model-viewer units (`0..1`). `softness` drives both blur radius and the height range that stays dark; `intensity="0"` removes the shadow. Display-only, re-asserted after every load |
+| `variant-name` | attribute / property | `KHR_materials_variants` pick; `null` restores the asset's own materials. Names set before the asset arrives are remembered. Also `availableVariants` (getter) |
+| `camera-name` | attribute / property | Look through a camera authored in the asset (glTF `node.camera`), keeping orbit controls live. Also `cameras` (getter) and `setCameraByName(name)` |
+| `morphTargets` / `setMorphInfluence(objectId, meshIndex, targetIndex, value)` | getter / method | Manual morph weights. Channels a playing clip drives are reported `driven: true` and refuse writes (the mixer would overwrite them next frame) |
+| `dracoLoader` / `ktx2Loader` / `meshoptDecoder` | properties | Assign **instances** (a `KTX2Loader` must already have `detectSupport(renderer)` called). Read before every asset load, so they may be set before or between loads |
+| `alt` | attribute | Accessible name of the canvas (`role="img"` + `aria-label`). Falls back to the file name of `src`, so the canvas is never unlabelled |
+| `getCameraOrbit()` / `setCameraOrbit({ theta, phi, radius })` | method | model-viewer orbit angles: `theta` azimuth from +Z toward +X, `phi` polar from +Y (both degrees), `radius` in world units. Missing axes keep their value ("`auto`") |
+| `getCameraTarget()` / `setCameraTarget([x, y, z])` | method | Orbit target; moving it translates the eye and keeps the angles |
+| `getFieldOfView()` / `setFieldOfView(deg)` | method | Rendered vertical FOV, clamped by `min-field-of-view` / `max-field-of-view` when set |
+| `availableAnimations` | getter | Clip names (de-duplicated) — model-viewer's `availableAnimations` |
+| `animationName` | property | Active clip; assigning it selects **and** starts that clip (a paused transport only changes which clip it will resume) |
+| `paused` / `play()` / `pause()` | | Transport. `play()` resumes a paused clip from its playhead, otherwise starts `animation-name` (or the first clip). `pause()` outranks `autoplay` for every later load |
+| `currentTime` / `timeScale` | property | Playhead (seconds, settable) and playback rate (`0` freezes the mixer). Timelines only; never written to the document |
 | `environment-image` | attribute | `neutral` \| `room` — the built-in studio IBL. Previews default to `neutral` (grayscale softbox studio, model-viewer's look), documents to `room` (three's warm `RoomEnvironment`). Inert while the view supplies an HDR |
 | `frameModel()` | method | Fit the camera to the current bounds ("reset view"); never marks the document dirty |
 | `getDimensions()` | method | World-space `{ width, height, depth }` of the mounted content; zeros when the scene is empty |
@@ -288,6 +346,12 @@ The shortest path from a glTF URL to a rendered model:
 | `reveal` | attribute | `auto` (default) \| `interaction` \| `manual`. `auto` dismisses the poster on `load`, `interaction` on the first gesture, `manual` only through `dismissPoster()`. Inert when no `slot="poster"` exists |
 | `auto-rotate` / `auto-rotate-delay` / `rotation-per-second` | attributes | Turntable rotation (default idle 3000 ms, 30°/s). Rotation pauses during a drag and resumes after the idle delay |
 | `min-camera-orbit` / `max-camera-orbit` | attributes | `"<theta> <phi> <radius>"` per axis, model-viewer syntax: `auto`, `90deg`, `1.2rad`, `2m`. `auto` on either side leaves the axis unlimited |
+| `camera-orbit` / `camera-target` / `field-of-view` | attributes | Declarative pose, same syntax as above (`camera-target` is `"x y z"`). `auto` keeps the current axis; `camera-name` outranks them. Re-asserted after every load, never persisted |
+| `min-field-of-view` / `max-field-of-view` | attributes | Clamp for `field-of-view` / `setFieldOfView()`; absent = no clamp |
+| `camera-damping` | attribute | Orbit inertia as OrbitControls' `dampingFactor` (bare attribute = `0.08`). A settle loop keeps rendering until the controls stop moving |
+| `interaction-prompt` / `interaction-prompt-threshold` | attributes | `auto` (default) \| `none`; idle threshold in ms (default 3000) before the "drag to rotate" hint appears |
+| `seamless-poster` | attribute | Cross-fade the poster out over 300 ms after the first frame instead of swapping in one frame |
+| Keyboard | behaviour | Arrows orbit (5°, `Shift` = 1°), `+`/`-` dolly ±10%, only when focus is inside the element and the editor did not claim the key |
 | `disable-pan` / `disable-zoom` / `disable-tap` | attributes | Pointer verbs. `disable-tap` keeps orbit but never converts a click into a selection |
 | `autoplay` / `animation-name` / `animation-crossfade-duration` / `pause-at-end` | attributes | Playback transport for glTF clips (`animation-name` is case-insensitive; crossfade is in **ms**) |
 | `visibilityObserverFactory` | **static** | Seam for `visibility-change`; default uses `IntersectionObserver`, return `null` to disable |

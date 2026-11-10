@@ -21,7 +21,7 @@ import type { ThreeRuntime } from "@scenio/scene-editor/three";
 import type { ViewState } from "@scenio/scene-editor";
 import { createLog, q, qa, setFields } from "./shared";
 
-type ModelId = "fox" | "helmet" | "truck";
+type ModelId = "fox" | "helmet" | "truck" | "fixture";
 type LimitsPreset = "free" | "horizontal" | "eye";
 type AttrToggle =
   | "auto-rotate"
@@ -52,6 +52,18 @@ export interface ViewerDemoState {
   environmentChanges: number;
   modelVisible: boolean | null;
   probeLoaded: boolean;
+  cameras: string[];
+  cameraName: string | null;
+  morphs: Array<{ name: string; influence: number; driven: boolean }>;
+  /* viewer transport + declarative pose (0.9.x) */
+  availableAnimations: string[];
+  paused: boolean;
+  currentTime: number;
+  duration: number;
+  timeScale: number;
+  orbit: { theta: number; phi: number; radius: number } | null;
+  fov: number;
+  alt: string | null;
 }
 
 interface ViewerDemoHook {
@@ -72,6 +84,15 @@ interface ViewerDemoHook {
     setExposure: (value: number) => void;
     resetCamera: () => void;
     scrollToProbe: () => void;
+    setCamera: (name: string | null) => void;
+    setMorph: (index: number, value: number) => void;
+    setDamping: (on: boolean) => void;
+    play: () => boolean;
+    pause: () => void;
+    seek: (seconds: number) => void;
+    setTimeScale: (value: number) => void;
+    setOrbit: (orbit: { theta?: number; phi?: number; radius?: number }) => void;
+    setFieldOfView: (degrees: number) => void;
   };
 }
 
@@ -86,6 +107,8 @@ const MODELS: Record<ModelId, string> = {
   fox: "/assets/Fox.glb",
   helmet: "/assets/DamagedHelmet.glb",
   truck: "/assets/CesiumMilkTruck.glb",
+  // Hand-built glTF: two authored cameras + two morph targets.
+  fixture: "/assets/camera-morph.gltf",
 };
 
 /** model-viewer syntax: `auto` leaves an axis unlimited. */
@@ -157,14 +180,38 @@ function renderStatus(): void {
     ["loaded", loaded],
     ["clips", rt.animations.length],
     ["playing", rt.animationPlaying],
+    ["t", `${(editor?.currentTime ?? 0).toFixed(2)}s`],
     ["camera-changes", cameraChanges],
     ["env-changes", environmentChanges],
     ["visible", modelVisible ?? "-"],
     ["probe", probeLoaded ? "loaded" : "idle"],
     ["limits", limits],
+    ["camera", rt.cameraName ?? "-"],
   ]);
   srcPill.textContent = editor?.src?.split("/").pop() ?? "src";
   probeStatus.textContent = probeLoaded ? "probe: 已加载 ✓" : "probe: 未加载（滚动进入视口才会加载）";
+  renderTransport();
+}
+
+/**
+ * Transport widgets track the element, not the other way round: the mixer keeps
+ * advancing the playhead, so the slider is painted from `currentTime` on the same
+ * 400ms cadence as the status line — except while the host is dragging it.
+ */
+function renderTransport(): void {
+  if (!editor) return;
+  const rt = three();
+  const toggle = q<HTMLButtonElement>("#transport-toggle");
+  const paused = editor.paused;
+  toggle.textContent = paused ? "播放" : "暂停";
+
+  const seek = q<HTMLInputElement>("#seek");
+  const duration = rt?.animationDuration ?? 0;
+  seek.max = String(duration || 1);
+  seek.disabled = duration <= 0;
+  const time = editor.currentTime;
+  q("#seek-label").textContent = `${time.toFixed(2)}s / ${duration.toFixed(2)}s`;
+  if (document.activeElement !== seek) seek.value = String(Math.min(time, duration || 1));
 }
 
 function populateClips(names: readonly string[]): void {
@@ -188,6 +235,78 @@ function setModel(id: ModelId): void {
   log(`src = ${MODELS[id]}`);
   editor.src = MODELS[id];
   renderStatus();
+}
+
+/** Cameras come from the asset, so the dropdown is rebuilt on every load. */
+function populateCameras(names: readonly string[]): void {
+  const select = q<HTMLSelectElement>("#camera-name");
+  const current = editor?.cameraName ?? "";
+  select.replaceChildren(
+    ...["", ...names].map((name) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = name === "" ? "轨道视角" : name;
+      return option;
+    }),
+  );
+  select.value = names.includes(current) ? current : "";
+}
+
+/**
+ * Morph sliders, rebuilt per load. A channel the playing clip writes is shown
+ * disabled instead of silently snapping back: the mixer owns it until playback
+ * stops.
+ */
+function renderMorphs(): void {
+  const host = q("#morph-list");
+  const targets = editor?.morphTargets ?? [];
+  if (targets.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "demo-note";
+    empty.textContent = "当前模型没有 morph target。";
+    host.replaceChildren(empty);
+    return;
+  }
+
+  host.replaceChildren(
+    ...targets.map((target) => {
+      const row = document.createElement("label");
+      row.className = `demo-morph-row${target.driven ? " is-driven" : ""}`;
+      row.title = target.driven ? "动画正在驱动这条通道，暂停后可手动调整" : "";
+
+      const name = document.createElement("span");
+      name.textContent = target.name;
+      const readout = document.createElement("b");
+      readout.textContent = target.influence.toFixed(2);
+
+      const slider = document.createElement("input");
+      slider.type = "range";
+      slider.min = "0";
+      slider.max = "1";
+      slider.step = "0.01";
+      slider.value = String(target.influence);
+      slider.disabled = target.driven;
+      slider.addEventListener("input", () => {
+        const value = Number(slider.value);
+        const applied = editor?.setMorphInfluence(
+          target.objectId,
+          target.meshIndex,
+          target.targetIndex,
+          value,
+        );
+        if (applied) {
+          readout.textContent = value.toFixed(2);
+          return;
+        }
+        // Refused: the clip took the channel back, or the asset changed.
+        log.err(`morph ${target.name} 被拒绝（动画驱动或通道已失效）`);
+        renderMorphs();
+      });
+
+      row.append(name, slider, readout);
+      return row;
+    }),
+  );
 }
 
 function setLimits(preset: LimitsPreset): void {
@@ -221,6 +340,12 @@ async function onLoaded(): Promise<void> {
   }
   // After the attribute, so the select shows the clip that is actually playing.
   populateClips(names);
+  populateCameras(editor.cameras);
+  renderMorphs();
+  // `alt` is the canvas' accessible name (model-viewer parity). Recomputed per
+  // load so the label follows the model instead of the first one.
+  editor.setAttribute("alt", `3D 模型：${editor.src?.split("/").pop() ?? "未命名"}`);
+  renderTransport();
 
   renderStatus();
   log.ok(`loaded · clips=${names.length ? names.join(" / ") : "none"}`);
@@ -303,6 +428,25 @@ function bindUi(el: SceneEditorElement): void {
   }
   q("#reset-camera").addEventListener("click", () => el.frameModel());
 
+  q<HTMLSelectElement>("#camera-name").addEventListener("change", (event) => {
+    const name = (event.target as HTMLSelectElement).value;
+    if (name) el.setAttribute("camera-name", name);
+    else el.removeAttribute("camera-name");
+    log(`camera-name = ${name || "（轨道视角）"}`);
+    renderStatus();
+  });
+  q<HTMLInputElement>("#camera-damping").addEventListener("change", (event) => {
+    const on = (event.target as HTMLInputElement).checked;
+    el.toggleAttribute("camera-damping", on);
+    log(`camera-damping = ${on}`);
+  });
+  q<HTMLInputElement>("#interaction-prompt").addEventListener("change", (event) => {
+    const on = (event.target as HTMLInputElement).checked;
+    // The default is `auto`; the checkbox only ever switches it off.
+    if (on) el.removeAttribute("interaction-prompt");
+    else el.setAttribute("interaction-prompt", "none");
+  });
+
   q<HTMLInputElement>("#autoplay").addEventListener("change", (event) => {
     setToggle("autoplay", (event.target as HTMLInputElement).checked);
   });
@@ -316,6 +460,62 @@ function bindUi(el: SceneEditorElement): void {
   q<HTMLInputElement>("#crossfade").addEventListener("input", (event) => {
     crossfadeMs = Number((event.target as HTMLInputElement).value);
     el.setAttribute("animation-crossfade-duration", String(crossfadeMs));
+  });
+
+  q("#transport-toggle").addEventListener("click", () => {
+    if (el.paused) {
+      const started = el.play();
+      log(started ? "play()" : "play() 无 clip 可播");
+    } else {
+      el.pause();
+      log("pause()");
+    }
+    renderTransport();
+  });
+  q<HTMLInputElement>("#time-scale").addEventListener("input", (event) => {
+    el.timeScale = Number((event.target as HTMLInputElement).value);
+  });
+  q<HTMLInputElement>("#seek").addEventListener("input", (event) => {
+    el.currentTime = Number((event.target as HTMLInputElement).value);
+    renderTransport();
+  });
+
+  q<HTMLSelectElement>("#camera-orbit").addEventListener("change", (event) => {
+    const value = (event.target as HTMLSelectElement).value;
+    // The camera-name pose outranks the orbit attributes; drop it so the preset
+    // is not silently ignored.
+    if (value) {
+      el.removeAttribute("camera-name");
+      el.setAttribute("camera-orbit", value);
+      log(`camera-orbit = ${value}`);
+    } else {
+      el.removeAttribute("camera-orbit");
+      log("camera-orbit = （自动取景）");
+    }
+  });
+  q<HTMLInputElement>("#field-of-view").addEventListener("change", (event) => {
+    const raw = (event.target as HTMLInputElement).value.trim();
+    if (raw === "") {
+      el.removeAttribute("field-of-view");
+      el.frameModel();
+      log("field-of-view = auto");
+      return;
+    }
+    el.setAttribute("field-of-view", `${raw}deg`);
+    log(`field-of-view = ${raw}deg`);
+  });
+  q("#read-orbit").addEventListener("click", () => {
+    const orbit = el.getCameraOrbit();
+    if (!orbit) {
+      log.err("getCameraOrbit() → null（相机贴在 target 上）");
+      return;
+    }
+    const round = (value: number): number => Math.round(value * 10) / 10;
+    log(
+      `orbit θ=${round(orbit.theta)}° φ=${round(orbit.phi)}° r=${round(orbit.radius)} · fov=${round(
+        el.getFieldOfView(),
+      )}°`,
+    );
   });
 
   q<HTMLSelectElement>("#tone-mapping").addEventListener("change", (event) => {
@@ -360,6 +560,21 @@ function snapshot(): ViewerDemoState {
     environmentChanges,
     modelVisible,
     probeLoaded,
+    cameras: three()?.cameras ?? [],
+    cameraName: three()?.cameraName ?? null,
+    morphs: (editor?.morphTargets ?? []).map((target) => ({
+      name: target.name,
+      influence: Number(target.influence.toFixed(3)),
+      driven: target.driven,
+    })),
+    availableAnimations: editor?.availableAnimations ?? [],
+    paused: editor?.paused ?? true,
+    currentTime: Number((editor?.currentTime ?? 0).toFixed(3)),
+    duration: Number((rt?.animationDuration ?? 0).toFixed(3)),
+    timeScale: editor?.timeScale ?? 1,
+    orbit: editor?.getCameraOrbit() ?? null,
+    fov: Number((editor?.getFieldOfView() ?? 0).toFixed(2)),
+    alt: editor?.getAttribute("alt") ?? null,
   };
 }
 
@@ -419,6 +634,39 @@ async function main(): Promise<void> {
       setExposure: (value) => el.setAttribute("exposure", String(value)),
       resetCamera: () => el.frameModel(),
       scrollToProbe: () => q("#probe-slot").scrollIntoView({ block: "center" }),
+      setCamera: (name) => {
+        if (name) el.setAttribute("camera-name", name);
+        else el.removeAttribute("camera-name");
+        q<HTMLSelectElement>("#camera-name").value = name ?? "";
+      },
+      setMorph: (index, value) => {
+        const target = el.morphTargets[index];
+        if (target) {
+          el.setMorphInfluence(target.objectId, target.meshIndex, target.targetIndex, value);
+          renderMorphs();
+        }
+      },
+      setDamping: (on) => {
+        el.toggleAttribute("camera-damping", on);
+        q<HTMLInputElement>("#camera-damping").checked = on;
+      },
+      play: () => el.play(),
+      pause: () => el.pause(),
+      seek: (seconds) => {
+        el.currentTime = seconds;
+      },
+      setTimeScale: (value) => {
+        el.timeScale = value;
+        q<HTMLInputElement>("#time-scale").value = String(value);
+      },
+      setOrbit: (orbit) => {
+        el.removeAttribute("camera-name");
+        el.setCameraOrbit(orbit);
+      },
+      setFieldOfView: (degrees) => {
+        el.setFieldOfView(degrees);
+        q<HTMLInputElement>("#field-of-view").value = String(degrees);
+      },
     },
   };
 
