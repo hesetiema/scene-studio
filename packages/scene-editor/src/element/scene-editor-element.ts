@@ -434,8 +434,6 @@ export class SceneEditorElement extends HTMLElement {
       "variant-name",
       "camera-name",
       "seamless-poster",
-      "interaction-prompt",
-      "interaction-prompt-threshold",
       "alt",
       ...VIEW_ATTRIBUTES,
       ...CAMERA_ATTRIBUTES,
@@ -534,20 +532,6 @@ export class SceneEditorElement extends HTMLElement {
   #posterFadeTimer: ReturnType<typeof setTimeout> | null = null;
   /** Inline opacity each poster arrived with, restored once its fade finishes. */
   readonly #posterOpacity = new WeakMap<HTMLElement, string>();
-  /** Built-in "drag to rotate" hint (`interaction-prompt`). */
-  #prompt: HTMLElement | null = null;
-  #promptTimer: ReturnType<typeof setTimeout> | null = null;
-  #promptHideTimer: ReturnType<typeof setTimeout> | null = null;
-  #promptShown = false;
-  /** Set by the first gesture: the hint never comes back for this element. */
-  #interacted = false;
-  #wiggle: {
-    cancel(): void;
-    play?(): void;
-    pause?(): void;
-    /** Present on real `Animation`s; `cancel()` rejects it (see `#stopWiggle`). */
-    finished?: Promise<unknown>;
-  } | null = null;
   /** Poster already dismissed (or never present); `dismissPoster()` flips it. */
   #revealed = true;
   /** `true` while a load is in flight (drives `slot="progress-bar"`). */
@@ -672,7 +656,6 @@ export class SceneEditorElement extends HTMLElement {
     this.#visibilityPaused = false;
     this.#tabHidden = false;
     this.#renderPaused = false;
-    this.#resetInteractionPrompt();
     this.#deferredSrcLoad = false;
     this.#pendingPlugins.length = 0;
     this.#resetSlots();
@@ -1130,163 +1113,8 @@ export class SceneEditorElement extends HTMLElement {
     const dismissing = this.#poster !== null && !this.#revealed;
     this.#revealed = true;
     this.#applyPosterVisibility();
-    // The canvas is finally uncovered — now the hint is worth showing.
-    this.#scheduleInteractionPrompt();
     if (!dismissing) return;
     this.dispatchEvent(new CustomEvent("poster-dismissed", { detail: {} }));
-  }
-
-  /* ------------------------------------------------- interaction prompt ---- */
-
-  /**
-   * `interaction-prompt="none"` turns the hint off; the default `auto` shows it
-   * after `interaction-prompt-threshold` ms of no gesture (model-viewer's own
-   * 3s), then never again once the user has touched the viewer.
-   */
-  #promptEnabled(): boolean {
-    return (this.getAttribute("interaction-prompt") ?? "auto").trim().toLowerCase() !== "none";
-  }
-
-  #scheduleInteractionPrompt(): void {
-    this.#clearPromptTimer();
-    if (this.#interacted || this.#promptShown || !this.#promptEnabled()) return;
-    if (typeof setTimeout !== "function") return;
-    const threshold = Math.max(0, readNumberAttr(this, "interaction-prompt-threshold", 3000));
-    this.#promptTimer = setTimeout(() => {
-      this.#promptTimer = null;
-      this.#showInteractionPrompt();
-    }, threshold);
-  }
-
-  #clearPromptTimer(): void {
-    if (this.#promptTimer === null) return;
-    clearTimeout(this.#promptTimer);
-    this.#promptTimer = null;
-  }
-
-  /**
-   * Drop the running nudge. `Animation.cancel()` rejects the animation's
-   * `finished` promise (spec behaviour, and happy-dom does the same). Nothing
-   * awaits it here, so the rejection has to be observed or it surfaces as an
-   * unhandled rejection in the host page — attach the no-op catch *before*
-   * cancelling, so it lands before the microtask checkpoint.
-   */
-  #stopWiggle(): void {
-    const wiggle = this.#wiggle;
-    this.#wiggle = null;
-    if (!wiggle) return;
-    void wiggle.finished?.catch(() => {});
-    wiggle.cancel();
-  }
-
-  #showInteractionPrompt(): void {
-    // A poster still covering the canvas means there is nothing to hint at yet;
-    // `#dismissPoster` re-schedules once the model is visible.
-    if (this.#interacted || this.#promptShown || !this.#revealed || !this.#promptEnabled()) return;
-    const prompt = this.#ensureInteractionPrompt();
-    if (!prompt) return;
-    prompt.style.display = "flex";
-    // Next frame, so the opacity transition has a start value to animate from.
-    this.#promptShown = true;
-    if (typeof requestAnimationFrame === "function") {
-      requestAnimationFrame(() => {
-        if (this.#promptShown) prompt.style.opacity = "1";
-      });
-    } else {
-      prompt.style.opacity = "1";
-    }
-    this.#wiggleInteractionPrompt(prompt);
-  }
-
-  #dismissInteractionPrompt(): void {
-    this.#clearPromptTimer();
-    this.#interacted = true;
-    this.#hideInteractionPrompt();
-  }
-
-  #hideInteractionPrompt(): void {
-    const prompt = this.#prompt;
-    if (!prompt || !this.#promptShown) return;
-    this.#promptShown = false;
-    this.#stopWiggle();
-    prompt.style.opacity = "0";
-    if (typeof setTimeout === "function") {
-      // Keep it mounted through the fade, then take it out of the box model.
-      this.#promptHideTimer = setTimeout(() => {
-        this.#promptHideTimer = null;
-        if (!this.#promptShown) prompt.style.display = "none";
-      }, 300);
-    } else {
-      prompt.style.display = "none";
-    }
-  }
-
-  /** Horizontal nudge, the affordance model-viewer's hand animation conveys. */
-  #wiggleInteractionPrompt(prompt: HTMLElement): void {
-    const animate = (prompt as HTMLElement & { animate?: HTMLElement["animate"] }).animate;
-    if (typeof animate !== "function") return;
-    this.#stopWiggle();
-    this.#wiggle = prompt.animate(
-      [
-        { transform: "translateX(-50%)" },
-        { transform: "translateX(calc(-50% + 8px))" },
-        { transform: "translateX(-50%)" },
-      ],
-      { duration: 1600, iterations: Number.POSITIVE_INFINITY, easing: "ease-in-out" },
-    );
-    this.#wiggle?.pause?.();
-    this.#wiggle?.play?.();
-  }
-
-  /** Create the hint lazily; a host that clears `innerHTML` gets a fresh one. */
-  #ensureInteractionPrompt(): HTMLElement | null {
-    const existing = this.#prompt;
-    if (existing && this.contains(existing)) return existing;
-    if (typeof document === "undefined") return null;
-    this.#ensurePositionedHost();
-    const prompt = document.createElement("div");
-    prompt.setAttribute("data-se-interaction-prompt", "");
-    prompt.setAttribute("aria-hidden", "true");
-    Object.assign(prompt.style, {
-      position: "absolute",
-      left: "50%",
-      bottom: "18px",
-      transform: "translateX(-50%)",
-      width: "44px",
-      height: "44px",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      borderRadius: "50%",
-      background: "rgba(0, 0, 0, 0.32)",
-      color: "#ffffff",
-      pointerEvents: "none",
-      zIndex: "2",
-      opacity: "0",
-      transition: "opacity 300ms ease",
-    } satisfies Partial<CSSStyleDeclaration>);
-    prompt.innerHTML =
-      '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" ' +
-      'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-      '<path d="M20 12a8 8 0 1 1-2.7-6.04"/>' +
-      '<path d="M20 4.5v3.2h-3.2"/></svg>';
-    this.appendChild(prompt);
-    this.#prompt = prompt;
-    return prompt;
-  }
-
-  #resetInteractionPrompt(): void {
-    this.#clearPromptTimer();
-    if (this.#promptHideTimer !== null) {
-      clearTimeout(this.#promptHideTimer);
-      this.#promptHideTimer = null;
-    }
-    this.#stopWiggle();
-    this.#promptShown = false;
-    this.#interacted = false;
-    // Ours, not the host's: a reconnect builds a fresh one in `#init`.
-    this.#prompt?.remove();
-    this.#prompt = null;
   }
 
   /** Glue `hotspot-*` anchors to their world position after camera/resize moves. */
@@ -2093,7 +1921,6 @@ export class SceneEditorElement extends HTMLElement {
       // `reveal="interaction"`: the first gesture (orbit, zoom, key) dismisses
       // the poster. Passive — the viewer must never block gestures.
       const onFirstInteraction = (): void => {
-        this.#dismissInteractionPrompt();
         this.#dismissPoster("interaction");
       };
       for (const type of ["pointerdown", "wheel", "touchstart"]) {
@@ -2190,8 +2017,6 @@ export class SceneEditorElement extends HTMLElement {
       // there, then keep watching for later additions.
       this.#observeSlots();
       this.#collectSlots();
-      // Editors without `src` still have content — the hint counts down anyway.
-      this.#scheduleInteractionPrompt();
 
       this.dispatchEvent(new CustomEvent("scene-ready"));
       this.#resolveReady();
@@ -2235,7 +2060,6 @@ export class SceneEditorElement extends HTMLElement {
     // initial state is already `false` — the render loop still has to stop.
     this.#visibilityPaused = !visible;
     this.#setRenderingPaused();
-    if (visible) this.#scheduleInteractionPrompt();
     if (!changed) return;
     this.dispatchEvent(new CustomEvent("visibility-change", { detail: { visible } }));
     // Viewer-compatible alias (model-viewer `model-visibility`).
@@ -2312,9 +2136,8 @@ export class SceneEditorElement extends HTMLElement {
     }
     event.preventDefault();
     this.setCameraOrbit(next);
-    // A key is a first gesture too: retire the hint and reveal an
-    // `interaction`-mode poster, exactly as a pointerdown would.
-    this.#dismissInteractionPrompt();
+    // A key is a first gesture too: it reveals an `interaction`-mode poster,
+    // exactly as a pointerdown would.
     this.#dismissPoster("interaction");
   }
 
