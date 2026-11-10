@@ -171,14 +171,19 @@ export const EnvironmentSkyboxSchema = z.strictObject({
 /** Contact shadow (v4): a soft catch plane under the content. */
 export const ContactShadowSchema = z.strictObject({
   enabled: z.boolean(),
-  /** 0..1; higher is darker. Defaults to 0.35. */
+  /**
+   * 0..1; higher is darker. model-viewer's `shadow-intensity`: in range 0..1 it
+   * is the catcher's ceiling opacity, eased down automatically for hard
+   * shadows. Missing means 1.
+   */
   opacity: z.number().min(0).max(1).optional(),
   /** Plane offset from y = 0, for content that sits below the origin. */
   height: z.number().optional(),
   /**
-   * 0..1 blur radius of the shadow map (v5, model-viewer `shadow-softness`).
-   * Missing keeps the pre-v5 PCF-soft look; declaring it switches the shadow
-   * sampling to radius-based PCF so the value actually has an effect.
+   * 0..1, model-viewer's `shadow-softness`. Drives the shadow texture's
+   * resolution and the height range that feeds it: crisp keeps only the contact
+   * band just above the floor, soft lets the whole model contribute. Missing
+   * means 1 (softest).
    */
   softness: z.number().min(0).max(1).optional(),
 });

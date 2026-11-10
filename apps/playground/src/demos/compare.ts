@@ -16,6 +16,9 @@ import { q } from "./shared";
 
 interface ModelViewerLike extends HTMLElement {
   availableAnimations?: string[];
+  currentTime?: number;
+  /** Read-only; `NaN`/`0` before the first clip is known. */
+  duration?: number;
   play?: () => void;
   pause?: () => void;
 }
@@ -35,6 +38,15 @@ let paused = false;
 let clipName: string | null = null;
 /** `model-viewer` upgrades once, possibly long after this module runs. */
 let mvBound = false;
+/** Load gates for {@link alignPlayback}: both sides must be up before seeking. */
+let oursLoaded = false;
+let mvLoaded = false;
+/** Shared playback clock: both panes are seeked to `sharedTime()` twice a second. */
+const SYNC_INTERVAL_MS = 500;
+let syncTimer: number | null = null;
+let syncOrigin = 0;
+/** Clip position when the transport was paused, so resuming does not jump. */
+let pausedAt = 0;
 
 function ours(): ThreeRuntime | null {
   return editor ? (editor.runtime as ThreeRuntime) : null;
@@ -116,6 +128,9 @@ function applyClip(name: string): void {
 function setModel(id: string): void {
   const url = MODELS[id];
   if (!url) return;
+  // New asset → both panes are loading again; re-align once they report back.
+  oursLoaded = false;
+  mvLoaded = false;
   mv.setAttribute("src", url);
   if (editor) editor.src = url;
   // Both sides restart on `autoplay`; keep the transport button honest.
@@ -124,15 +139,10 @@ function setModel(id: string): void {
 }
 
 function applyShadow(enabled: boolean): void {
+  // Same attribute on both sides — `shadow-intensity` is display-only, so it is
+  // re-asserted after every load instead of being baked into a view snapshot.
   mv.setAttribute("shadow-intensity", enabled ? "1" : "0");
-  const rt = ours();
-  if (!rt || !editor) return;
-  const view = rt.getViewState();
-  const environment = { ...view.environment };
-  if (enabled) environment.contactShadow = { enabled: true };
-  else delete environment.contactShadow;
-  // Runtime path: a viewer switch must not mark the document dirty.
-  rt.applyViewState({ ...view, environment });
+  editor?.setAttribute("shadow-intensity", enabled ? "1" : "0");
 }
 
 function togglePlay(): void {
@@ -140,11 +150,15 @@ function togglePlay(): void {
   if (!rt) return;
   paused = !paused;
   if (paused) {
+    pausedAt = sharedTime();
     mv.pause?.();
     rt.pauseAnimations();
   } else {
+    // Resume from the paused frame on both sides, not from two different clocks.
+    syncOrigin = performance.now() - pausedAt * 1000;
     mv.play?.();
     rt.resumeAnimations();
+    seekBoth(pausedAt);
   }
   playButton.textContent = paused ? "播放" : "暂停";
 }
@@ -159,6 +173,49 @@ function onOursLoaded(): void {
     applyClip(names[0] ?? "");
   }
   refreshClips();
+  oursLoaded = true;
+  alignPlayback();
+}
+
+/**
+ * Both panes autoplay the same clip, but each starts whenever its own load
+ * finishes — seconds apart — and Fox's `Survey` clip swings the body around, so
+ * a half-second offset reads as "the two viewers disagree". Once both report
+ * `load`, drive them from one clock.
+ */
+function alignPlayback(): void {
+  if (!oursLoaded || !mvLoaded || !mvBound) return;
+  syncOrigin = performance.now();
+  pausedAt = 0;
+  seekBoth(0);
+  if (!paused) {
+    mv.play?.();
+    ours()?.resumeAnimations();
+  }
+  if (syncTimer === null) {
+    syncTimer = window.setInterval(() => {
+      if (!paused) seekBoth(sharedTime());
+    }, SYNC_INTERVAL_MS);
+  }
+}
+
+/** Clip length in seconds, or `null` before model-viewer has one. */
+function clipDuration(): number | null {
+  const duration = Number(mv.duration);
+  return Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
+/** Where both panes should be, derived from one origin rather than two clocks. */
+function sharedTime(): number {
+  const duration = clipDuration();
+  const elapsed = (performance.now() - syncOrigin) / 1000;
+  return duration === null ? elapsed : elapsed % duration;
+}
+
+function seekBoth(seconds: number): void {
+  if (!Number.isFinite(seconds)) return;
+  mv.currentTime = seconds;
+  ours()?.setAnimationTime(seconds);
 }
 
 function bind(): void {
@@ -194,6 +251,9 @@ async function main(): Promise<void> {
   el.setAttribute("src", MODELS.fox!);
   el.setAttribute("autoplay", "");
   el.setAttribute("animation-crossfade-duration", "200");
+  // Mirror the left pane's shadow tuning so the comparison is about rendering,
+  // not about two different shadow settings.
+  el.setAttribute("shadow-softness", "0.6");
   q("#se-frame").appendChild(el);
   editor = el;
   el.addEventListener("load", onOursLoaded);
@@ -210,7 +270,11 @@ async function main(): Promise<void> {
       q("#mv-fallback").setAttribute("hidden", "");
       if (!mvBound) {
         mvBound = true;
-        mv.addEventListener("load", refreshClips);
+        mv.addEventListener("load", () => {
+          mvLoaded = true;
+          refreshClips();
+          alignPlayback();
+        });
       }
       refreshClips();
     })

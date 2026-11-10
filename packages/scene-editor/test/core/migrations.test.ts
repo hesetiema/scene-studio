@@ -13,6 +13,7 @@ describe("migrateSceneDocument", () => {
       { from: 1, to: 2 },
       { from: 2, to: 3 },
       { from: 3, to: 4 },
+      { from: 4, to: 5 },
     ]);
     expect(document).toEqual({
       ...v1,
@@ -27,6 +28,7 @@ describe("migrateSceneDocument", () => {
     expect(applied).toEqual([
       { from: 2, to: 3 },
       { from: 3, to: 4 },
+      { from: 4, to: 5 },
     ]);
     // v3/v4 only added optional fields, so the payload is identical apart from the stamp.
     expect(document).toEqual({ ...v2, schemaVersion: SCHEMA_VERSION });

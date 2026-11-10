@@ -42,8 +42,8 @@ function v3ToV4(doc: RawDocument): RawDocument {
 
 /**
  * v5 added `view.environment.skybox` (a backdrop independent of the IBL) and
- * `contactShadow.softness`. Both optional — the pre-v5 PCF-soft shadow look is
- * what "no softness" means — so again only the stamp changes.
+ * `contactShadow.softness`. Both optional — a document without `softness` gets
+ * the default soft shadow — so again only the stamp changes.
  */
 function v4ToV5(doc: RawDocument): RawDocument {
   const next: RawDocument = { ...doc };

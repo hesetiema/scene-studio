@@ -16,9 +16,11 @@ export function createDefaultViewState(): ViewState {
 }
 
 /**
- * model-viewer's `field-of-view="auto"` in landscape panes. Portrait viewports
- * use 45° instead; `frameViewer()` re-derives it from the aspect at frame time,
- * so this is only the initial value the synthesized document carries.
+ * model-viewer's `field-of-view="auto"` framing FOV. Constant: v4 does not
+ * raise it in portrait — a narrow pane is handled by `adjustedFoV()` widening
+ * the *rendered* vertical FOV instead (measured: 30° framed, 34.3°/40.2° shown
+ * at aspect 0.87/0.73). `frameViewer()` re-derives the rendered value per
+ * aspect, so this is only the initial value the synthesized document carries.
  */
 export const PREVIEW_FOV = 30;
 
@@ -27,7 +29,7 @@ export const PREVIEW_FOV = 30;
  *
  * Deliberately *not* the editor defaults above — a viewer is not an editor:
  * - `gridVisible: false` — the floor grid is authoring chrome; model-viewer has none.
- * - `fov: 45` — model-viewer's default vertical FOV, so framing matches.
+ * - `fov: 30` — model-viewer's framing FOV, so framing matches.
  * - lights at `0` — the environment map is the only light source, the way
  *   model-viewer renders. The analytic ambient + key light would add a second,
  *   flatter light on top of the IBL and wash out its contrast.
