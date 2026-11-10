@@ -57,6 +57,22 @@ describe("createGltfAssetLoader (D16)", () => {
     expect(setKTX2Loader).toHaveBeenCalledWith({ kind: "ktx2" });
   });
 
+  it("applies the decoder bundle again on each load", async () => {
+    const setMeshoptDecoder = vi.fn();
+    const gltfLoader = stubLoader({ setMeshoptDecoder });
+    let decoder: unknown;
+    const load = createGltfAssetLoader({
+      resolveUrl: (id) => `${id}.glb`,
+      gltfLoader,
+      decoders: () => ({ meshoptDecoder: decoder }),
+    });
+
+    decoder = { kind: "meshopt" };
+    await load("a");
+    expect(setMeshoptDecoder).toHaveBeenCalledWith({ kind: "meshopt" });
+    expect(gltfLoader.loadAsync).toHaveBeenCalledTimes(1);
+  });
+
   it("propagates loader failure as AssetError.LoadFailed", async () => {
     const gltfLoader = stubLoader({
       loadAsync: vi.fn(async () => {

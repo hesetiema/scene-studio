@@ -1,4 +1,5 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
+import type { MaterialVariantSet } from "./material-variants";
 
 export interface LoadedAsset {
   /** Opaque runtime-specific handle (e.g. THREE.Group). */
@@ -9,6 +10,11 @@ export interface LoadedAsset {
   metadata?: unknown;
   /** Optional glTF animation clips (THREE.AnimationClip[]) forwarded to the runtime. */
   animations?: readonly unknown[];
+  /**
+   * Optional `KHR_materials_variants` set. Absent when the asset declares none,
+   * or when the host's loader cannot parse it.
+   */
+  variants?: MaterialVariantSet;
 }
 
 /** Byte-level progress for one asset load (`total` may be 0 when unknown). */

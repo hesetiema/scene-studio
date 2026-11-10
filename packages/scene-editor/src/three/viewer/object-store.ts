@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { MaterialDTO, SceneDocument, SceneObjectDTO } from "../../core/document/schema";
 import type { AssetCache, LoadedAsset } from "../../assets/asset-cache";
 import type { Transform } from "../../runtime/runtime-contract";
+import { variantTableFor } from "../../assets/material-variants";
 import {
   applyMaterialOverride,
   createGroupObject,
@@ -49,6 +50,21 @@ export interface ObjectStore {
   reparent(id: string, parentId: string | undefined): void;
   /** Replace or clear the material override for one object. */
   setMaterial(id: string, material: MaterialDTO | undefined): void;
+  /**
+   * Switch every mounted asset to a `KHR_materials_variants` variant; `null`
+   * restores each asset's own materials. Remembered across loads, so a variant
+   * set before `src` finishes loading still applies.
+   *
+   * Objects carrying a document material override are skipped: an explicit
+   * material is a stronger statement than a viewer-level variant pick.
+   *
+   * Returns whether any mounted asset actually declares that variant.
+   */
+  setVariant(name: string | null): boolean;
+  /** Variant names declared by the mounted assets, in document order. */
+  variants(): string[];
+  /** Currently applied variant (`null` = asset default). */
+  readonly variantName: string | null;
   get(id: string): THREE.Object3D | undefined;
   list(): THREE.Object3D[];
   /** World-space bounds of everything mounted; empty when nothing is loaded. */
@@ -72,6 +88,9 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
   const disposers = new Map<string, () => void>();
   /** Active material overrides — the only way to get the originals back. */
   const overrides = new Map<string, MaterialOverrideHandle>();
+  /** Loaded assets per object id — the variant tables live on them. */
+  const assets = new Map<string, LoadedAsset>();
+  let variantName: string | null = null;
 
   function restoreOverride(id: string): void {
     const handle = overrides.get(id);
@@ -81,6 +100,39 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       handle.restore();
     } catch {
       // A failed restore must not block the rest of the teardown.
+    }
+  }
+
+  /**
+   * Point one instance's material slots at `variantName` (or back at the asset's
+   * own material when it is `null`).
+   *
+   * Meshes are matched through `userData`, which `Object3D.clone` copies over
+   * JSON — the table itself cannot live in `userData` for the same reason, so it
+   * stays on the cached asset and is looked up by that string.
+   */
+  function applyVariantToObject(
+    id: string,
+    object: THREE.Object3D,
+    set: LoadedAsset["variants"],
+  ): void {
+    if (!set) return;
+    // A document material override outranks a viewer-level variant pick.
+    if (overrides.has(id)) return;
+    object.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (mesh.isMesh !== true) return;
+      const table = variantTableFor(mesh, set);
+      if (!table) return;
+      const chosen = variantName === null ? undefined : table.byName.get(variantName);
+      mesh.material = chosen ?? table.base;
+    });
+  }
+
+  /** Re-apply the current variant to every mounted instance. */
+  function applyVariant(): void {
+    for (const [id, object] of objects) {
+      applyVariantToObject(id, object, assets.get(id)?.variants);
     }
   }
 
@@ -145,8 +197,12 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
         : undefined,
     );
     const object = instantiateAsset(asset.scene, dto);
+    assets.set(dto.id, asset);
+    // A variant chosen before the asset finished loading still wins.
+    applyVariantToObject(dto.id, object, asset.variants);
     register(dto, object, () => {
       // release first: removal failure must never leak a refcount (D12)
+      assets.delete(dto.id);
       cache.release(assetId);
       removeFromGraph(object);
     });
@@ -304,8 +360,33 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     setMaterial(id: string, material: MaterialDTO | undefined): void {
       restoreOverride(id);
       const object = objects.get(id);
-      if (!object || !material) return;
-      overrides.set(id, applyMaterialOverride(object, material));
+      if (!object) return;
+      if (material) {
+        overrides.set(id, applyMaterialOverride(object, material));
+        return;
+      }
+      // Override cleared → the variant (or the asset default) is in charge again.
+      applyVariantToObject(id, object, assets.get(id)?.variants);
+    },
+    setVariant(name: string | null): boolean {
+      variantName = name;
+      applyVariant();
+      return name === null || store.variants().includes(name);
+    },
+    variants(): string[] {
+      const seen = new Set<string>();
+      const names: string[] = [];
+      for (const asset of assets.values()) {
+        for (const name of asset.variants?.names ?? []) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          names.push(name);
+        }
+      }
+      return names;
+    },
+    get variantName(): string | null {
+      return variantName;
     },
     get(id: string): THREE.Object3D | undefined {
       return objects.get(id);
@@ -349,6 +430,7 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       disposers.clear();
       objects.clear();
       overrides.clear();
+      assets.clear();
     },
     dispose(): void {
       store.clear();

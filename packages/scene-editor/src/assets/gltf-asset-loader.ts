@@ -19,6 +19,34 @@ export interface MinimalGltfLoader {
   ): unknown;
   setDRACOLoader?(loader: unknown): void;
   setKTX2Loader?(loader: unknown): void;
+  setMeshoptDecoder?(decoder: unknown): void;
+}
+
+/**
+ * Optional decoders (D16). three wants instances, not config: a `DRACOLoader`
+ * with its decoder path set, a `KTX2Loader` already `detectSupport`-ed against
+ * the renderer, and/or `MeshoptDecoder`.
+ */
+export interface GltfDecoders {
+  dracoLoader?: unknown;
+  ktx2Loader?: unknown;
+  meshoptDecoder?: unknown;
+}
+
+/**
+ * Push decoders onto a loader. Absent keys are left alone (three keeps whatever
+ * it already had), so this is safe to call before every load — which is what
+ * makes "assign the decoder property after connect" work without rebuilding the
+ * pipeline.
+ */
+export function applyGltfDecoders(
+  loader: MinimalGltfLoader,
+  decoders: GltfDecoders | undefined,
+): void {
+  if (!decoders) return;
+  if (decoders.dracoLoader) loader.setDRACOLoader?.(decoders.dracoLoader);
+  if (decoders.ktx2Loader) loader.setKTX2Loader?.(decoders.ktx2Loader);
+  if (decoders.meshoptDecoder) loader.setMeshoptDecoder?.(decoders.meshoptDecoder);
 }
 
 /** Use `load` when progress matters, `loadAsync` otherwise. */
@@ -47,6 +75,8 @@ export interface GltfAssetLoaderOptions {
   gltfLoader: MinimalGltfLoader;
   dracoLoader?: unknown;
   ktx2Loader?: unknown;
+  /** Read on every load, so a host can assign decoders after the pipeline exists. */
+  decoders?: () => GltfDecoders;
 }
 
 /** Supported format matrix (D16). Draco/KTX2 are optional enhancers, not required. */
@@ -54,8 +84,10 @@ export const SUPPORTED_ASSET_FORMATS = ["glb", "gltf"] as const;
 
 export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
   const { resolveUrl, gltfLoader } = options;
-  if (options.dracoLoader) gltfLoader.setDRACOLoader?.(options.dracoLoader);
-  if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
+  applyGltfDecoders(gltfLoader, {
+    dracoLoader: options.dracoLoader,
+    ktx2Loader: options.ktx2Loader,
+  });
 
   return async function loadGltfAsset(
     assetId: string,
@@ -72,6 +104,8 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
     }
     let sceneData: { scene: unknown; animations?: unknown[] };
     try {
+      // Re-apply: decoders may have been assigned after this loader was built.
+      applyGltfDecoders(gltfLoader, options.decoders?.());
       sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load glTF asset: ${assetId}`, {

@@ -1,6 +1,12 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
 import type { AssetLoadContext, LoadedAsset } from "./asset-cache";
-import { loadGltfScene, type MinimalGltfLoader } from "./gltf-asset-loader";
+import {
+  applyGltfDecoders,
+  loadGltfScene,
+  type GltfDecoders,
+  type MinimalGltfLoader,
+} from "./gltf-asset-loader";
+import { collectMaterialVariants } from "./material-variants";
 
 /** Host-provided URL resolution (design §10). SDK never hardcodes asset paths. */
 export interface AssetResolver {
@@ -12,6 +18,12 @@ export interface ResolverAssetLoaderOptions {
   gltfLoader?: MinimalGltfLoader;
   dracoLoader?: unknown;
   ktx2Loader?: unknown;
+  /**
+   * Read before every load. The element passes a getter over its own decoder
+   * properties, so a host can assign a decoder after `connect` and still have
+   * the next `src` load use it.
+   */
+  decoders?: () => GltfDecoders;
 }
 
 /**
@@ -21,8 +33,10 @@ export interface ResolverAssetLoaderOptions {
 export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
   const { resolver, gltfLoader } = options;
   if (gltfLoader) {
-    if (options.dracoLoader) gltfLoader.setDRACOLoader?.(options.dracoLoader);
-    if (options.ktx2Loader) gltfLoader.setKTX2Loader?.(options.ktx2Loader);
+    applyGltfDecoders(gltfLoader, {
+      dracoLoader: options.dracoLoader,
+      ktx2Loader: options.ktx2Loader,
+    });
   }
 
   return async function loadResolvedAsset(
@@ -53,6 +67,8 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
     let sceneData: { scene: unknown; animations?: unknown[] };
     try {
       if (!gltfLoader) throw new Error("gltfLoader not provided");
+      // Decoders can be assigned after this loader was built; re-apply each load.
+      applyGltfDecoders(gltfLoader, options.decoders?.());
       sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {
@@ -76,6 +92,10 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
     if (sceneData.animations && sceneData.animations.length > 0) {
       asset.animations = sceneData.animations;
     }
+    // KHR_materials_variants is not parsed by three; read it off the glTF JSON.
+    // A host-replaced `loadGltfScene` may not hand back a parser at all.
+    const variants = await collectMaterialVariants(sceneData);
+    if (variants) asset.variants = variants;
     return asset;
   };
 }

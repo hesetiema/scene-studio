@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { createObjectStore } from "../../src/three/viewer/object-store";
 import { AssetCache } from "../../src/assets/asset-cache";
+import {
+  MATERIAL_VARIANT_KEY,
+  type MaterialVariantSet,
+} from "../../src/assets/material-variants";
 import type { SceneObjectDTO } from "../../src/core/document/schema";
 import { sceneDocument, sceneObject } from "../support/documents";
 
@@ -231,6 +235,144 @@ describe("object store: material overrides on assets", () => {  it("repaints the
     // The cache still owns the original material, untouched.
     expect(shared.color.getHexString()).toBe("ffffff");
 
+    store.clear();
+  });
+});
+
+describe("object store: material variants", () => {
+  function variantAsset() {
+    const base = new THREE.MeshStandardMaterial({ color: 0x111111 });
+    const red = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+    const blue = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(), base);
+    mesh.userData[MATERIAL_VARIANT_KEY] = "0:0";
+    const root = new THREE.Group();
+    root.add(mesh);
+    const variants: MaterialVariantSet = {
+      names: ["Red", "Blue"],
+      tables: new Map([
+        ["0:0", { base, byName: new Map([["Red", red], ["Blue", blue]]) }],
+      ]),
+    };
+    return { root, mesh, base, red, blue, variants };
+  }
+
+  function makeVariantStore(asset = variantAsset()) {
+    const scene = new THREE.Scene();
+    const store = createObjectStore({
+      scene,
+      assetCache: new AssetCache(async () => ({ scene: asset.root, variants: asset.variants })),
+      onAssetError: () => {},
+    });
+    return { scene, store, asset };
+  }
+
+  function mountedMesh(store: ReturnType<typeof createObjectStore>, id = "asset-obj"): THREE.Mesh {
+    const root = store.get(id)!;
+    let found: THREE.Mesh | null = null;
+    root.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh === true) found = child as THREE.Mesh;
+    });
+    if (!found) throw new Error("no mesh mounted");
+    return found;
+  }
+
+  it("lists the variants the asset declares, in order", async () => {
+    const { store } = makeVariantStore();
+    await store.load(sceneDocument({ objects: [sceneObject({ id: "asset-obj", assetId: "a1" })] }));
+    expect(store.variants()).toEqual(["Red", "Blue"]);
+    expect(store.variantName).toBeNull();
+    store.clear();
+  });
+
+  it("swaps the material slot and restores the asset default", async () => {
+    const { store, asset } = makeVariantStore();
+    await store.load(sceneDocument({ objects: [sceneObject({ id: "asset-obj", assetId: "a1" })] }));
+
+    expect(mountedMesh(store).material).toBe(asset.base);
+
+    expect(store.setVariant("Red")).toBe(true);
+    expect(mountedMesh(store).material).toBe(asset.red);
+
+    expect(store.setVariant("Blue")).toBe(true);
+    expect(mountedMesh(store).material).toBe(asset.blue);
+
+    // null means "back to what the asset shipped with".
+    expect(store.setVariant(null)).toBe(true);
+    expect(mountedMesh(store).material).toBe(asset.base);
+    store.clear();
+  });
+
+  it("remembers a variant chosen before the asset finished loading", async () => {
+    const { store, asset } = makeVariantStore();
+    // Nothing mounted yet: the name is unknown but must not be dropped.
+    expect(store.setVariant("Red")).toBe(false);
+    expect(store.variantName).toBe("Red");
+
+    await store.load(sceneDocument({ objects: [sceneObject({ id: "asset-obj", assetId: "a1" })] }));
+    expect(mountedMesh(store).material).toBe(asset.red);
+    store.clear();
+  });
+
+  it("re-applies the current variant to objects added later", async () => {
+    const { store, asset } = makeVariantStore();
+    await store.load(sceneDocument({ objects: [] }));
+    store.setVariant("Blue");
+    await store.add(sceneObject({ id: "asset-obj", assetId: "a1" }));
+    expect(mountedMesh(store).material).toBe(asset.blue);
+    store.clear();
+  });
+
+  it("lets a document material override outrank the variant pick", async () => {
+    const { store, asset } = makeVariantStore();
+    await store.load(
+      sceneDocument({
+        objects: [
+          sceneObject({ id: "asset-obj", assetId: "a1", material: { color: "#00ff00" } }),
+        ],
+      }),
+    );
+
+    store.setVariant("Red");
+    expect(mountedMesh(store).material).not.toBe(asset.red);
+    expect((mountedMesh(store).material as THREE.MeshStandardMaterial).color.getHexString()).toBe(
+      "00ff00",
+    );
+
+    // Clearing the override hands control back to the variant.
+    store.setMaterial("asset-obj", undefined);
+    expect(mountedMesh(store).material).toBe(asset.red);
+    store.clear();
+  });
+
+  it("gives each instance its own slot", async () => {
+    const { store, asset } = makeVariantStore();
+    await store.load(
+      sceneDocument({
+        objects: [
+          sceneObject({ id: "a", assetId: "a1" }),
+          sceneObject({ id: "b", assetId: "a1" }),
+        ],
+      }),
+    );
+
+    // The pick is scene-wide, like model-viewer's `variant-name`.
+    store.setVariant("Red");
+    expect(mountedMesh(store, "a").material).toBe(asset.red);
+    expect(mountedMesh(store, "b").material).toBe(asset.red);
+
+    // But the slots are per instance: an override on one must not leak out.
+    store.setMaterial("a", { color: "#00ff00" });
+    expect(mountedMesh(store, "a").material).not.toBe(mountedMesh(store, "b").material);
+    expect(mountedMesh(store, "b").material).toBe(asset.red);
+    store.clear();
+  });
+
+  it("reports an unknown name without throwing", async () => {
+    const { store } = makeVariantStore();
+    await store.load(sceneDocument({ objects: [sceneObject({ id: "asset-obj", assetId: "a1" })] }));
+    expect(store.setVariant("Nope")).toBe(false);
+    expect(store.variantName).toBe("Nope");
     store.clear();
   });
 });
