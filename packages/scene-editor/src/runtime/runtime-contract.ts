@@ -23,7 +23,7 @@ export type ToneMappingMode = "none" | "linear" | "aces" | "agx" | "neutral";
  * `room` = three's warm `RoomEnvironment` (editor default),
  * `neutral` = grayscale softbox studio matching model-viewer's `neutral`.
  */
-export type EnvironmentPreset = "room" | "neutral";
+export type EnvironmentPreset = "room" | "neutral" | "legacy";
 
 /**
  * Orbit limits in model-viewer terms (`min-camera-orbit` / `max-camera-orbit`):
@@ -185,6 +185,25 @@ export interface RuntimeContract {
   setCameraControls?(options: CameraControlsOptions): void;
   /** Auto-rotation; `null` stops it. Optional for the same reason as above. */
   setAutoRotate?(options: AutoRotateOptions | null): void;
+  /**
+   * Ease the camera to a pose instead of snapping (model-viewer interpolates
+   * `camera-orbit` / `camera-target` writes; `decayMs` is `interpolation-decay`).
+   * Purely presentational: this never writes `view.camera`.
+   */
+  smoothViewTo?(view: ViewState["camera"], decayMs: number): void;
+  /** Land on the last eased goal immediately (model-viewer `jumpCameraToGoal()`). */
+  jumpCameraToGoal?(): void;
+  /**
+   * `touch-action` on the canvas. The orbit addon hard-codes `none` when it
+   * connects, so this must be re-assertable after mount, not just DOM styling.
+   */
+  setTouchAction?(value: string): void;
+  /**
+   * Undo the turntable's accumulated yaw (model-viewer
+   * `resetTurntableRotation()`): the model faces front again without disturbing
+   * the orbit the user dragged to. No-op when the turntable never ran.
+   */
+  resetTurntableRotation?(theta?: number): void;
   /** Playback transport options (autoplay / crossfade / pause-at-end). */
   setAnimationOptions?(options: AnimationOptions): void;
 
@@ -264,6 +283,18 @@ export interface RuntimeContract {
    * procedural probe simply ignore it.
    */
   setEnvironmentPreset?(preset: EnvironmentPreset): void;
+  /**
+   * `environment-image` naming a file: reflections from that HDR/EXR/panorama,
+   * backdrop untouched. `null` hands the IBL back to the preset (or to the
+   * document's own HDR). Last call wins; a broken file keeps the studio.
+   */
+  setEnvironmentImage?(url: string | null): void;
+  /**
+   * `skybox-image`: the visible backdrop. `asEnvironment` mirrors model-viewer —
+   * a skybox with no explicit `environment-image` also lights the model, from
+   * the same download. `null` removes it.
+   */
+  setSkyboxImage?(url: string | null, options: { asEnvironment: boolean }): void;
   /**
    * Variant names declared by the loaded asset(s) — `KHR_materials_variants`,
    * model-viewer's `availableVariants`. Empty when the asset declares none.

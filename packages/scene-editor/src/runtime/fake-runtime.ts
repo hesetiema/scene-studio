@@ -41,9 +41,16 @@ export class FakeRuntime implements RuntimeContract {
     setAutoRotate: [] as Array<AutoRotateOptions | null>,
     setAnimationOptions: [] as AnimationOptions[],
     setEnvironmentPreset: [] as EnvironmentPreset[],
+    setEnvironmentImage: [] as Array<string | null>,
+    setSkyboxImage: [] as Array<{ url: string | null; asEnvironment: boolean }>,
     frameViewer: 0,
     setRenderingPaused: [] as boolean[],
     setCameraByName: [] as Array<string | null>,
+    setTouchAction: [] as string[],
+    resetTurntableRotation: 0,
+    resetTurntableThetas: [] as number[],
+    smoothViewTo: [] as Array<{ view: ViewState["camera"]; decayMs: number }>,
+    jumpCameraToGoal: 0,
     playAnimation: [] as Array<{ objectId: string | null; index: number }>,
     playAnimationByName: [] as string[],
     pauseAnimations: 0,
@@ -212,12 +219,40 @@ export class FakeRuntime implements RuntimeContract {
     this.calls.setEnvironmentPreset.push(preset);
   }
 
+  setEnvironmentImage(url: string | null): void {
+    this.calls.setEnvironmentImage.push(url);
+  }
+
+  setSkyboxImage(url: string | null, options: { asEnvironment: boolean }): void {
+    this.calls.setSkyboxImage.push({ url, asEnvironment: options.asEnvironment });
+  }
+
   setCameraControls(options: CameraControlsOptions): void {
     this.calls.setCameraControls.push(structuredClone(options));
   }
 
   setAutoRotate(options: AutoRotateOptions | null): void {
     this.calls.setAutoRotate.push(options === null ? null : { ...options });
+  }
+
+  resetTurntableRotation(theta?: number): void {
+    this.calls.resetTurntableRotation += 1;
+    this.calls.resetTurntableThetas.push(theta ?? 0);
+  }
+
+  smoothViewTo(view: ViewState["camera"], decayMs: number): void {
+    this.calls.smoothViewTo.push({ view: structuredClone(view), decayMs });
+    // Nothing to animate here: land on the goal at once, so the element's
+    // getters (`getCameraOrbit`, `getFieldOfView`) read the new pose.
+    this.applyViewState({ ...this.getViewState(), camera: structuredClone(view) });
+  }
+
+  jumpCameraToGoal(): void {
+    this.calls.jumpCameraToGoal += 1;
+  }
+
+  setTouchAction(value: string): void {
+    this.calls.setTouchAction.push(value);
   }
 
   setAnimationOptions(options: AnimationOptions): void {

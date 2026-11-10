@@ -216,8 +216,8 @@ export class ThreeRuntime implements RuntimeContract {
       preset: options.environmentPreset ?? "room",
       onEnvironmentReady: () => this.#render(),
       ...(options.resolveAsset ? { resolveAsset: options.resolveAsset } : {}),
-      onHdrError: (error, hdr) => this.#emitEnvironmentError(error, hdr.assetId),
-      onSkyboxError: (error, skybox) => this.#emitEnvironmentError(error, skybox.assetId),
+      onHdrError: (error, source) => this.#emitEnvironmentError(error, source),
+      onSkyboxError: (error, source) => this.#emitEnvironmentError(error, source),
     });
 
     const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? options.canvas;
@@ -498,6 +498,37 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   /**
+   * Ease the camera to a pose (model-viewer's `interpolation-decay`). The fade
+   * is presentational: `view.camera` is untouched, so a viewer attribute never
+   * dirties the document or fakes a user interaction.
+   */
+  smoothViewTo(view: ViewState["camera"], decayMs: number): void {
+    this.#cameraRig.easeTo(view, decayMs);
+  }
+
+  /**
+   * `touch-action` for the canvas. Needed as a runtime call because the orbit
+   * addon writes `none` onto the canvas when it connects — the viewer has to be
+   * able to re-assert its value after that.
+   */
+  setTouchAction(value: string): void {
+    this.#cameraRig.setTouchAction(value);
+  }
+
+  /** Land on the last eased goal now (model-viewer `jumpCameraToGoal()`). */
+  jumpCameraToGoal(): void {
+    this.#cameraRig.finishEase();
+  }
+
+  /**
+   * Roll the turntable's yaw back to zero (model-viewer
+   * `resetTurntableRotation()`). The camera the user dragged to is untouched.
+   */
+  resetTurntableRotation(theta?: number): void {
+    this.#cameraRig.resetTurntableRotation(theta);
+  }
+
+  /**
    * Transport policy. Autoplay is applied to content that is already mounted,
    * so a host that sets it before `loadDocument` still gets playback.
    */
@@ -680,11 +711,27 @@ export class ThreeRuntime implements RuntimeContract {
 
   /** Swap the built-in studio IBL (model-viewer `environment-image` parity). */
   setEnvironmentPreset(preset: EnvironmentPreset): void {
-    if (preset !== "room" && preset !== "neutral") return;
+    if (preset !== "room" && preset !== "neutral" && preset !== "legacy") return;
     this.#environment.setPreset(preset);
     // The shadow direction is derived from the studio's key light.
     this.#syncContactShadow();
     this.#render();
+  }
+
+  /**
+   * `environment-image` as a file URL: reflections only. Bypasses the asset
+   * resolver — the attribute holds the path, not a document asset id.
+   */
+  setEnvironmentImage(url: string | null): void {
+    this.#environment.setHdrUrl(url);
+  }
+
+  /**
+   * `skybox-image`: the visible backdrop, and the light probe too when
+   * `asEnvironment` (no explicit `environment-image`) — one download, two uses.
+   */
+  setSkyboxImage(url: string | null, options: { asEnvironment: boolean }): void {
+    this.#environment.setSkyboxUrl(url, options.asEnvironment);
   }
 
   /** Display transfer function; presentation-only, never persisted. */

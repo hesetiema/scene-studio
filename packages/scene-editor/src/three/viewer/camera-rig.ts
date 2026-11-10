@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { ViewState } from "../../core/document/schema";
 import type { AutoRotateOptions, CameraControlsOptions } from "../../runtime/runtime-contract";
+import { createTouchActionOwner } from "./touch-action-owner";
 
 /** Minimal OrbitControls surface the runtime needs (real or injected, D22). */
 export interface OrbitControlsLike {
@@ -49,12 +50,33 @@ export interface CameraRig {
   /** Turntable rotation; `null` stops it. Survives a late controls mount. */
   setAutoRotate(options: AutoRotateOptions | null): void;
   /**
+   * Undo the yaw the turntable has accumulated so far (model-viewer
+   * `resetTurntableRotation()`): the model faces front again without disturbing
+   * the orbit the user dragged to. No-op when the turntable never ran.
+   */
+  resetTurntableRotation(theta?: number): void;
+  /**
    * Gate both rAF loops (turntable + damping settle) without dropping their
    * configuration — used when the viewer goes off-screen.
    */
   setActive(active: boolean): void;
   readView(): CameraView;
   applyView(view: CameraView): void;
+  /**
+   * Ease to `view` instead of snapping (model-viewer's `interpolation-decay`:
+   * asymptotic, `decayMs` is where most of the motion happens). The camera
+   * arcs around the target rather than cutting through it.
+   */
+  easeTo(view: CameraView, decayMs: number): void;
+  /** Land on a running ease's goal right now (model-viewer `jumpCameraToGoal`). */
+  finishEase(): void;
+  /**
+   * CSS `touch-action` for the canvas. The addon hard-codes `none` when it
+   * connects (`OrbitControls`: "Disable touch scroll"), so a viewer that wants
+   * page scroll back has to re-assert its value afterwards — which is why this
+   * lives on the rig rather than in the element's DOM code.
+   */
+  setTouchAction(value: string | null): void;
   /** Keep the target in sync when no controls exist (headless / disabled, D22). */
   setTarget(target: readonly [number, number, number]): void;
   dispose(): void;
@@ -103,6 +125,15 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
   let settleFrame: number | null = null;
   /** Set by the controls' `change` event; read once per settle frame. */
   let movedThisFrame = false;
+  /** Requested `touch-action`; re-applied whenever the addon grabs the canvas. */
+  let touchAction: string | null = null;
+  /** Holds that value against the orbit and gizmo addons (see the module). */
+  const touchActionOwner = createTouchActionOwner(options.domElement);
+  /**
+   * Net yaw the turntable has applied since the last reset. Kept apart from the
+   * user's orbit so `resetTurntableRotation()` can roll back only our share.
+   */
+  let turntableRadians = 0;
 
   const applyToOrbit = (): void => {
     if (!orbit) return;
@@ -131,6 +162,21 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       orbit.minAzimuthAngle = limits.theta[0] * DEG_TO_RAD;
       orbit.maxAzimuthAngle = limits.theta[1] * DEG_TO_RAD;
     }
+  };
+
+  /**
+   * Win the `touch-action` argument with the addons.
+   *
+   * `OrbitControls` and `TransformControls` both write `none` onto the canvas
+   * when they connect, which silently cancels a viewer's `touch-action="pan-y"`.
+   * Neither connect is ours to sequence (both addons arrive from dynamic
+   * imports), so the value is owned rather than re-asserted once — see
+   * `touch-action-owner.ts`. Nothing is written while the element has not opted
+   * in, so a viewer that never sets the attribute keeps the addons' behaviour.
+   */
+  const applyTouchAction = (): void => {
+    if (touchAction === null) return;
+    touchActionOwner.set(touchAction);
   };
 
   const stopAutoRotate = (): void => {
@@ -181,6 +227,143 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
     camera.lookAt(target);
   };
 
+  /* ------------------------------------------------------------- pose ease */
+
+  /** model-viewer's own default for `interpolation-decay`. */
+  const DEFAULT_DECAY_MS = 50;
+  /** Below this, a fade is done: snapping beats one more sub-pixel frame. */
+  const EASE_EPSILON = 0.001;
+  const IDENTITY = new THREE.Quaternion();
+
+  interface EaseState {
+    from: CameraView;
+    to: CameraView;
+    decayMs: number;
+    startedAt: number;
+    frame: number | null;
+  }
+
+  let ease: EaseState | null = null;
+
+  const sameView = (a: CameraView, b: CameraView): boolean =>
+    a.position.every((value, index) => Math.abs(value - b.position[index]!) < 1e-6) &&
+    a.target.every((value, index) => Math.abs(value - b.target[index]!) < 1e-6) &&
+    Math.abs(a.fov - b.fov) < 1e-6;
+
+  /**
+   * Put the camera at `p` of the way from `from` to `to`.
+   *
+   * The eye is interpolated on the sphere around the (also interpolated) target,
+   * so a 180° orbit sweeps around the model instead of diving through it — the
+   * same reason model-viewer slerps rather than lerping positions.
+   */
+  const blendView = (from: CameraView, to: CameraView, p: number): CameraView => {
+    const fromTarget = new THREE.Vector3(...from.target);
+    const toTarget = new THREE.Vector3(...to.target);
+    const target = fromTarget.clone().lerp(toTarget, p);
+
+    const fromOffset = new THREE.Vector3(...from.position).sub(fromTarget);
+    const toOffset = new THREE.Vector3(...to.position).sub(toTarget);
+    const fromRadius = fromOffset.length();
+    const toRadius = toOffset.length();
+    const radius = fromRadius + (toRadius - fromRadius) * p;
+
+    let direction: THREE.Vector3;
+    if (fromRadius < 1e-6 || toRadius < 1e-6) {
+      // Degenerate (eye sitting on the target): no arc to follow.
+      direction = toOffset.clone().normalize();
+    } else {
+      const turn = new THREE.Quaternion().setFromUnitVectors(
+        fromOffset.normalize(),
+        toOffset.normalize(),
+      );
+      direction = fromOffset
+        .clone()
+        .applyQuaternion(new THREE.Quaternion().slerpQuaternions(IDENTITY, turn, p));
+    }
+
+    const position = target.clone().addScaledVector(direction, radius);
+    return {
+      position: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+      fov: from.fov + (to.fov - from.fov) * p,
+    };
+  };
+
+  const applyCameraView = (view: CameraView): void => {
+    const [x, y, z] = view.position;
+    const [tx, ty, tz] = view.target;
+    camera.position.set(x, y, z);
+    camera.fov = view.fov;
+    camera.lookAt(tx, ty, tz);
+    camera.updateProjectionMatrix();
+    rig.setTarget(view.target);
+  };
+
+  const stopEase = (): void => {
+    if (ease?.frame != null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(ease.frame);
+    }
+    ease = null;
+  };
+
+  /**
+   * A pose fade is ownerless: it is not part of the document and not a gesture,
+   * so it is dropped by anything that takes the camera over — a drag, a restored
+   * view, or teardown.
+   */
+  const easeTick = (now: number): void => {
+    if (!ease) return;
+    const state = ease;
+    state.frame = null;
+    if (disposed) {
+      stopEase();
+      return;
+    }
+
+    // Asymptotic, like model-viewer: `1 - e^-t` puts ~95% of the motion inside
+    // one `interpolation-decay`, and doubling the decay halves the speed. The
+    // progress is deliberately *not* clamped at 1 — the snap below needs the
+    // asymptote to actually approach its limit.
+    const elapsed = Math.max(0, now - state.startedAt);
+    const p = 1 - Math.exp((-3 * elapsed) / state.decayMs);
+
+    if (p >= 1 - EASE_EPSILON) {
+      applyCameraView(state.to);
+      ease = null;
+      options.onRender();
+      // The turntable was parked for the fade; hand the camera back.
+      startAutoRotate();
+      return;
+    }
+
+    applyCameraView(blendView(state.from, state.to, p));
+    options.onRender();
+    state.frame =
+      typeof requestAnimationFrame === "function" ? requestAnimationFrame(easeTick) : null;
+  };
+
+  const startEase = (from: CameraView, to: CameraView, decayMs: number): void => {
+    stopEase();
+    // Two loops cannot own the camera: the turntable waits for the fade.
+    stopAutoRotate();
+    if (typeof requestAnimationFrame !== "function") {
+      applyCameraView(to);
+      options.onRender();
+      startAutoRotate();
+      return;
+    }
+    ease = {
+      from,
+      to,
+      decayMs: Number.isFinite(decayMs) && decayMs > 0 ? decayMs : DEFAULT_DECAY_MS,
+      startedAt: nowMs(),
+      frame: null,
+    };
+    options.onRender();
+    ease.frame = requestAnimationFrame(easeTick);
+  };
+
   const tick = (now: number): void => {
     frame = null;
     if (disposed || !active || !autoRotate?.enabled) return;
@@ -192,7 +375,9 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
     lastTick = now;
 
     if (now >= resumeAt) {
-      rotateYaw(autoRotate.degreesPerSecond * DEG_TO_RAD * delta);
+      const step = autoRotate.degreesPerSecond * DEG_TO_RAD * delta;
+      rotateYaw(step);
+      turntableRadians += step;
       // Rendering re-runs `OrbitControls.update()`, which re-derives its
       // spherical state from the camera and enforces the limits.
       options.onRender();
@@ -226,6 +411,8 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       });
       next.addEventListener?.("start", () => {
         interacting = true;
+        // The pointer wins over an in-flight pose fade.
+        stopEase();
         stopSettle();
       });
       next.addEventListener?.("end", () => {
@@ -237,6 +424,8 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
         options.onInteractionEnd();
       });
       applyToOrbit();
+      // The addon just claimed `touch-action: none`; put ours back.
+      applyTouchAction();
       options.onRender();
     },
     async mountDefault(): Promise<void> {
@@ -270,12 +459,33 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       resumeAt = Math.max(resumeAt, nowMs());
       startAutoRotate();
     },
+    resetTurntableRotation(theta = 0): void {
+      // model-viewer's semantics: after the call the turntable reads `theta`,
+      // so this rolls back the difference rather than blindly zeroing.
+      const goal = Number.isFinite(theta) ? theta : 0;
+      const delta = goal - turntableRadians;
+      if (delta === 0) return;
+      rotateYaw(delta);
+      turntableRadians = goal;
+      options.onRender();
+    },
+    setTouchAction(value: string | null): void {
+      touchAction = value;
+      applyTouchAction();
+    },
     setActive(next: boolean): void {
       if (next === active) return;
       active = next;
       if (!next) {
         stopAutoRotate();
         stopSettle();
+        // Land on the goal *without* rendering: a viewer that just left the
+        // screen (or lost its tab) must not paint one more frame.
+        if (ease) {
+          const goal = ease.to;
+          stopEase();
+          applyCameraView(goal);
+        }
         return;
       }
       // Turntable picks up where it left off; a stale settle is only worth
@@ -292,13 +502,35 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       };
     },
     applyView(view: CameraView): void {
+      // A restored view is authoritative: an in-flight fade would keep pulling
+      // the camera away from it.
+      stopEase();
       const [x, y, z] = view.position;
       const [tx, ty, tz] = view.target;
       camera.position.set(x, y, z);
       camera.fov = view.fov;
       camera.lookAt(tx, ty, tz);
       camera.updateProjectionMatrix();
+      // A restored view is the new baseline: rolling the turntable back from
+      // here would drag the document's own pose off-centre.
+      turntableRadians = 0;
       rig.setTarget(view.target);
+      // If a fade parked the turntable, give it back.
+      startAutoRotate();
+    },
+    easeTo(view: CameraView, decayMs: number): void {
+      const from = rig.readView();
+      // Already there: no fade, no loop, no wasted frames.
+      if (sameView(from, view)) return;
+      startEase(from, view, decayMs);
+    },
+    finishEase(): void {
+      if (!ease) return;
+      const goal = ease.to;
+      stopEase();
+      applyCameraView(goal);
+      options.onRender();
+      startAutoRotate();
     },
     setTarget(target: readonly [number, number, number]): void {
       const [x, y, z] = target;
@@ -310,8 +542,10 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       autoRotate = null;
       stopAutoRotate();
       stopSettle();
+      stopEase();
       orbit?.dispose();
       orbit = null;
+      touchActionOwner.dispose();
     },
   };
 

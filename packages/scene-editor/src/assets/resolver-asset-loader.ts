@@ -24,6 +24,12 @@ export interface ResolverAssetLoaderOptions {
    * the next `src` load use it.
    */
   decoders?: () => GltfDecoders;
+  /**
+   * `with-credentials`, read before every load. three's GLTFLoader forwards the
+   * flag to the FileLoaders it uses for buffers and textures, so one switch
+   * covers the whole asset (model-viewer's attribute has the same scope).
+   */
+  withCredentials?: () => boolean;
 }
 
 /**
@@ -69,6 +75,10 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       if (!gltfLoader) throw new Error("gltfLoader not provided");
       // Decoders can be assigned after this loader was built; re-apply each load.
       applyGltfDecoders(gltfLoader, options.decoders?.());
+      // Same for credentials: the element reads its attribute at load time, so
+      // toggling `with-credentials` affects the next fetch without a rebuild.
+      const credentials = options.withCredentials?.();
+      if (credentials !== undefined) gltfLoader.setWithCredentials?.(credentials);
       sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
       throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {

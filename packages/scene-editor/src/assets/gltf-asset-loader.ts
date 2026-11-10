@@ -20,6 +20,8 @@ export interface MinimalGltfLoader {
   setDRACOLoader?(loader: unknown): void;
   setKTX2Loader?(loader: unknown): void;
   setMeshoptDecoder?(decoder: unknown): void;
+  /** model-viewer's `with-credentials`; three's `Loader` exposes it too. */
+  setWithCredentials?(value: boolean): void;
 }
 
 /**

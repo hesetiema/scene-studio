@@ -96,3 +96,39 @@ describe("createEnvironmentRig (IBL)", () => {
     rig.dispose();
   });
 });
+
+describe("createEnvironmentRig (viewer-level overrides)", () => {
+  function headlessRig(onEnvironmentReady = vi.fn()) {
+    const scene = new THREE.Scene();
+    const rig = createEnvironmentRig(scene, makeView(), {
+      renderer: { render: vi.fn(), setSize: vi.fn(), dispose: vi.fn() },
+      onEnvironmentReady,
+    });
+    return { scene, rig, onEnvironmentReady };
+  }
+
+  it("accepts environment-image / skybox-image URLs and degrades without a GPU", () => {
+    const { scene, rig, onEnvironmentReady } = headlessRig();
+
+    // No WebGL context: PMREM cannot run, so nothing is generated — but the
+    // attribute path must not throw, and the studio keeps lighting the scene.
+    expect(() => rig.setHdrUrl("/assets/studio.hdr")).not.toThrow();
+    expect(() => rig.setSkyboxUrl("/assets/sky.hdr", true)).not.toThrow();
+    expect(scene.environment).toBeNull();
+    expect(onEnvironmentReady).not.toHaveBeenCalled();
+    rig.dispose();
+  });
+
+  it("clears the override back to the studio without a GPU", () => {
+    const { scene, rig } = headlessRig();
+
+    rig.setHdrUrl("/assets/studio.hdr");
+    rig.setHdrUrl(null);
+    rig.setSkyboxUrl("/assets/sky.jpg");
+    rig.setSkyboxUrl(null);
+
+    expect(scene.background).toBeNull();
+    expect(scene.environment).toBeNull();
+    rig.dispose();
+  });
+});

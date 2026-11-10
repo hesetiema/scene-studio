@@ -42,6 +42,12 @@ export interface RuntimeFactoryOptions {
    * `dracoLoader` / `ktx2Loader` / `meshoptDecoder` properties keep working.
    */
   getDecoders?: () => GltfDecoders;
+  /**
+   * `with-credentials`, read before every asset load: model-viewer's switch for
+   * fetching the model (and its external buffers/textures) with cookies and
+   * authorization headers. The default factory forwards it to the glTF loader.
+   */
+  getWithCredentials?: () => boolean;
 }
 
 export type SceneEditorRuntimeFactory = (
@@ -125,6 +131,41 @@ const CAMERA_ATTRIBUTES: ReadonlySet<string> = new Set([
   "disable-zoom",
   "camera-damping",
 ]);
+
+/**
+ * Pointer routing, model-viewer's interaction surface: `orbit-sensitivity`
+ * scales the drag (negative inverts it), `zoom-sensitivity` / `pan-sensitivity`
+ * do the same for the wheel and the two-finger pan, and `touch-action` tells the
+ * browser which gestures stay its own — a viewer embedded in a long page must
+ * not hijack vertical scroll.
+ */
+const INTERACTION_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "orbit-sensitivity",
+  "zoom-sensitivity",
+  "pan-sensitivity",
+  "touch-action",
+]);
+
+/** The three pointer-speed multipliers, all fed to `#applyCameraSettings`. */
+const SENSITIVITY_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "orbit-sensitivity",
+  "zoom-sensitivity",
+  "pan-sensitivity",
+]);
+
+/**
+ * `touch-action` values a viewer may hand to the browser. `auto` is
+ * deliberately absent: model-viewer's docs treat "the CSS default" as "do not
+ * opt into camera interaction at all", and `auto` on the canvas is what causes
+ * the scroll hijack this attribute exists to prevent.
+ */
+const TOUCH_ACTION_KEYWORDS: ReadonlySet<string> = new Set(["none", "pan-x", "pan-y"]);
+
+/**
+ * model-viewer's default: one-finger vertical drags scroll the page, and a
+ * drag that starts horizontally still orbits (`pan-y` allows the latter).
+ */
+const DEFAULT_TOUCH_ACTION = "pan-y";
 
 /** Attributes that only steer animation playback (viewer chrome, not the document). */
 const PLAYBACK_ATTRIBUTES: ReadonlySet<string> = new Set([
@@ -245,6 +286,12 @@ function readNumberAttr(el: HTMLElement, name: string, fallback: number): number
   return Number.isFinite(value) ? value : fallback;
 }
 
+/** model-viewer's `interpolation-decay` default, in milliseconds. */
+const DEFAULT_INTERPOLATION_DECAY = 50;
+
+/** The camera half of a view state, as the runtime and rig hand it around. */
+type CameraView = ViewState["camera"];
+
 /* ------------------------------------------------------------ orbit math ---- */
 
 /** model-viewer's orbit triple: azimuth / polar / distance, degrees + world units. */
@@ -334,6 +381,9 @@ export class SceneEditorElement extends HTMLElement {
             resolver: options.assetResolver,
             gltfLoader: lazyGltfLoader(),
             ...(options.getDecoders ? { decoders: options.getDecoders } : {}),
+            ...(options.getWithCredentials
+              ? { withCredentials: options.getWithCredentials }
+              : {}),
           }),
         )
       : undefined;
@@ -376,6 +426,7 @@ export class SceneEditorElement extends HTMLElement {
       "loading",
       "reveal",
       "environment-image",
+      "skybox-image",
       "tone-mapping",
       "exposure",
       "shadow-intensity",
@@ -388,6 +439,7 @@ export class SceneEditorElement extends HTMLElement {
       "alt",
       ...VIEW_ATTRIBUTES,
       ...CAMERA_ATTRIBUTES,
+      ...INTERACTION_ATTRIBUTES,
       ...PLAYBACK_ATTRIBUTES,
     ];
   }
@@ -542,7 +594,7 @@ export class SceneEditorElement extends HTMLElement {
       this.#applyDisplaySettings();
       return;
     }
-    if (name === "environment-image") {
+    if (name === "environment-image" || name === "skybox-image") {
       // Display-only, same as `tone-mapping`: never written to the document.
       this.#applyEnvironmentPreset();
       return;
@@ -560,12 +612,12 @@ export class SceneEditorElement extends HTMLElement {
       this.#applyCameraSettings();
       return;
     }
-    if (name === "interaction-prompt" || name === "interaction-prompt-threshold") {
-      // `none` retires the hint immediately; anything else restarts the countdown.
-      this.#interacted = false;
-      this.#hideInteractionPrompt();
-      if (this.#promptEnabled()) this.#scheduleInteractionPrompt();
-      else this.#clearPromptTimer();
+    if (name === "touch-action") {
+      this.#applyTouchAction();
+      return;
+    }
+    if (SENSITIVITY_ATTRIBUTES.has(name)) {
+      this.#applyCameraSettings();
       return;
     }
     if (PLAYBACK_ATTRIBUTES.has(name)) {
@@ -1336,15 +1388,52 @@ export class SceneEditorElement extends HTMLElement {
    * Built-in IBL for the current mode. `environment-image` wins; without it a
    * preview is a viewer (model-viewer's neutral studio) while a host-owned
    * document keeps the editor's warm room.
+   *
+   * `legacy` is model-viewer's old default; here it aliases `room`, which is
+   * literally the studio this project used before the `neutral` port.
    */
   get #environmentPreset(): EnvironmentPreset {
     const raw = (this.getAttribute("environment-image") ?? "").trim().toLowerCase();
-    if (raw === "neutral" || raw === "room") return raw;
+    if (raw === "neutral" || raw === "room" || raw === "legacy") return raw;
     return this.src !== null && this.#documentOwner !== "host" ? "neutral" : "room";
   }
 
+  /**
+   * `environment-image` as a file URL, or `null` when it names a preset (or is
+   * unset). model-viewer accepts `neutral`, `legacy` or a URL in the same
+   * attribute, so the value's shape — not a separate flag — decides.
+   */
+  get #environmentImageUrl(): string | null {
+    const raw = (this.getAttribute("environment-image") ?? "").trim();
+    if (raw === "") return null;
+    const lower = raw.toLowerCase();
+    return lower === "neutral" || lower === "room" || lower === "legacy" ? null : raw;
+  }
+
+  /**
+   * Apply the lighting side of `environment-image` / `skybox-image`.
+   *
+   * Order matters: the preset goes first (it owns the fallback IBL), then the
+   * URL override takes the reflection over, then the backdrop — because
+   * model-viewer lets a skybox light the model only when no `environment-image`
+   * is set, and deciding that needs to see the other attribute.
+   */
   #applyEnvironmentPreset(): void {
-    this.#editor?.runtime.setEnvironmentPreset?.(this.#environmentPreset);
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return;
+    runtime.setEnvironmentPreset?.(this.#environmentPreset);
+    runtime.setEnvironmentImage?.(this.#environmentImageUrl);
+    this.#applySkyboxImage();
+  }
+
+  /** `skybox-image`: the visible backdrop, and the IBL too when nothing else is. */
+  #applySkyboxImage(): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return;
+    const url = (this.getAttribute("skybox-image") ?? "").trim() || null;
+    runtime.setSkyboxImage?.(url, {
+      asEnvironment: url !== null && this.#environmentImageUrl === null,
+    });
   }
 
   /**
@@ -1405,6 +1494,8 @@ export class SceneEditorElement extends HTMLElement {
    * applied before it.
    */
   #reassertDisplaySettings(): void {
+    // Forget the applied pose so the post-load application snaps to the
+    // document's own `view` instead of fading toward it.
     this.#appliedCameraPose = null;
     this.#applyDisplaySettings();
   }
@@ -1475,7 +1566,53 @@ export class SceneEditorElement extends HTMLElement {
     const fov = parseAngle(fovRaw ?? undefined);
     if (fov !== undefined) camera.fov = this.#clampFieldOfView(fov);
 
+    // A post-load re-assert (`force` is false) is the *initial* placement: it
+    // snaps. An attribute the host changed afterwards is a user intent, so it
+    // fades — that is what model-viewer does with `camera-orbit`.
+    this.#commitCamera(view, camera, !force);
+  }
+
+  /**
+   * Hand a pose to the runtime.
+   *
+   * model-viewer interpolates any change to `camera-orbit` / `camera-target`
+   * (asymptotically, over `interpolation-decay`), but the initial placement
+   * after a load snaps: fading in from wherever the camera happened to be would
+   * look like an accidental animation on page load.
+   *
+   * The fade path deliberately does *not* go through `applyViewState`: an eased
+   * pose is presentation only, and must not look like a user view change that
+   * gets persisted into the document.
+   */
+  #commitCamera(view: ViewState, camera: CameraView, instant: boolean): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return;
+    if (!instant && runtime.smoothViewTo) {
+      runtime.smoothViewTo(camera, this.#interpolationDecay);
+      return;
+    }
     runtime.applyViewState({ ...view, camera });
+  }
+
+  /**
+   * `interpolation-decay` (ms, model-viewer default 50): how long a camera move
+   * takes. Larger = slower; the decay is asymptotic, so most of the motion
+   * happens inside this window.
+   */
+  get #interpolationDecay(): number {
+    const raw = Number.parseFloat(this.getAttribute("interpolation-decay") ?? "");
+    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERPOLATION_DECAY;
+  }
+
+  /**
+   * Land on the last camera goal immediately instead of fading into it
+   * (model-viewer `jumpCameraToGoal()`). Returns `false` when nothing is easing.
+   */
+  jumpCameraToGoal(): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.jumpCameraToGoal) return false;
+    runtime.jumpCameraToGoal();
+    return true;
   }
 
   /** `min-field-of-view` / `max-field-of-view`; absent on either side = no clamp. */
@@ -1513,7 +1650,7 @@ export class SceneEditorElement extends HTMLElement {
       phi: orbit.phi ?? base.phi,
       radius: orbit.radius ?? base.radius,
     });
-    runtime.applyViewState({ ...view, camera: { ...view.camera, position } });
+    this.#commitCamera(view, { ...view.camera, position }, false);
     return true;
   }
 
@@ -1530,10 +1667,7 @@ export class SceneEditorElement extends HTMLElement {
     const orbit = orbitFromCamera(view.camera.position, view.camera.target);
     const nextTarget: [number, number, number] = [target[0], target[1], target[2]];
     const position = orbit ? cameraFromOrbit(nextTarget, orbit) : nextTarget;
-    runtime.applyViewState({
-      ...view,
-      camera: { ...view.camera, position, target: nextTarget },
-    });
+    this.#commitCamera(view, { ...view.camera, position, target: nextTarget }, false);
     return true;
   }
 
@@ -1546,10 +1680,7 @@ export class SceneEditorElement extends HTMLElement {
     const runtime = this.#editor?.runtime;
     if (!runtime || !Number.isFinite(degrees) || degrees <= 0) return false;
     const view = runtime.getViewState();
-    runtime.applyViewState({
-      ...view,
-      camera: { ...view.camera, fov: this.#clampFieldOfView(degrees) },
-    });
+    this.#commitCamera(view, { ...view.camera, fov: this.#clampFieldOfView(degrees) }, false);
     return true;
   }
 
@@ -1732,6 +1863,19 @@ export class SceneEditorElement extends HTMLElement {
     return runtime.setCameraByName(name);
   }
 
+  /**
+   * Roll the turntable back to `theta` radians (default 0), model-viewer
+   * `resetTurntableRotation(theta)`: after the call the turntable reads `theta`,
+   * while the orbit the user dragged to is left exactly where it is. Returns
+   * `false` when the runtime cannot do it (no turntable support).
+   */
+  resetTurntableRotation(theta?: number): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.resetTurntableRotation) return false;
+    runtime.resetTurntableRotation(theta);
+    return true;
+  }
+
   /* ------------------------------------------------------ morph targets ---- */
 
   /** Every morph channel on the mounted content, with weights and animation state. */
@@ -1818,6 +1962,27 @@ export class SceneEditorElement extends HTMLElement {
     );
   }
 
+  /**
+   * `touch-action`: mostly DOM. The browser decides whether a drag becomes a
+   * page scroll *before* any pointer event reaches us, so there is nothing for
+   * the runtime to compute — which is why model-viewer uses this attribute
+   * instead of a CSS rule (`touch-action` on the canvas is unreliable on iOS).
+   *
+   * It still goes through the runtime as well: `OrbitControls` **and**
+   * `TransformControls` write `touch-action: none` onto the canvas when they
+   * connect, both from async imports whose order is not ours, so a value applied
+   * before an addon mounts is silently overwritten. The runtime holds the value
+   * against them (see `viewer/touch-action-owner.ts`); this DOM write is what
+   * makes the attribute work even before a runtime exists.
+   */
+  #applyTouchAction(): void {
+    const raw = (this.getAttribute("touch-action") ?? "").trim().toLowerCase();
+    const value = TOUCH_ACTION_KEYWORDS.has(raw) ? raw : DEFAULT_TOUCH_ACTION;
+    const canvas = this.#canvas;
+    if (canvas) canvas.style.touchAction = value;
+    this.#editor?.runtime.setTouchAction?.(value);
+  }
+
   /** Playback transport (autoplay / clip name / crossfade / one-shot). */
   #applyPlaybackSettings(): void {
     const runtime = this.#editor?.runtime;
@@ -1874,6 +2039,9 @@ export class SceneEditorElement extends HTMLElement {
       // The canvas is the accessible representation of the model (`alt`).
       this.#canvas = canvas;
       this.#applyAlt();
+      // DOM-only, so it lands before the runtime exists. Also the reason an
+      // attribute set before upgrade still takes effect: nothing to re-assert.
+      this.#applyTouchAction();
       const assetResolver = this.assetResolver ?? this.#createSrcResolver();
       const environmentPreset = this.#environmentPreset;
       const runtime = SceneEditorElement.runtimeFactory(canvas, {
@@ -1884,6 +2052,9 @@ export class SceneEditorElement extends HTMLElement {
           ktx2Loader: this.#ktx2Loader,
           meshoptDecoder: this.#meshoptDecoder,
         }),
+        // Read at load time, so setting it before the fetch is enough — the
+        // model and its external buffers both pick it up.
+        getWithCredentials: () => this.hasAttribute("with-credentials"),
       });
       const editor = createSceneEditor({ runtime });
       this.#editor = editor;
@@ -1895,6 +2066,12 @@ export class SceneEditorElement extends HTMLElement {
       // Attributes set before upgrade land here (observedAttributes already ran).
       this.#applyCameraSettings();
       this.#applyPlaybackSettings();
+      // The factory already got the preset, but the URL overrides and the
+      // skybox only exist as attributes — nothing else applies them.
+      this.#applyEnvironmentPreset();
+      // Again now that a runtime exists: the canvas alone is not enough, the
+      // orbit addon overwrites `touch-action` when it mounts.
+      this.#applyTouchAction();
 
       // Click-to-select (P2-T7): pick on canvas click, empty → clear.
       // Shift / Ctrl / Cmd makes the click additive (toggle), matching the

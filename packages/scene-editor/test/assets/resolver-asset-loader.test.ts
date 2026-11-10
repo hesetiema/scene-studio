@@ -115,4 +115,26 @@ describe("createResolverAssetLoader (AssetResolver contract)", () => {
     // three keeps whatever it already had; we never clear a decoder.
     expect(setDRACOLoader).not.toHaveBeenCalled();
   });
+
+  it("pushes with-credentials onto the loader before every fetch", async () => {
+    const setWithCredentials = vi.fn();
+    const gltfLoader = stubGltf();
+    Object.assign(gltfLoader, { setWithCredentials });
+
+    let credentials = false;
+    const load = createResolverAssetLoader({
+      resolver: { resolve: async (id) => `/a/${id}.glb` },
+      gltfLoader,
+      withCredentials: () => credentials,
+    });
+
+    await load("a");
+    expect(setWithCredentials).toHaveBeenLastCalledWith(false);
+
+    // The element reads its attribute at load time, so a later toggle applies
+    // to the next fetch without rebuilding the pipeline.
+    credentials = true;
+    await load("b");
+    expect(setWithCredentials).toHaveBeenLastCalledWith(true);
+  });
 });
