@@ -288,9 +288,32 @@ describe("contact shadow rig", () => {
 
     // A crisp shadow needs detail; a soft one is a blurred blob, so the texture
     // shrinks instead of paying for pixels the blur would destroy.
-    expect(crispWidth).toBeGreaterThan(500);
-    expect(renderer.lastSize?.width).toBeGreaterThan(60);
-    expect(renderer.lastSize?.width).toBeLessThan(crispWidth / 4);
+    // 2^6..2^9 texels on the long edge, plus the blur pad — the reference's
+    // `LOG_MIN/MAX_RESOLUTION`. The upper bound is 512, not 1024: texel density
+    // is what sets the blur radius in world units, so doubling it here makes the
+    // shadow read as a wide smudge instead of a contact patch.
+    expect(crispWidth).toBe(2 ** 9 + 10);
+    expect(renderer.lastSize?.width).toBe(2 ** 6 + 10);
+  });
+
+  it("keeps texels square for animated content by scaling twice", () => {
+    // `setSoftness` multiplies the map size by ANIMATION_SCALING and `setMapSize`
+    // does it again. The shadow volume is only 2x wider, so both factors are what
+    // hold the texel density (and the blur radius) equal to a still model.
+    const still = makeRig({ animated: false });
+    still.rig.applyView({ enabled: true, softness: 0 }, unitBox());
+    still.rig.update();
+    const stillWidth = still.renderer.lastSize?.width ?? 0;
+
+    const animated = makeRig({ animated: true });
+    animated.rig.applyView({ enabled: true, softness: 0 }, unitBox());
+    animated.rig.update();
+    const animatedWidth = animated.renderer.lastSize?.width ?? 0;
+
+    expect(stillWidth).toBe(2 ** 9 + 10);
+    expect(animatedWidth).toBe(2 ** 9 * 4 + 10);
+    // Twice the ground across roughly four times the texels per axis.
+    expect(catcherOf(animated.scene).scale.x / catcherOf(still.scene).scale.x).toBeLessThan(2);
   });
 
   it("removes its catcher and releases targets on dispose", () => {

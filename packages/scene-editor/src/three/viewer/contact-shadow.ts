@@ -4,11 +4,16 @@ import { VerticalBlurShader } from "three/examples/jsm/shaders/VerticalBlurShade
 import type { ContactShadowDTO } from "../../core/document/schema";
 
 /**
- * Longest edge of the shadow texture at `softness: 0`; halved per unit of
- * softness down to {@link MIN_MAP_SIZE} (model-viewer's `LOG_MAX/MIN_RESOLUTION`).
+ * The shadow texture is `2^9` texels on its long edge at `softness: 0` and `2^6`
+ * at `softness: 1` — model-viewer's `LOG_MAX_RESOLUTION` / `LOG_MIN_RESOLUTION`.
+ *
+ * These are *texel* counts, and the texel density is what decides how far the
+ * 5-tap blur reaches in world units: a texture half as dense reads as a wider,
+ * smoke-like halo instead of a contact shadow. Do not "round up" the upper
+ * bound — it is 512, not 1024.
  */
-const MAX_MAP_SIZE = 1024;
-const MIN_MAP_SIZE = 64;
+const LOG_MAX_RESOLUTION = 9;
+const LOG_MIN_RESOLUTION = 6;
 /**
  * Extra pixels along each axis for the blur kernel to bleed into (model-viewer's
  * `TAP_WIDTH`). The ortho frustum is widened to match, so the blur does not
@@ -34,10 +39,32 @@ const FLOOR_GAP = 0.001;
 /**
  * Animated content is not contained by its resting bounding box, so the
  * reference gives it a shadow volume this many times larger than its largest
- * dimension — bound, resolution and far plane all scale with it, which keeps
- * the shadow's texel density and depth weighting identical to a still model.
+ * dimension — bound, resolution and far plane all scale with it.
+ *
+ * The resolution is scaled by this factor **twice** (`setSoftness` multiplies
+ * `2^(9-3s)` by it, then `setMapSize` multiplies the result by it again), which
+ * is what keeps the texel density — and therefore the blur radius in world
+ * units — the same as for a still model. Applying it only once leaves every
+ * texel 2x larger than the reference's, and the shadow visibly degrades into a
+ * wide, diffuse smudge. {@link resolutionFor} below reproduces both factors.
  */
 const ANIMATION_SCALING = 2;
+
+/**
+ * Texels on the shadow texture's long edge, as the reference computes them.
+ *
+ * `softness` interpolates `2^9 -> 2^6` in log space, and animated content
+ * multiplies by {@link ANIMATION_SCALING} **twice**: once in `setSoftness`
+ * (where the value is also fed to `setMapSize`) and once more inside
+ * `setMapSize` itself. Both factors are load-bearing — with a single one the
+ * texels are twice as large in world units, the fixed 5-tap blur then reaches
+ * twice as far, and the shadow turns into a wide diffused smudge instead of
+ * hugging the contact patch.
+ */
+function resolutionFor(softness: number, animated: boolean): number {
+  const base = 2 ** (LOG_MAX_RESOLUTION - softness * (LOG_MAX_RESOLUTION - LOG_MIN_RESOLUTION));
+  return animated ? base * ANIMATION_SCALING * ANIMATION_SCALING : base;
+}
 
 export interface ContactShadowOptions {
   scene: THREE.Scene;
@@ -272,18 +299,13 @@ export function createContactShadowRig(options: ContactShadowOptions): ContactSh
 
       const softness = Math.min(Math.max(settings?.softness ?? DEFAULT_SOFTNESS, 0), 1);
       // Animated content gets a cubic shadow volume sized to its largest
-      // dimension; the texture grows with it, so texel density is unchanged.
-      // (The reference scales the map size twice here and ends up twice as
-      // dense for animated models; matching that made the shadow measurably
-      // heavier than the reference, so this stays at one scale.)
+      // dimension, with the texture scaled to match (see {@link ANIMATION_SCALING}).
       const scaled = options.animated?.() === true;
       const scale = scaled ? ANIMATION_SCALING : 1;
-      const footprintX = scaled ? Math.max(spanX, spanY, spanZ) * scale : spanX;
-      const footprintZ = scaled ? Math.max(spanX, spanY, spanZ) * scale : spanZ;
-      const resolution = Math.min(
-        Math.max(scale * 2 ** (Math.log2(MAX_MAP_SIZE) - softness * (Math.log2(MAX_MAP_SIZE) - Math.log2(MIN_MAP_SIZE))), MIN_MAP_SIZE),
-        MAX_MAP_SIZE * scale,
-      );
+      const maxDimension = Math.max(spanX, spanY, spanZ) * scale;
+      const footprintX = scaled ? maxDimension : spanX;
+      const footprintZ = scaled ? maxDimension : spanZ;
+      const resolution = resolutionFor(softness, scaled);
       const wide = footprintX > footprintZ;
       const baseWidth = Math.max(1, Math.floor(wide ? resolution : (resolution * footprintX) / footprintZ));
       const baseHeight = Math.max(1, Math.floor(wide ? (resolution * footprintZ) / footprintX : resolution));
@@ -312,7 +334,9 @@ export function createContactShadowRig(options: ContactShadowOptions): ContactSh
       // in the reference: at low softness the same height reads darker.
       depthMaterial.opacity = 1 / Math.max(softness, 0.05);
 
-      catcher.position.set(center.x, floor - FLOOR_GAP * Math.max(spanX, spanY, spanZ), center.z);
+      // The reference's gap is `0.001 * maxDimension`, i.e. after the animated
+      // scaling, so the plane sits proportionally deeper under a moving model.
+      catcher.position.set(center.x, floor - FLOOR_GAP * maxDimension, center.z);
       catcher.scale.set(frustumWidth, frustumHeight, 1);
       // Hard shadows get a lower ceiling so they do not read heavier than the
       // soft ones, which lose density to blur and height falloff.
