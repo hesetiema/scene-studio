@@ -12,6 +12,7 @@ import type {
   AutoRotateOptions,
   CameraControlsOptions,
   EnvironmentPreset,
+  MorphTargetInfo,
   RuntimeContract,
   RuntimeEventMap,
   ToneMappingMode,
@@ -32,6 +33,7 @@ import {
 import { createLightingRig, type LightingRig } from "./viewer/lighting-rig";
 import { createEnvironmentRig, type EnvironmentRig } from "./viewer/environment-rig";
 import { createObjectStore, type ObjectStore } from "./viewer/object-store";
+import { measureFraming } from "./viewer/framing";
 import { createContactShadowRig, type ContactShadowRig } from "./viewer/contact-shadow";
 import {
   createGizmoRig,
@@ -45,10 +47,13 @@ import {
   type AnimationRig,
 } from "./viewer/animation-rig";
 import { createRenderLoop, type RenderLoop } from "./viewer/render-loop";
+import { collectEmbeddedCameras, orbitTargetFor } from "./viewer/embedded-cameras";
+import { createMorphRig, type MorphRig } from "./viewer/morph-rig";
 
 export type { OrbitControlsLike } from "./viewer/camera-rig";
 export type { TransformMode } from "./viewer/gizmo-rig";
 export type { AnimationClipInfo } from "./viewer/animation-rig";
+export type { EmbeddedCamera } from "./viewer/embedded-cameras";
 
 /** Asset-layer codes forwarded verbatim on the runtime `error` event (D6). */
 const ASSET_ERROR_CODES: ReadonlySet<string> = new Set(Object.values(AssetErrorCode));
@@ -116,6 +121,17 @@ const TONE_MAPPINGS: Record<ToneMappingMode, THREE.ToneMapping> = {
 };
 
 /**
+ * model-viewer's `field-of-view="auto"` framing FOV, in degrees. Constant
+ * across aspects; see `frameViewer()`.
+ */
+const VIEWER_FRAMED_FOV = 30;
+/**
+ * model-viewer's default `camera-orbit` radius is `auto` → 105% of the ideal
+ * distance, so its sphere leaves 5% of breathing room at the tangent point.
+ */
+const VIEWER_RADIUS_RATIO = 1.05;
+
+/**
  * Production RuntimeContract implementation backed by three.js (WebGLRenderer, D1).
  *
  * Deliberately thin: each engine concern lives in a rig under `./viewer/`
@@ -137,6 +153,7 @@ export class ThreeRuntime implements RuntimeContract {
   readonly #contactShadow: ContactShadowRig;
   readonly #gizmo: GizmoRig;
   readonly #animation: AnimationRig;
+  readonly #morph: MorphRig;
   readonly #picker: Picker;
 
   #renderLoop: RenderLoop | null = null;
@@ -157,6 +174,16 @@ export class ThreeRuntime implements RuntimeContract {
   #resolveControlsReady!: () => void;
   #animationFrame: number | null = null;
   #lastTick = 0;
+  /** Off-screen / hidden-tab pause; see `setRenderingPaused`. */
+  #renderingPaused = false;
+  /** Cameras authored inside the loaded asset(s), in traversal order. */
+  #cameras: ReturnType<typeof collectEmbeddedCameras> = [];
+  /** Active embedded camera, or `null` for the document/orbit view. */
+  #cameraName: string | null = null;
+  /** A name set before the asset loaded; applied on the next refresh. */
+  #pendingCameraName: string | null = null;
+  /** Orbit view to restore when leaving an embedded camera. */
+  #savedOrbitView: CameraView | null = null;
 
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
@@ -224,6 +251,12 @@ export class ThreeRuntime implements RuntimeContract {
     });
 
     this.#animation = createAnimationRig();
+    this.#morph = createMorphRig({
+      roots: () => this.#framingRoots(),
+      // A clip driving `morphTargetInfluences` owns the channel; the rig asks
+      // before letting a manual weight through.
+      activeTrackNames: () => this.#animation.activeTrackNames(),
+    });
     this.#objects = createObjectStore({
       scene: this.scene,
       assetCache: options.assetCache ?? null,
@@ -238,6 +271,10 @@ export class ThreeRuntime implements RuntimeContract {
     this.#contactShadow = createContactShadowRig({
       scene: this.scene,
       renderer: this.renderer,
+      contentRoots: () => this.#framingRoots(),
+      // Animated content can leave its resting bounds, so the shadow volume
+      // has to cover more than the box it was fitted to.
+      animated: () => this.#animation.list().length > 0,
     });
     this.#syncContactShadow();
 
@@ -285,7 +322,26 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   render(): void {
-    this.#render();
+    this.#render(true);
+  }
+
+  /**
+   * Stop drawing while the viewer is off-screen or the tab is hidden.
+   *
+   * Nothing is torn down: animation and turntable loops stop feeding frames,
+   * the camera and clip time stay where they were, and the first frame after
+   * resuming is rendered immediately so the canvas is never left blank.
+   */
+  setRenderingPaused(paused: boolean): void {
+    if (paused === this.#renderingPaused) return;
+    this.#renderingPaused = paused;
+    this.#cameraRig.setActive(!paused);
+    if (paused) {
+      this.#stopAnimationLoop();
+      return;
+    }
+    this.#render(true);
+    if (this.#animation.playing) this.#ensureAnimationLoop();
   }
 
   // -------------------------------------------------------------------------
@@ -304,6 +360,7 @@ export class ThreeRuntime implements RuntimeContract {
     });
     this.#picker.setTargets(this.#objects.list());
     this.#syncContactShadow();
+    this.#refreshCameras();
     this.#maybeAutoplay();
     this.#render();
     this.events.emit("load", { sceneId: doc.sceneId });
@@ -326,6 +383,7 @@ export class ThreeRuntime implements RuntimeContract {
     this.#picker.setTargets(this.#objects.list());
     this.#syncGizmo();
     this.#syncContactShadow();
+    this.#refreshCameras();
     this.#maybeAutoplay();
     this.#render();
   }
@@ -340,6 +398,7 @@ export class ThreeRuntime implements RuntimeContract {
     this.#objects.remove(id);
     this.#picker.setTargets(this.#objects.list());
     this.#syncContactShadow();
+    this.#refreshCameras();
     this.#render();
   }
 
@@ -402,6 +461,10 @@ export class ThreeRuntime implements RuntimeContract {
     this.#applyingView = true;
     try {
       this.#cameraRig.applyView(view.camera);
+      // A persisted camera pose outranks an embedded one; keeping the name
+      // would make the next refresh snap the view back.
+      this.#cameraName = null;
+      this.#savedOrbitView = null;
       this.#lighting.applyView(view.lights);
       this.#environment.applyView(view.environment);
       this.#contactShadowView = view.environment.contactShadow;
@@ -491,13 +554,44 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   /**
-   * Viewer framing: model-viewer's `field-of-view="auto"` is 30° in landscape
-   * and 45° in portrait, applied *before* the fit so the distance follows.
+   * Viewer framing, ported from model-viewer's `updateFraming()` so the two
+   * viewers put the same model at the same size:
+   *
+   * 1. `framedFov` = 30° — constant, in portrait too (v4 widens the *rendered*
+   *    FOV for a narrow pane, it does not raise the framing FOV).
+   * 2. `distance = radius / sin(framedFov / 2)`, where `radius` is measured to
+   *    the farthest **vertex** around the target centre — not to a box corner.
+   * 3. A wide model is *not* pushed back; the vertical FOV is widened instead
+   *    (`idealAspect`), which is what keeps vertical fill identical across
+   *    models of different proportions.
+   * 4. The orbit distance is 105% of that (`camera-orbit` radius `auto`).
+   *
+   * Only the direction is ours: `theta = 0°, phi = 75°` → straight ahead, 15°
+   * above the horizon.
    */
   frameViewer(): void {
-    this.camera.fov = this.camera.aspect < 1 ? 45 : 30;
+    const centre = this.#objects.bounds();
+    if (centre.isEmpty()) return;
+    const center = centre.getCenter(new THREE.Vector3());
+    const metrics = measureFraming(this.#framingRoots(), center);
+
+    const halfFov = THREE.MathUtils.degToRad(VIEWER_FRAMED_FOV) / 2;
+    const distance = (metrics?.radius ?? this.#sphereRadius(center)) / Math.sin(halfFov);
+    const idealAspect = (metrics?.horizontalTanAt(distance) ?? 0) / Math.tan(halfFov);
+    const vertical = Math.tan(halfFov) * Math.max(1, idealAspect / Math.max(this.camera.aspect, 1e-4));
+    this.camera.fov = THREE.MathUtils.radToDeg(2 * Math.atan(vertical));
+
+    const orbit = distance * VIEWER_RADIUS_RATIO;
+    // theta = 0°, phi = 75° from +Y → straight in front, 15° above the horizon.
+    const elevation = THREE.MathUtils.degToRad(15);
+    const direction = new THREE.Vector3(0, Math.sin(elevation), Math.cos(elevation));
+    this.camera.position.copy(center).addScaledVector(direction, orbit);
+    this.camera.near = Math.max(orbit / 1000, 0.001);
+    this.camera.far = Math.max(orbit * 100, 100);
     this.camera.updateProjectionMatrix();
-    this.autoFrame();
+    this.camera.lookAt(center);
+    this.#cameraRig.setTarget([center.x, center.y, center.z]);
+    this.#render();
   }
 
   // -------------------------------------------------------------------------
@@ -551,13 +645,14 @@ export class ThreeRuntime implements RuntimeContract {
    * before the read, which is exactly when the buffer still holds the frame.
    */
   toDataURL(type = "image/png", quality?: number): string {
-    this.#render();
+    // A capture is a caller-driven frame: it must ignore the pause.
+    this.#render(true);
     return this.#canvas.toDataURL(type, quality);
   }
 
   /** Async sibling of {@link toDataURL}. */
   toBlob(type = "image/png", quality?: number): Promise<Blob | null> {
-    this.#render();
+    this.#render(true);
     return new Promise<Blob | null>((resolve) => {
       this.#canvas.toBlob((blob) => resolve(blob), type, quality);
     });
@@ -635,6 +730,118 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   // -------------------------------------------------------------------------
+  // Material variants (`KHR_materials_variants`, model-viewer's `variant-name`)
+  // -------------------------------------------------------------------------
+
+  /** Variant names declared by the mounted assets, in document order. */
+  get variants(): string[] {
+    return this.#objects.variants();
+  }
+
+  /** Currently applied variant; `null` = each asset's own materials. */
+  get variantName(): string | null {
+    return this.#objects.variantName;
+  }
+
+  /**
+   * Switch every mounted asset to `name` (`null` restores the defaults).
+   * Returns whether any mounted asset declares it — unknown names are remembered
+   * anyway, so a variant set before the asset finishes loading still applies.
+   */
+  setVariant(name: string | null): boolean {
+    return this.#objects.setVariant(name);
+  }
+
+  // -------------------------------------------------------------------------
+  // Embedded cameras (glTF `node.camera`)
+  // -------------------------------------------------------------------------
+
+  /** Camera names declared by the mounted asset(s), in traversal order. */
+  get cameras(): string[] {
+    return this.#cameras.map((entry) => entry.name);
+  }
+
+  /** Active embedded camera; `null` = the document/orbit view. */
+  get cameraName(): string | null {
+    return this.#cameraName;
+  }
+
+  /**
+   * Look through a camera authored inside the asset, or `null` to go back to the
+   * orbit view that was active before. A name that is not loaded yet is
+   * remembered and applied when the content arrives — the same contract as
+   * `setVariant`.
+   *
+   * Only the pose and FOV are borrowed: the runtime keeps its own perspective
+   * camera (and its orbit controls), so the user can still drag away from an
+   * authored view instead of being locked to it.
+   */
+  setCameraByName(name: string | null): boolean {
+    if (name === null) {
+      this.#pendingCameraName = null;
+      if (this.#cameraName === null) return false;
+      this.#cameraName = null;
+      const saved = this.#savedOrbitView;
+      this.#savedOrbitView = null;
+      if (saved) this.#cameraRig.applyView(saved);
+      this.#render();
+      return true;
+    }
+
+    const found = this.#cameras.find((entry) => entry.name === name);
+    if (!found) {
+      this.#pendingCameraName = name;
+      return false;
+    }
+    this.#pendingCameraName = null;
+    if (this.#cameraName === null) this.#savedOrbitView = this.#cameraRig.readView();
+
+    found.camera.updateWorldMatrix(true, false);
+    this.camera.position.copy(found.camera.getWorldPosition(new THREE.Vector3()));
+    this.camera.quaternion.copy(found.camera.getWorldQuaternion(new THREE.Quaternion()));
+    // An orthographic glTF camera keeps the current FOV: the runtime has no
+    // ortho projection to hand its frustum to.
+    const fov = (found.camera as THREE.PerspectiveCamera).fov;
+    if (Number.isFinite(fov) && fov > 0) this.camera.fov = fov;
+    this.camera.updateProjectionMatrix();
+
+    const bounds = this.#objects.bounds();
+    const centre = bounds.isEmpty()
+      ? new THREE.Vector3()
+      : bounds.getCenter(new THREE.Vector3());
+    const target = orbitTargetFor(found.camera, centre);
+    this.#cameraRig.setTarget([target.x, target.y, target.z]);
+    this.#cameraName = name;
+    this.#render();
+    return true;
+  }
+
+  // -------------------------------------------------------------------------
+  // Morph targets (editor surface; glTF has no viewer-level control for them)
+  // -------------------------------------------------------------------------
+
+  /** Every morph channel on the mounted content, with its current weight. */
+  get morphTargets(): MorphTargetInfo[] {
+    return this.#morph.list();
+  }
+
+  /**
+   * Set one morph weight (clamped to 0..1). Returns `false` when the mesh,
+   * target or object is gone, and when the playing clip drives that channel —
+   * the mixer would overwrite the value on the next frame.
+   */
+  setMorphInfluence(
+    objectId: string,
+    meshIndex: number,
+    targetIndex: number,
+    value: number,
+  ): boolean {
+    const applied = this.#morph.setInfluence(objectId, meshIndex, targetIndex, value);
+    if (applied) this.#render();
+    return applied;
+  }
+
+  // -------------------------------------------------------------------------
   // Animation (reference: clip list + transport)
   // -------------------------------------------------------------------------
 
@@ -663,6 +870,16 @@ export class ThreeRuntime implements RuntimeContract {
   /** Play a clip; `null` objectId picks the first object that has clips. */
   playAnimation(objectId: string | null = null, index = 0): boolean {
     const started = this.#animation.play(objectId, index);
+    if (started) this.#ensureAnimationLoop();
+    return started;
+  }
+
+  /**
+   * Play by clip name — `animation-name` / `animationName` semantics. Names are
+   * matched case-insensitively across objects, first hit wins.
+   */
+  playAnimationByName(name: string): boolean {
+    const started = this.#animation.playByName(name);
     if (started) this.#ensureAnimationLoop();
     return started;
   }
@@ -735,27 +952,36 @@ export class ThreeRuntime implements RuntimeContract {
   /** Re-fit the catch plane to the current content (mount / transform / view). */
   #syncContactShadow(): void {
     this.#contactShadow.applyView(this.#contactShadowView, this.#objects.bounds());
-    this.#contactShadow.setLightDirection(this.#shadowLightDirection());
+  }
+
+  /** Re-scan the content for authored cameras; settle a name set before load. */
+  #refreshCameras(): void {
+    this.#cameras = collectEmbeddedCameras(this.#framingRoots());
+    const names = new Set(this.#cameras.map((entry) => entry.name));
+    if (this.#pendingCameraName !== null && names.has(this.#pendingCameraName)) {
+      this.setCameraByName(this.#pendingCameraName);
+      return;
+    }
+    // The asset that carried the active camera is gone: fall back to the orbit
+    // view rather than leaving the camera pointed through empty space.
+    if (this.#cameraName !== null && !names.has(this.#cameraName)) {
+      this.setCameraByName(null);
+    }
   }
 
   /**
-   * Where the ground shadow falls from. A document that lights the scene itself
-   * keeps its own key direction; with IBL-only lighting (the preview default) the
-   * shadow follows the environment's highlight, the way model-viewer derives its
-   * shadow light from the light probe.
+   * Content roots for vertex measurement — the document's mounted objects only,
+   * never the rig's own scene furniture (shadow catcher, environment panels).
    */
-  #shadowLightDirection(): [number, number, number] {
-    const directional = this.#lighting.keyLight;
-    if (directional.intensity > 0) {
-      const { position, target } = directional;
-      const direction: [number, number, number] = [
-        position.x - target.position.x,
-        position.y - target.position.y,
-        position.z - target.position.z,
-      ];
-      if (Math.hypot(...direction) > 1e-6) return direction;
-    }
-    return this.#environment.keyDirection();
+  #framingRoots(): THREE.Object3D[] {
+    return this.#objects.list().filter((object) => object.parent === this.scene);
+  }
+
+  /** Box-corner radius: only a fallback for content without readable vertices. */
+  #sphereRadius(center: THREE.Vector3): number {
+    const box = this.#objects.bounds();
+    if (box.isEmpty()) return 1;
+    return Math.max(box.max.distanceTo(center), box.min.distanceTo(center), 0.0001);
   }
 
   #emitViewChange(): void {
@@ -828,7 +1054,13 @@ export class ThreeRuntime implements RuntimeContract {
     }
   }
 
-  #render(): void {
+  #render(force = false): void {
+    // Off-screen viewers (IntersectionObserver / hidden tab) keep their state
+    // but must not draw; a capture or a resume passes `force`.
+    if (this.#renderingPaused && !force) return;
+    // The shadow is a texture, not a shadow map: it has to be re-rendered when
+    // the content moves, and it must happen outside the main scene render.
+    this.#contactShadow.update();
     this.#renderLoop?.render();
   }
 
@@ -845,6 +1077,7 @@ export class ThreeRuntime implements RuntimeContract {
       this.#lastTick = now;
       // Clamp: a backgrounded tab must not jump the clip forward by seconds.
       const playing = this.#animation.update(Math.min(delta, 0.1));
+      if (playing) this.#contactShadow.invalidate();
       this.#render();
       if (playing) this.#animationFrame = raf(tick);
     };

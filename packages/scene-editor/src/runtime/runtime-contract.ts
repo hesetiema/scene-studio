@@ -41,6 +41,12 @@ export interface CameraControlsOptions {
   pan?: boolean;
   zoom?: boolean;
   limits?: CameraOrbitLimits;
+  /**
+   * Inertia after a gesture, as OrbitControls' `dampingFactor` (0..1; `0.08`
+   * is the addon's own default). Omitted = no damping, i.e. the camera stops
+   * the instant the pointer does.
+   */
+  damping?: number;
 }
 
 /** model-viewer `auto-rotate` + `rotation-per-second` + `auto-rotate-delay`. */
@@ -68,8 +74,45 @@ export interface AnimationOptions {
   pauseAtEnd?: boolean;
 }
 
-export type RuntimeEventMap = {
-  "selection-change": { ids: string[] };
+/**
+ * One glTF clip discovered on a mounted asset — model-viewer's
+ * `availableAnimations`, except that it keeps the owner: a document may hold
+ * several animated objects and each gets its own mixer.
+ */
+export interface AnimationClipInfo {
+  /** Stable runtime id: `${objectId}#${index}`. */
+  id: string;
+  objectId: string;
+  index: number;
+  name: string;
+  duration: number;
+}
+
+/**
+ * One morph-target channel exposed to a host (`morphTargetInfluences[i]`).
+ * Meshes are addressed by `(objectId, meshIndex)`: traversal order survives a
+ * reload, mesh uuids do not.
+ */
+export interface MorphTargetInfo {
+  /** Document object that owns the mesh. */
+  objectId: string;
+  /** Index among the object's morph-capable meshes, in traversal order. */
+  meshIndex: number;
+  meshName: string;
+  /** Index within `morphTargetInfluences`. */
+  targetIndex: number;
+  /** glTF morph target name, or `Target n` when the asset omits it. */
+  name: string;
+  /** Current weight (glTF never declares influences outside 0..1). */
+  influence: number;
+  /**
+   * `true` while the playing clip writes this channel — manual weights are
+   * overwritten on the next frame, so `setMorphInfluence` refuses.
+   */
+  driven: boolean;
+}
+
+export type RuntimeEventMap = {  "selection-change": { ids: string[] };
   "history-change": {
     canUndo: boolean;
     canRedo: boolean;
@@ -144,8 +187,46 @@ export interface RuntimeContract {
   setAutoRotate?(options: AutoRotateOptions | null): void;
   /** Playback transport options (autoplay / crossfade / pause-at-end). */
   setAnimationOptions?(options: AnimationOptions): void;
+
+  // --- Playback transport (optional) ----------------------------------------
+  // model-viewer's animation surface (`availableAnimations` / `animationName` /
+  // `paused` / `play()` / `pause()` / `currentTime` / `timeScale`). Runtimes
+  // without an animation rig omit the whole block; the element then reports an
+  // empty clip list instead of pretending to play something.
+
+  /** Clips on the mounted content, in document order. */
+  readonly animations?: AnimationClipInfo[];
+  /** `true` while a clip is advancing the mixers. */
+  readonly animationPlaying?: boolean;
+  /** Playhead of the active clip, seconds. */
+  readonly animationTime?: number;
+  /** Duration of the active clip, seconds (`0` = nothing active). */
+  readonly animationDuration?: number;
+  /** Playback rate multiplier (`timeScale`). */
+  readonly animationSpeed?: number;
+  /**
+   * Start a clip from its first frame. `objectId: null` picks the first object
+   * that has clips, `index` defaults to the first clip.
+   */
+  playAnimation?(objectId?: string | null, index?: number): boolean;
+  /** Start a clip by name (case-insensitive); `false` when no clip matches. */
+  playAnimationByName?(name: string): boolean;
+  /** Hold the playhead where it is; rendering continues. */
+  pauseAnimations?(): void;
+  /** Continue the paused clip without rewinding; `false` when nothing is loaded. */
+  resumeAnimations?(): boolean;
+  /** Scrub the active clip (seconds, clamped to its duration). */
+  setAnimationTime?(seconds: number): void;
+  /** Playback rate multiplier; `0` freezes the mixer. */
+  setAnimationSpeed?(speed: number): void;
   /** Fit the camera to the current content bounds (preview / "reset view"). */
   autoFrame?(): void;
+  /**
+   * Stop/resume drawing without losing state (off-screen element, hidden tab).
+   * Implementations should keep the camera, clip time and loops intact and draw
+   * one frame immediately on resume.
+   */
+  setRenderingPaused?(paused: boolean): void;
   /**
    * Viewer framing, model-viewer style: `field-of-view="auto"` (30° landscape,
    * 45° portrait) plus `camera-orbit="auto auto auto"` (front, 15° elevation,
@@ -183,6 +264,42 @@ export interface RuntimeContract {
    * procedural probe simply ignore it.
    */
   setEnvironmentPreset?(preset: EnvironmentPreset): void;
+  /**
+   * Variant names declared by the loaded asset(s) — `KHR_materials_variants`,
+   * model-viewer's `availableVariants`. Empty when the asset declares none.
+   */
+  readonly variants?: string[];
+  /** Currently applied variant; `null` = the asset's own materials. */
+  readonly variantName?: string | null;
+  /**
+   * Switch to a declared variant; `null` restores the defaults. Warmup calls
+   * before the asset loads are remembered, not dropped.
+   */
+  setVariant?(name: string | null): boolean;
+  /**
+   * Camera names authored inside the loaded asset(s) — glTF `node.camera`.
+   * Empty when the asset declares none.
+   */
+  readonly cameras?: string[];
+  /** Active embedded camera; `null` = the document/orbit view. */
+  readonly cameraName?: string | null;
+  /**
+   * Look through an authored camera (`null` restores the previous orbit view).
+   * Names set before the asset loads are remembered, not dropped.
+   */
+  setCameraByName?(name: string | null): boolean;
+  /** Morph channels on the mounted content, with weights and animation state. */
+  readonly morphTargets?: MorphTargetInfo[];
+  /**
+   * Set one morph weight. Returns `false` when the channel is gone or a playing
+   * clip drives it — an animated value would snap back on the next frame.
+   */
+  setMorphInfluence?(
+    objectId: string,
+    meshIndex: number,
+    targetIndex: number,
+    value: number,
+  ): boolean;
 
   // --- Incremental editing (optional) ---------------------------------------
   // Whole-document runtimes omit these; the commands that need them raise a

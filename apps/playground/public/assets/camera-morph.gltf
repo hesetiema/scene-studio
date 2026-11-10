@@ -1,0 +1,205 @@
+{
+  "asset": {
+    "version": "2.0",
+    "generator": "scene-studio camera/morph fixture"
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "mesh": 0,
+      "name": "MorphBox"
+    },
+    {
+      "name": "Front",
+      "translation": [
+        0,
+        1.4,
+        4.2
+      ],
+      "rotation": [
+        -0.10535080902060152,
+        0,
+        0,
+        0.9944351195722648
+      ],
+      "camera": 0
+    },
+    {
+      "name": "Close",
+      "translation": [
+        -2.4,
+        1.7,
+        2.8
+      ],
+      "rotation": [
+        -0.13546044031475185,
+        -0.3433084311161227,
+        -0.050110078247176906,
+        0.9280510601752373
+      ],
+      "camera": 1
+    }
+  ],
+  "meshes": [
+    {
+      "name": "MorphBox",
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0
+          },
+          "indices": 1,
+          "material": 0,
+          "targets": [
+            {
+              "POSITION": 2
+            },
+            {
+              "POSITION": 3
+            }
+          ]
+        }
+      ],
+      "weights": [
+        0,
+        0
+      ],
+      "extras": {
+        "targetNames": [
+          "Tall",
+          "Wide"
+        ]
+      }
+    }
+  ],
+  "materials": [
+    {
+      "name": "Body",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.72,
+          0.74,
+          0.78,
+          1
+        ],
+        "metallicFactor": 0.1,
+        "roughnessFactor": 0.45
+      }
+    }
+  ],
+  "cameras": [
+    {
+      "type": "perspective",
+      "perspective": {
+        "yfov": 0.6981317007977318,
+        "znear": 0.05,
+        "zfar": 100
+      }
+    },
+    {
+      "type": "perspective",
+      "perspective": {
+        "yfov": 0.7853981633974483,
+        "znear": 0.05,
+        "zfar": 100
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -0.5,
+        0,
+        -0.5
+      ],
+      "max": [
+        0.5,
+        1,
+        0.5
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5123,
+      "count": 36,
+      "type": "SCALAR"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -0.5,
+        0,
+        -0.5
+      ],
+      "max": [
+        0.5,
+        1,
+        0.5
+      ]
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5126,
+      "count": 8,
+      "type": "VEC3",
+      "min": [
+        -0.5,
+        0,
+        -0.5
+      ],
+      "max": [
+        0.5,
+        1,
+        0.5
+      ]
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 96,
+      "byteLength": 72,
+      "target": 34963
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 168,
+      "byteLength": 96,
+      "target": 34962
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 264,
+      "byteLength": 96,
+      "target": 34962
+    }
+  ],
+  "buffers": [
+    {
+      "uri": "data:application/octet-stream;base64,AAAAvwAAAAAAAAC/AAAAPwAAAAAAAAC/AAAAPwAAAAAAAAA/AAAAvwAAAAAAAAA/AAAAvwAAgD8AAAC/AAAAPwAAgD8AAAC/AAAAPwAAgD8AAAA/AAAAvwAAgD8AAAA/AAABAAIAAAACAAMABAAGAAUABAAHAAYAAAAEAAUAAAAFAAEAAQAFAAYAAQAGAAIAAgAGAAcAAgAHAAMAAwAHAAQAAwAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJqZGT8AAAAAAAAAAJqZGT8AAAAAAAAAAJqZGT8AAAAAAAAAAJqZGT8AAAAAAAAAAAAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAPwAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "byteLength": 360
+    }
+  ]
+}

@@ -54,3 +54,9 @@ export {
 export { createGizmoRig, type GizmoRig, type GizmoRigOptions, type GizmoControls } from "./three/viewer/gizmo-rig";
 export { createAnimationRig, type AnimationRig } from "./three/viewer/animation-rig";
 export { createRenderLoop, type RenderLoop, type RenderLoopOptions } from "./three/viewer/render-loop";
+export {
+  collectEmbeddedCameras,
+  orbitTargetFor,
+  type EmbeddedCamera,
+} from "./three/viewer/embedded-cameras";
+export { createMorphRig, type MorphRig, type MorphRigOptions } from "./three/viewer/morph-rig";

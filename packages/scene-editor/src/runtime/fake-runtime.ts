@@ -6,10 +6,12 @@ import type {
 } from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
+  AnimationClipInfo,
   AnimationOptions,
   AutoRotateOptions,
   CameraControlsOptions,
   EnvironmentPreset,
+  MorphTargetInfo,
   RuntimeContract,
   RuntimeEventMap,
   ToneMappingMode,
@@ -40,7 +42,32 @@ export class FakeRuntime implements RuntimeContract {
     setAnimationOptions: [] as AnimationOptions[],
     setEnvironmentPreset: [] as EnvironmentPreset[],
     frameViewer: 0,
+    setRenderingPaused: [] as boolean[],
+    setCameraByName: [] as Array<string | null>,
+    playAnimation: [] as Array<{ objectId: string | null; index: number }>,
+    playAnimationByName: [] as string[],
+    pauseAnimations: 0,
+    resumeAnimations: 0,
+    setAnimationTime: [] as number[],
+    setAnimationSpeed: [] as number[],
+    setMorphInfluence: [] as Array<{
+      objectId: string;
+      meshIndex: number;
+      targetIndex: number;
+      value: number;
+    }>,
   };
+  /** Names `setCameraByName` will report as found. */
+  camerasList: string[] = [];
+  /** Channels `morphTargets` reports; `setMorphInfluence` honours `driven`. */
+  morphList: MorphTargetInfo[] = [];
+  /** Clips the transport reports; `playAnimation` resolves against them. */
+  clips: AnimationClipInfo[] = [];
+  #cameraName: string | null = null;
+  #playing = false;
+  #time = 0;
+  #speed = 1;
+  #active: AnimationClipInfo | null = null;
   pickResult: string | null = null;
   /** When true, applyViewState re-emits view-change (contract-violation probe). */
   viewChangeOnApply = false;
@@ -127,6 +154,52 @@ export class FakeRuntime implements RuntimeContract {
     this.autoFrame();
   }
 
+  setRenderingPaused(paused: boolean): void {
+    this.calls.setRenderingPaused.push(paused);
+  }
+
+  get cameras(): string[] {
+    return [...this.camerasList];
+  }
+
+  get cameraName(): string | null {
+    return this.#cameraName;
+  }
+
+  setCameraByName(name: string | null): boolean {
+    this.calls.setCameraByName.push(name);
+    if (name === null) {
+      this.#cameraName = null;
+      return true;
+    }
+    // Mirrors ThreeRuntime: unknown names are remembered, not applied.
+    if (!this.camerasList.includes(name)) return false;
+    this.#cameraName = name;
+    return true;
+  }
+
+  get morphTargets(): MorphTargetInfo[] {
+    return this.morphList.map((entry) => ({ ...entry }));
+  }
+
+  setMorphInfluence(
+    objectId: string,
+    meshIndex: number,
+    targetIndex: number,
+    value: number,
+  ): boolean {
+    this.calls.setMorphInfluence.push({ objectId, meshIndex, targetIndex, value });
+    const channel = this.morphList.find(
+      (entry) =>
+        entry.objectId === objectId &&
+        entry.meshIndex === meshIndex &&
+        entry.targetIndex === targetIndex,
+    );
+    if (!channel || channel.driven) return false;
+    channel.influence = value;
+    return true;
+  }
+
   setToneMapping(mode: ToneMappingMode): void {
     this.calls.setToneMapping.push(mode);
   }
@@ -149,6 +222,74 @@ export class FakeRuntime implements RuntimeContract {
 
   setAnimationOptions(options: AnimationOptions): void {
     this.calls.setAnimationOptions.push({ ...options });
+  }
+
+  /* ------------------------------------------------------------- transport ---- */
+
+  get animations(): AnimationClipInfo[] {
+    return this.clips.map((clip) => ({ ...clip }));
+  }
+
+  get animationPlaying(): boolean {
+    return this.#playing;
+  }
+
+  get animationTime(): number {
+    return this.#time;
+  }
+
+  get animationDuration(): number {
+    return this.#active?.duration ?? 0;
+  }
+
+  get animationSpeed(): number {
+    return this.#speed;
+  }
+
+  playAnimation(objectId: string | null = null, index = 0): boolean {
+    this.calls.playAnimation.push({ objectId, index });
+    const clip =
+      objectId === null
+        ? this.clips[0]
+        : this.clips.find((entry) => entry.objectId === objectId && entry.index === index);
+    if (!clip) return false;
+    this.#active = clip;
+    this.#playing = true;
+    this.#time = 0;
+    return true;
+  }
+
+  playAnimationByName(name: string): boolean {
+    this.calls.playAnimationByName.push(name);
+    const wanted = name.trim().toLowerCase();
+    const clip = this.clips.find((entry) => entry.name.toLowerCase() === wanted);
+    if (!clip) return false;
+    this.#active = clip;
+    this.#playing = true;
+    this.#time = 0;
+    return true;
+  }
+
+  pauseAnimations(): void {
+    this.calls.pauseAnimations += 1;
+    this.#playing = false;
+  }
+
+  resumeAnimations(): boolean {
+    this.calls.resumeAnimations += 1;
+    if (!this.#active) return false;
+    this.#playing = true;
+    return true;
+  }
+
+  setAnimationTime(seconds: number): void {
+    this.calls.setAnimationTime.push(seconds);
+    this.#time = seconds;
+  }
+
+  setAnimationSpeed(speed: number): void {
+    this.calls.setAnimationSpeed.push(speed);
+    this.#speed = speed;
   }
 
   get liveViewEvents(): boolean {

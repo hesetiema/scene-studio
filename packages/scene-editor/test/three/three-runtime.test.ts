@@ -255,3 +255,36 @@ describe("ThreeRuntime", () => {
     expect(runtime.pick(clientX, clientY)).toBe("asset-1");
   });
 });
+
+describe("ThreeRuntime render pause", () => {
+  it("stops drawing while paused and repaints on resume", () => {
+    const { runtime, renderer } = makeRuntime();
+    runtime.setRenderingPaused(true);
+    const pausedAt = renderer.renders;
+
+    // Every internal path (resize, selection, load) goes through `#render`.
+    runtime.resize(400, 300);
+    expect(renderer.renders).toBe(pausedAt);
+
+    runtime.setRenderingPaused(false);
+    // Resuming paints immediately: the drawing buffer is not preserved.
+    expect(renderer.renders).toBe(pausedAt + 1);
+  });
+
+  it("still renders for an explicit capture while paused", () => {
+    const { runtime, renderer } = makeRuntime();
+    runtime.setRenderingPaused(true);
+    const pausedAt = renderer.renders;
+
+    runtime.toDataURL();
+    expect(renderer.renders).toBe(pausedAt + 1);
+  });
+
+  it("is idempotent — repeated pauses do not queue extra frames", () => {
+    const { runtime, renderer } = makeRuntime();
+    runtime.setRenderingPaused(true);
+    const pausedAt = renderer.renders;
+    runtime.setRenderingPaused(true);
+    expect(renderer.renders).toBe(pausedAt);
+  });
+});

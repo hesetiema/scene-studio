@@ -76,6 +76,7 @@ export { SelectionManager } from "./runtime/selection-manager";
 export { TypedEventBus } from "./runtime/typed-event-bus";
 export type {
   EnvironmentPreset,
+  MorphTargetInfo,
   RuntimeContract,
   RuntimeEventBus,
   RuntimeEventMap,

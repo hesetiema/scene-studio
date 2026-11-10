@@ -1,13 +1,9 @@
 import * as THREE from "three";
+import type { AnimationClipInfo } from "../../runtime/runtime-contract";
 
-export interface AnimationClipInfo {
-  /** Stable runtime id: `${objectId}#${index}`. */
-  id: string;
-  objectId: string;
-  index: number;
-  name: string;
-  duration: number;
-}
+// The clip shape is part of the runtime contract (the element exposes it as
+// `availableAnimations`); re-exported here so `three-entry` keeps one import.
+export type { AnimationClipInfo };
 
 /** Transport knobs (model-viewer `animation-crossfade-duration` / `pause-at-end`). */
 export interface AnimationRigOptions {
@@ -51,6 +47,12 @@ export interface AnimationRig {
   setTime(seconds: number): void;
   /** Crossfade / one-shot policy; applies to the clip already playing. */
   setOptions(options: AnimationRigOptions): void;
+  /**
+   * Property names the clip in flight writes (`<node>.morphTargetInfluences`,
+   * `<node>.position`, …). Empty when nothing is playing — manual edits are only
+   * ignored while a clip actually drives the channel.
+   */
+  activeTrackNames(): string[];
   /** Advance mixers; returns true while playback is active. */
   update(delta: number): boolean;
   dispose(): void;
@@ -227,6 +229,10 @@ export function createAnimationRig(): AnimationRig {
       }
       if (options.pauseAtEnd !== undefined) pauseAtEnd = options.pauseAtEnd;
       if (active) applyLoopPolicy(active.action);
+    },
+    activeTrackNames(): string[] {
+      if (!active || !playing) return [];
+      return active.action.getClip().tracks.map((track) => track.name);
     },
     update(delta: number): boolean {
       if (!playing || !active) return false;

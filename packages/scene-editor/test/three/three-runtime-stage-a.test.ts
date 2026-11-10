@@ -103,17 +103,63 @@ describe("ThreeRuntime stage A: autoFrame", () => {
     expect(fitted / distance()).toBeCloseTo(0.5, 5);
   });
 
-  it("viewer framing applies model-viewer's `field-of-view=auto` per aspect", async () => {
+  it("frames at model-viewer's constant 30° FOV in any aspect", async () => {
     const { runtime } = makeRuntime();
     await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
 
     runtime.camera.aspect = 1.4;
     runtime.frameViewer();
-    expect(runtime.camera.fov).toBe(30);
+    expect(runtime.camera.fov).toBeCloseTo(30, 5);
 
+    // A narrow pane does not raise the framing FOV — model-viewer keeps 30° and
+    // widens the rendered FOV only as far as the horizontal fit requires.
     runtime.camera.aspect = 0.7;
     runtime.frameViewer();
-    expect(runtime.camera.fov).toBe(45);
+    expect(runtime.camera.fov).toBeCloseTo(39.1, 0);
+  });
+
+  it("places the camera at model-viewer's `camera-orbit` radius `auto`", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+    runtime.camera.aspect = 1.4;
+    runtime.frameViewer();
+
+    const { position, target } = runtime.getViewState().camera;
+    const distance = Math.hypot(
+      position[0] - target[0],
+      position[1] - target[1],
+      position[2] - target[2],
+    );
+
+    // The placeholder is a unit cube: its farthest vertex is half its diagonal,
+    // and `auto` is 105% of radius / sin(fov/2) — 1.05 in the 30° case.
+    const radius = Math.sqrt(3) / 2;
+    const ideal = radius / Math.sin(THREE.MathUtils.degToRad(15));
+    expect(distance).toBeCloseTo(ideal * 1.05, 4);
+  });
+
+  it("widens the FOV instead of backing off for a model that is wide on screen", async () => {
+    const { runtime } = makeRuntime();
+    // 10 x 1 x 0.1: far wider than the 0.5 pane, so `adjustedFoV` has to open
+    // the vertical FOV rather than push the camera away.
+    await runtime.loadDocument(
+      sceneDocument({ objects: [sceneObject({ id: "slab", scale: [10, 1, 0.1] })] }),
+    );
+    runtime.camera.aspect = 0.5;
+    runtime.frameViewer();
+
+    expect(runtime.camera.fov).toBeGreaterThan(45);
+
+    // The slant distance still follows the vertex sphere; only the projection
+    // changed, which is the whole point of the port.
+    const radius = Math.hypot(5, 0.5, 0.05);
+    const { position, target } = runtime.getViewState().camera;
+    const distance = Math.hypot(
+      position[0] - target[0],
+      position[1] - target[1],
+      position[2] - target[2],
+    );
+    expect(distance).toBeCloseTo((radius / Math.sin(THREE.MathUtils.degToRad(15))) * 1.05, 4);
   });
 });
 
@@ -213,60 +259,47 @@ describe("ThreeRuntime stage A: load lifecycle", () => {
   });
 });
 
-describe("contact shadow direction", () => {
-  const shadowLightOf = (runtime: ThreeRuntime): THREE.DirectionalLight | undefined =>
+describe("contact shadow", () => {
+  const catcherOf = (runtime: ThreeRuntime): THREE.Mesh | undefined =>
     runtime.scene.children.find(
       (child) =>
-        (child as THREE.DirectionalLight).isDirectionalLight === true &&
-        (child as THREE.DirectionalLight).castShadow === true,
-    ) as THREE.DirectionalLight | undefined;
+        (child as THREE.Mesh).isMesh === true &&
+        ((child as THREE.Mesh).material as THREE.MeshBasicMaterial).transparent === true,
+    ) as THREE.Mesh | undefined;
 
-  const withContactShadow = (
-    runtime: ThreeRuntime,
-    directional: { intensity: number; position: [number, number, number] },
-  ): void => {
+  it("draws a floor catcher instead of casting a shadow map", async () => {
+    const { runtime } = makeRuntime();
+    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
+
     const view = runtime.getViewState();
     runtime.applyViewState({
       ...view,
-      lights: {
-        ...view.lights,
-        ambient: { ...view.lights.ambient, intensity: 0 },
-        directional: { ...view.lights.directional, ...directional },
-      },
       environment: { ...view.environment, contactShadow: { enabled: true } },
     });
-  };
 
-  it("follows the environment key light when the document has no emitting key", async () => {
-    const { runtime } = makeRuntime();
-    await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
-    runtime.setEnvironmentPreset("neutral");
-
-    withContactShadow(runtime, { intensity: 0, position: [5, 10, 7] });
-
-    const light = shadowLightOf(runtime);
-    expect(light).toBeDefined();
-    const direction = light!.position.clone().normalize();
-    // The neutral studio's key softbox sits front-left and high.
-    expect(direction.x).toBeLessThan(0);
-    expect(direction.y).toBeGreaterThan(0);
-    expect(direction.z).toBeGreaterThan(0);
-    // Shadow-only: it must not add a second key light on top of the IBL.
-    expect(light!.intensity).toBe(0);
+    expect(catcherOf(runtime)).toBeDefined();
+    // The reference derives its shadow from geometry height, not from a light:
+    // no shadow-casting light is added to the scene.
+    const shadowLights = runtime.scene.children.filter(
+      (child) =>
+        (child as THREE.DirectionalLight).isDirectionalLight === true &&
+        (child as THREE.DirectionalLight).castShadow === true,
+    );
+    expect(shadowLights).toHaveLength(0);
   });
 
-  it("keeps the document's own key direction when it emits", async () => {
+  it("keeps the persisted view untouched", async () => {
     const { runtime } = makeRuntime();
     await runtime.loadDocument(sceneDocument({ objects: [sceneObject({ id: "box" })] }));
-    runtime.setEnvironmentPreset("neutral");
 
-    withContactShadow(runtime, { intensity: 1, position: [0, 10, 0] });
+    const view = runtime.getViewState();
+    runtime.applyViewState({
+      ...view,
+      environment: { ...view.environment, contactShadow: { enabled: true, opacity: 0.5 } },
+    });
 
-    const direction = shadowLightOf(runtime)!.position.clone().normalize();
-    expect(direction.y).toBeCloseTo(1, 5);
-    expect(Math.abs(direction.x)).toBeLessThan(1e-6);
-    // Aiming the shadow never rewrites the persisted view.
-    expect(runtime.getViewState().lights.directional.position).toEqual([0, 10, 0]);
-    expect(runtime.getViewState().lights.directional.intensity).toBe(1);
+    const after = runtime.getViewState();
+    expect(after.lights).toEqual(view.lights);
+    expect(after.environment.contactShadow).toEqual({ enabled: true, opacity: 0.5 });
   });
 });

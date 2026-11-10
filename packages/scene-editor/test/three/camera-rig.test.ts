@@ -109,6 +109,110 @@ describe("CameraRig controls policy", () => {
   });
 });
 
+describe("CameraRig damping", () => {
+  function stubFrames() {
+    const queue: FrameRequestCallback[] = [];
+    const cancel = vi.fn();
+    vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", cancel);
+    return { queue, cancel };
+  }
+
+  /** Rig whose render nudges the camera, so the controls report a change. */
+  function makeDampedRig(changesToEmit: number) {
+    const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100);
+    camera.position.set(0, 0, 10);
+    const { orbit, emit } = makeControls();
+    let remaining = 0;
+    const onRender = vi.fn(() => {
+      if (remaining > 0) {
+        remaining -= 1;
+        emit("change");
+      }
+    });
+    const rig = createCameraRig({
+      camera,
+      domElement: {} as HTMLElement,
+      onRender,
+      onInteractionEnd: vi.fn(),
+    });
+    rig.mount(orbit);
+    rig.applyControls({ damping: 0.3 });
+    remaining = changesToEmit;
+    return { rig, orbit, emit, onRender, camera };
+  }
+
+  it("hands the factor to OrbitControls and reports it as enabled", () => {
+    const { rig, orbit } = makeRig();
+    rig.applyControls({ damping: 0.2 });
+    rig.mount(orbit);
+
+    expect(orbit.enableDamping).toBe(true);
+    expect(orbit.dampingFactor).toBe(0.2);
+  });
+
+  it("turns damping off when the factor is zero or removed", () => {
+    const { rig, orbit } = makeRig();
+    rig.applyControls({ damping: 0.2 });
+    rig.mount(orbit);
+    rig.applyControls({ damping: 0 });
+
+    expect(orbit.enableDamping).toBe(false);
+  });
+
+  it("keeps rendering after the gesture until the inertia dies", () => {
+    const { queue } = stubFrames();
+    const { emit } = makeDampedRig(1);
+
+    emit("end");
+    expect(queue).toHaveLength(1);
+
+    // The frame still moves the camera, so the loop asks for another one.
+    queue.shift()!(0);
+    expect(queue).toHaveLength(1);
+
+    // This one finds it settled: no change, no next frame.
+    queue.shift()!(0);
+    expect(queue).toHaveLength(0);
+  });
+
+  it("stops the settle loop immediately when a new drag starts", () => {
+    const { queue, cancel } = stubFrames();
+    const { rig, emit } = makeDampedRig(5);
+
+    emit("end");
+    const inFlight = queue.shift()!;
+
+    emit("start");
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    // A frame already queued must not revive the loop during the drag.
+    inFlight(0);
+    expect(queue).toHaveLength(0);
+  });
+
+  it("drops the frame loop while inactive and picks it up on resume", () => {
+    const { queue, cancel } = stubFrames();
+    const { rig } = makeRig();
+
+    rig.setAutoRotate({ enabled: true, degreesPerSecond: 90, delayMs: 0 });
+    expect(queue).toHaveLength(1);
+
+    rig.setActive(false);
+    expect(cancel).toHaveBeenCalledTimes(1);
+
+    const inFlight = queue.shift()!;
+    inFlight(1000); // a late frame must not spin the camera while paused
+    expect(queue).toHaveLength(0);
+
+    rig.setActive(true);
+    expect(queue).toHaveLength(1);
+  });
+});
+
 describe("CameraRig auto-rotate", () => {
   function stubFrames() {
     const queue: FrameRequestCallback[] = [];

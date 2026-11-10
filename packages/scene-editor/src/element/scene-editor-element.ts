@@ -15,9 +15,14 @@ import type {
 import { ThreeRuntime } from "../three/three-runtime";
 import type { SceneEditorPlugin } from "../plugins/plugin";
 import type { AssetResolver } from "../assets/resolver-asset-loader";
+import type { MorphTargetInfo } from "../runtime/runtime-contract";
 import { createResolverAssetLoader } from "../assets/resolver-asset-loader";
 import { AssetCache } from "../assets/asset-cache";
-import type { MinimalGltfLoader } from "../assets/gltf-asset-loader";
+import type {
+  GltfDecoders,
+  MinimalGltfLoader,
+} from "../assets/gltf-asset-loader";
+import { applyGltfDecoders } from "../assets/gltf-asset-loader";
 import type { Command } from "../core/history/command-history";
 import {
   createSceneEditor,
@@ -31,6 +36,12 @@ export interface RuntimeFactoryOptions {
   assetResolver?: AssetResolver;
   /** Built-in studio IBL, derived from `environment-image` (default `"room"`). */
   environmentPreset?: EnvironmentPreset;
+  /**
+   * Decoder bundle, read before every asset load. The default factory forwards
+   * it to the glTF loader; a custom factory should do the same so the element's
+   * `dracoLoader` / `ktx2Loader` / `meshoptDecoder` properties keep working.
+   */
+  getDecoders?: () => GltfDecoders;
 }
 
 export type SceneEditorRuntimeFactory = (
@@ -38,15 +49,39 @@ export type SceneEditorRuntimeFactory = (
   options?: RuntimeFactoryOptions,
 ) => RuntimeContract;
 
-/** GLTFLoader is code-split so element-entry stays lean; loadAsync resolves on first use. */
+/**
+ * GLTFLoader is code-split so element-entry stays lean; loadAsync resolves on
+ * first use. Decoder setters are recorded and pushed onto the real loader both
+ * at construction and before each load, so the host may assign them at any
+ * point before the first asset request.
+ */
 function lazyGltfLoader(): MinimalGltfLoader {
-  let pending: Promise<{ loadAsync(url: string): Promise<{ scene: unknown }> }> | null = null;
-  const load = (): Promise<{ loadAsync(url: string): Promise<{ scene: unknown }> }> =>
-    (pending ??= import("three/examples/jsm/loaders/GLTFLoader.js").then(
-      (m) => new m.GLTFLoader(),
-    ));
+  type Loader = import("three/examples/jsm/loaders/GLTFLoader.js").GLTFLoader;
+  let pending: Promise<Loader> | null = null;
+  const decoders: GltfDecoders = {};
+  const push = (loader: Loader): void =>
+    applyGltfDecoders(loader as unknown as MinimalGltfLoader, decoders);
+  const load = (): Promise<Loader> =>
+    (pending ??= import("three/examples/jsm/loaders/GLTFLoader.js").then((m) => {
+      const loader = new m.GLTFLoader();
+      push(loader);
+      return loader;
+    }));
   return {
-    loadAsync: async (url) => (await load()).loadAsync(url),
+    loadAsync: async (url) => {
+      const loader = await load();
+      push(loader);
+      return loader.loadAsync(url);
+    },
+    setDRACOLoader: (value) => {
+      decoders.dracoLoader = value;
+    },
+    setKTX2Loader: (value) => {
+      decoders.ktx2Loader = value;
+    },
+    setMeshoptDecoder: (value) => {
+      decoders.meshoptDecoder = value;
+    },
   };
 }
 
@@ -88,6 +123,7 @@ const CAMERA_ATTRIBUTES: ReadonlySet<string> = new Set([
   "max-camera-orbit",
   "disable-pan",
   "disable-zoom",
+  "camera-damping",
 ]);
 
 /** Attributes that only steer animation playback (viewer chrome, not the document). */
@@ -96,6 +132,34 @@ const PLAYBACK_ATTRIBUTES: ReadonlySet<string> = new Set([
   "animation-name",
   "animation-crossfade-duration",
   "pause-at-end",
+]);
+
+/** Presentation-only knobs; never written to the document (contrast: view state). */
+const DISPLAY_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "tone-mapping",
+  "exposure",
+  "shadow-intensity",
+  "shadow-softness",
+  "variant-name",
+  "camera-name",
+]);
+
+/**
+ * Camera pose attributes — model-viewer's `camera-orbit` / `camera-target` /
+ * `field-of-view`, plus their clamp pair.
+ *
+ * Display-only for the same reason as `environment-image`: they describe how a
+ * host wants to *look at* the content, not what the document contains, so they
+ * must not dirty the scene. They are re-asserted after every load (a document's
+ * own `view` lands after the `load` event), which is why the applied signature
+ * is remembered instead of the values.
+ */
+const VIEW_ATTRIBUTES: ReadonlySet<string> = new Set([
+  "camera-orbit",
+  "camera-target",
+  "field-of-view",
+  "min-field-of-view",
+  "max-field-of-view",
 ]);
 
 /* ---------------------------------------------------------------- slots ---- */
@@ -110,6 +174,13 @@ const SLOT_POSTER = "poster";
 const SLOT_PROGRESS = "progress-bar";
 const HOTSPOT_PREFIX = "hotspot-";
 
+/**
+ * `seamless-poster` fade duration (model-viewer's own poster transition is
+ * 300ms). Long enough to hide the first-frame pop, short enough that the poster
+ * is not still visible when a host starts an intro animation.
+ */
+const POSTER_FADE_MS = 300;
+
 type RevealMode = "auto" | "interaction" | "manual";
 const REVEAL_MODES: ReadonlySet<string> = new Set<RevealMode>(["auto", "interaction", "manual"]);
 
@@ -117,6 +188,12 @@ const REVEAL_MODES: ReadonlySet<string> = new Set<RevealMode>(["auto", "interact
 type SlotRole = "poster" | "progress" | "hotspot";
 
 const ORBIT_AXES = ["theta", "phi", "radius"] as const;
+
+/** 0..1 range for opacity-like attributes; `NaN` collapses to 0. */
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(Math.max(value, 0), 1);
+}
 
 /** `data-position="1 2 3"` → tuple, or `null` when the attribute is unusable. */
 function parseVector3(raw: string | null): [number, number, number] | null {
@@ -168,6 +245,80 @@ function readNumberAttr(el: HTMLElement, name: string, fallback: number): number
   return Number.isFinite(value) ? value : fallback;
 }
 
+/* ------------------------------------------------------------ orbit math ---- */
+
+/** model-viewer's orbit triple: azimuth / polar / distance, degrees + world units. */
+export interface CameraOrbit {
+  /** Azimuth, degrees, measured from +Z toward +X (0 = looking from the front). */
+  theta: number;
+  /** Polar angle from +Y, degrees (75 = 15° above the horizon). */
+  phi: number;
+  /** Distance from the orbit target, world units. */
+  radius: number;
+}
+
+const DEG = Math.PI / 180;
+/** Keeps the eye off the pole: `lookAt` is undefined when the offset is vertical. */
+const PHI_EPSILON = 0.5;
+
+/**
+ * Camera offset → orbit angles. `null` when the eye sits on the target (no
+ * direction to speak of), so callers fall back instead of emitting `NaN`.
+ *
+ * The convention matches `min-camera-orbit` / `max-camera-orbit`: `theta` is the
+ * azimuth from +Z toward +X and `phi` the polar angle from +Y — the same frame
+ * model-viewer's `camera-orbit` uses, hence the same numbers a host can paste
+ * between the two elements.
+ */
+export function orbitFromCamera(
+  position: readonly [number, number, number],
+  target: readonly [number, number, number],
+): CameraOrbit | null {
+  const dx = position[0] - target[0];
+  const dy = position[1] - target[1];
+  const dz = position[2] - target[2];
+  const radius = Math.hypot(dx, dy, dz);
+  if (!Number.isFinite(radius) || radius < 1e-6) return null;
+  const phi = Math.acos(Math.min(Math.max(dy / radius, -1), 1)) / DEG;
+  // atan2(x, z): 0° on +Z, +90° on +X.
+  const theta = Math.atan2(dx, dz) / DEG;
+  return { theta, phi, radius };
+}
+
+/** Orbit angles → camera offset from the target. */
+export function cameraFromOrbit(
+  target: readonly [number, number, number],
+  orbit: CameraOrbit,
+): [number, number, number] {
+  const phi = Math.min(Math.max(orbit.phi, PHI_EPSILON), 180 - PHI_EPSILON) * DEG;
+  const theta = orbit.theta * DEG;
+  const radius = Math.max(orbit.radius, 1e-6);
+  const horizontal = radius * Math.sin(phi);
+  return [
+    target[0] + horizontal * Math.sin(theta),
+    target[1] + radius * Math.cos(phi),
+    target[2] + horizontal * Math.cos(theta),
+  ];
+}
+
+/** `field-of-view="30deg"` → degrees; `auto` / garbage → undefined. */
+function parseAngle(raw: string | undefined): number | undefined {
+  return parseOrbitToken(raw, "theta");
+}
+
+/** OrbitControls' own default `dampingFactor`. */
+const DEFAULT_DAMPING = 0.08;
+
+/**
+ * `camera-damping="0.08"` → inertia factor. Absent means "no inertia", which is
+ * what a render-on-demand editor wants; a bare attribute gets the addon default.
+ */
+function readDamping(el: HTMLElement): number | undefined {
+  if (!el.hasAttribute("camera-damping")) return undefined;
+  const raw = Number.parseFloat(el.getAttribute("camera-damping") ?? "");
+  return Number.isFinite(raw) ? clamp01(raw) : DEFAULT_DAMPING;
+}
+
 /**
  * Thin DOM shell (0.2): owns the canvas, viewport wiring (click-select, resize,
  * keyboard focus domain) and CustomEvent bridging. All editing logic lives in
@@ -182,6 +333,7 @@ export class SceneEditorElement extends HTMLElement {
           createResolverAssetLoader({
             resolver: options.assetResolver,
             gltfLoader: lazyGltfLoader(),
+            ...(options.getDecoders ? { decoders: options.getDecoders } : {}),
           }),
         )
       : undefined;
@@ -226,6 +378,15 @@ export class SceneEditorElement extends HTMLElement {
       "environment-image",
       "tone-mapping",
       "exposure",
+      "shadow-intensity",
+      "shadow-softness",
+      "variant-name",
+      "camera-name",
+      "seamless-poster",
+      "interaction-prompt",
+      "interaction-prompt-threshold",
+      "alt",
+      ...VIEW_ATTRIBUTES,
       ...CAMERA_ATTRIBUTES,
       ...PLAYBACK_ATTRIBUTES,
     ];
@@ -233,6 +394,38 @@ export class SceneEditorElement extends HTMLElement {
 
   /** Host-provided asset resolution — set before connect/ready. */
   assetResolver: AssetResolver | null = null;
+
+  /**
+   * Optional decoders (D16). Assign the instance, not a path — three wants a
+   * constructed `DRACOLoader` / `KTX2Loader` (the latter must already have
+   * `detectSupport(renderer)` called). Read before every asset load, so these
+   * may be set before `connect`, before `src`, or between loads.
+   *
+   * ```js
+   * const ktx2 = new KTX2Loader().setTranscoderPath("/basis/");
+   * el.dracoLoader = new DRACOLoader().setDecoderPath("/draco/");
+   * el.ktx2Loader = ktx2;
+   * el.src = "/compressed.glb";
+   * ```
+   */
+  get dracoLoader(): unknown {
+    return this.#dracoLoader;
+  }
+  set dracoLoader(value: unknown) {
+    this.#dracoLoader = value ?? null;
+  }
+  get ktx2Loader(): unknown {
+    return this.#ktx2Loader;
+  }
+  set ktx2Loader(value: unknown) {
+    this.#ktx2Loader = value ?? null;
+  }
+  get meshoptDecoder(): unknown {
+    return this.#meshoptDecoder;
+  }
+  set meshoptDecoder(value: unknown) {
+    this.#meshoptDecoder = value ?? null;
+  }
 
   /**
    * Preview source (`glb` / `gltf`). When present and the host has not called
@@ -249,8 +442,17 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   #editor: SceneEditor | null = null;
+  #dracoLoader: unknown = null;
+  #ktx2Loader: unknown = null;
+  #meshoptDecoder: unknown = null;
   #visibilityObserver: VisibilityObserver | null = null;
   #intersectionVisible = false;
+  /** Element scrolled out of view → the runtime stops drawing. */
+  #visibilityPaused = false;
+  /** Background tab → same pause, set from `visibilitychange`. */
+  #tabHidden = false;
+  /** Last value pushed to the runtime, so both sources de-duplicate to one call. */
+  #renderPaused = false;
   #liveViewEvents = false;
   /** `loading="lazy"` deferred the initial `src` load until first visibility. */
   #deferredSrcLoad = false;
@@ -274,12 +476,44 @@ export class SceneEditorElement extends HTMLElement {
   /** Inline values to restore when this element stops owning a node's look. */
   readonly #originalDisplay = new WeakMap<HTMLElement, string>();
   readonly #originalVisibility = new WeakMap<HTMLElement, string>();
+  /** The poster node currently fading out, if any. */
+  #fadingPoster: HTMLElement | null = null;
+  /** `seamless-poster` fade in flight; keeps the node mounted until it ends. */
+  #posterFadeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Inline opacity each poster arrived with, restored once its fade finishes. */
+  readonly #posterOpacity = new WeakMap<HTMLElement, string>();
+  /** Built-in "drag to rotate" hint (`interaction-prompt`). */
+  #prompt: HTMLElement | null = null;
+  #promptTimer: ReturnType<typeof setTimeout> | null = null;
+  #promptHideTimer: ReturnType<typeof setTimeout> | null = null;
+  #promptShown = false;
+  /** Set by the first gesture: the hint never comes back for this element. */
+  #interacted = false;
+  #wiggle: {
+    cancel(): void;
+    play?(): void;
+    pause?(): void;
+    /** Present on real `Animation`s; `cancel()` rejects it (see `#stopWiggle`). */
+    finished?: Promise<unknown>;
+  } | null = null;
   /** Poster already dismissed (or never present); `dismissPoster()` flips it. */
   #revealed = true;
   /** `true` while a load is in flight (drives `slot="progress-bar"`). */
   #loading = false;
   /** Content mounted — `reveal="auto"` then dismisses a late poster at once. */
   #contentLoaded = false;
+
+  /* ------------------------------------------------------ playback state ---- */
+  /** Set by `pause()`: an explicit transport stop outranks `autoplay` for later loads. */
+  #explicitPause = false;
+  /** Clip the transport last started/continued; `null` = nothing played yet. */
+  #activeClipName: string | null = null;
+
+  /* --------------------------------------------------------- camera pose ---- */
+  /** Signature of the last applied `camera-orbit|-target|-field-of-view` triple. */
+  #appliedCameraPose: string | null = null;
+  /** Canvas this element owns — carries the `alt` text as an `aria-label`. */
+  #canvas: HTMLCanvasElement | null = null;
 
   constructor() {
     super();
@@ -304,7 +538,7 @@ export class SceneEditorElement extends HTMLElement {
       this.#editor?.runtime.setLiveViewEvents?.(this.#liveViewEvents);
       return;
     }
-    if (name === "tone-mapping" || name === "exposure") {
+    if (DISPLAY_ATTRIBUTES.has(name)) {
       this.#applyDisplaySettings();
       return;
     }
@@ -313,8 +547,25 @@ export class SceneEditorElement extends HTMLElement {
       this.#applyEnvironmentPreset();
       return;
     }
+    if (name === "alt") {
+      this.#applyAlt();
+      return;
+    }
+    if (VIEW_ATTRIBUTES.has(name)) {
+      // `min/max-field-of-view` only constrain the clamp, so re-run the pose.
+      this.#applyCameraPose(true);
+      return;
+    }
     if (CAMERA_ATTRIBUTES.has(name)) {
       this.#applyCameraSettings();
+      return;
+    }
+    if (name === "interaction-prompt" || name === "interaction-prompt-threshold") {
+      // `none` retires the hint immediately; anything else restarts the countdown.
+      this.#interacted = false;
+      this.#hideInteractionPrompt();
+      if (this.#promptEnabled()) this.#scheduleInteractionPrompt();
+      else this.#clearPromptTimer();
       return;
     }
     if (PLAYBACK_ATTRIBUTES.has(name)) {
@@ -338,6 +589,8 @@ export class SceneEditorElement extends HTMLElement {
       // Changing `src` is an explicit switch back to preview mode: the host
       // asked for this model, so it wins over a previously loaded document.
       this.#applyDisplaySettings();
+      // The fallback label is derived from the file name.
+      this.#applyAlt();
       this.#maybeLoadSrc(true);
     }
   }
@@ -364,6 +617,10 @@ export class SceneEditorElement extends HTMLElement {
     this.#visibilityObserver?.disconnect();
     this.#visibilityObserver = null;
     this.#intersectionVisible = false;
+    this.#visibilityPaused = false;
+    this.#tabHidden = false;
+    this.#renderPaused = false;
+    this.#resetInteractionPrompt();
     this.#deferredSrcLoad = false;
     this.#pendingPlugins.length = 0;
     this.#resetSlots();
@@ -409,12 +666,17 @@ export class SceneEditorElement extends HTMLElement {
     // Drop a lazy preview that has not fired yet; the host owns the viewport now.
     this.#deferredSrcLoad = false;
     this.#contentLoaded = false;
+    // New content, new clip list: the old name would point at nothing.
+    this.#activeClipName = null;
     // Editor mode again: back to the warm room unless the host chose otherwise.
     this.#applyEnvironmentPreset();
     this.#setLoading(true);
     performance.mark("scene-editor:load:start");
     try {
       await this.#requireEditor().loadDocument(doc);
+      // Same reason as the `src` path: the document's `view` lands after the
+      // `load` event, so display-only attributes are re-asserted afterwards.
+      this.#reassertDisplaySettings();
     } finally {
       this.#setLoading(false);
       performance.mark("scene-editor:load:end");
@@ -734,7 +996,65 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   #applyPosterVisibility(): void {
-    this.#setVisible(this.#poster, !this.#revealed);
+    const poster = this.#poster;
+    if (!poster) return;
+    if (!this.#revealed) {
+      // A new reveal cycle: undo a fade that is still in flight.
+      this.#cancelPosterFade();
+      this.#setVisible(poster, true);
+      return;
+    }
+    // `seamless-poster` keeps the node mounted through a fade so the first
+    // rendered frame cross-dissolves out of it instead of popping in.
+    if (this.#fadeable() && poster.style.display !== "none") {
+      this.#fadePosterOut(poster);
+      return;
+    }
+    this.#setVisible(poster, false);
+  }
+
+  /** `seamless-poster` is opt-in: without it the poster is cut, as before. */
+  #fadeable(): boolean {
+    return this.hasAttribute("seamless-poster") && typeof setTimeout === "function";
+  }
+
+  #fadePosterOut(poster: HTMLElement): void {
+    const { style } = poster;
+    this.#cancelPosterFade();
+    this.#posterOpacity.set(poster, style.opacity);
+    this.#fadingPoster = poster;
+    // Passive while fading: the model behind is already interactive.
+    style.pointerEvents = "none";
+    style.transition = `opacity ${POSTER_FADE_MS}ms ease`;
+    style.opacity = "0";
+    this.#posterFadeTimer = setTimeout(() => {
+      this.#posterFadeTimer = null;
+      const node = this.#fadingPoster;
+      this.#fadingPoster = null;
+      if (!node) return;
+      // The node may have been replaced or detached mid-fade.
+      if (this.#poster === node) this.#setVisible(node, false);
+      this.#restorePosterStyle(node);
+    }, POSTER_FADE_MS);
+  }
+
+  /** Drop a fade in flight and hand the node's own style back to it. */
+  #cancelPosterFade(): void {
+    if (this.#posterFadeTimer !== null) {
+      clearTimeout(this.#posterFadeTimer);
+      this.#posterFadeTimer = null;
+    }
+    const node = this.#fadingPoster;
+    if (!node) return;
+    this.#fadingPoster = null;
+    this.#restorePosterStyle(node);
+  }
+
+  #restorePosterStyle(poster: HTMLElement): void {
+    const { style } = poster;
+    style.opacity = this.#posterOpacity.get(poster) ?? "";
+    style.transition = "";
+    style.pointerEvents = "";
   }
 
   #applyProgressVisibility(): void {
@@ -758,8 +1078,163 @@ export class SceneEditorElement extends HTMLElement {
     const dismissing = this.#poster !== null && !this.#revealed;
     this.#revealed = true;
     this.#applyPosterVisibility();
+    // The canvas is finally uncovered — now the hint is worth showing.
+    this.#scheduleInteractionPrompt();
     if (!dismissing) return;
     this.dispatchEvent(new CustomEvent("poster-dismissed", { detail: {} }));
+  }
+
+  /* ------------------------------------------------- interaction prompt ---- */
+
+  /**
+   * `interaction-prompt="none"` turns the hint off; the default `auto` shows it
+   * after `interaction-prompt-threshold` ms of no gesture (model-viewer's own
+   * 3s), then never again once the user has touched the viewer.
+   */
+  #promptEnabled(): boolean {
+    return (this.getAttribute("interaction-prompt") ?? "auto").trim().toLowerCase() !== "none";
+  }
+
+  #scheduleInteractionPrompt(): void {
+    this.#clearPromptTimer();
+    if (this.#interacted || this.#promptShown || !this.#promptEnabled()) return;
+    if (typeof setTimeout !== "function") return;
+    const threshold = Math.max(0, readNumberAttr(this, "interaction-prompt-threshold", 3000));
+    this.#promptTimer = setTimeout(() => {
+      this.#promptTimer = null;
+      this.#showInteractionPrompt();
+    }, threshold);
+  }
+
+  #clearPromptTimer(): void {
+    if (this.#promptTimer === null) return;
+    clearTimeout(this.#promptTimer);
+    this.#promptTimer = null;
+  }
+
+  /**
+   * Drop the running nudge. `Animation.cancel()` rejects the animation's
+   * `finished` promise (spec behaviour, and happy-dom does the same). Nothing
+   * awaits it here, so the rejection has to be observed or it surfaces as an
+   * unhandled rejection in the host page — attach the no-op catch *before*
+   * cancelling, so it lands before the microtask checkpoint.
+   */
+  #stopWiggle(): void {
+    const wiggle = this.#wiggle;
+    this.#wiggle = null;
+    if (!wiggle) return;
+    void wiggle.finished?.catch(() => {});
+    wiggle.cancel();
+  }
+
+  #showInteractionPrompt(): void {
+    // A poster still covering the canvas means there is nothing to hint at yet;
+    // `#dismissPoster` re-schedules once the model is visible.
+    if (this.#interacted || this.#promptShown || !this.#revealed || !this.#promptEnabled()) return;
+    const prompt = this.#ensureInteractionPrompt();
+    if (!prompt) return;
+    prompt.style.display = "flex";
+    // Next frame, so the opacity transition has a start value to animate from.
+    this.#promptShown = true;
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        if (this.#promptShown) prompt.style.opacity = "1";
+      });
+    } else {
+      prompt.style.opacity = "1";
+    }
+    this.#wiggleInteractionPrompt(prompt);
+  }
+
+  #dismissInteractionPrompt(): void {
+    this.#clearPromptTimer();
+    this.#interacted = true;
+    this.#hideInteractionPrompt();
+  }
+
+  #hideInteractionPrompt(): void {
+    const prompt = this.#prompt;
+    if (!prompt || !this.#promptShown) return;
+    this.#promptShown = false;
+    this.#stopWiggle();
+    prompt.style.opacity = "0";
+    if (typeof setTimeout === "function") {
+      // Keep it mounted through the fade, then take it out of the box model.
+      this.#promptHideTimer = setTimeout(() => {
+        this.#promptHideTimer = null;
+        if (!this.#promptShown) prompt.style.display = "none";
+      }, 300);
+    } else {
+      prompt.style.display = "none";
+    }
+  }
+
+  /** Horizontal nudge, the affordance model-viewer's hand animation conveys. */
+  #wiggleInteractionPrompt(prompt: HTMLElement): void {
+    const animate = (prompt as HTMLElement & { animate?: HTMLElement["animate"] }).animate;
+    if (typeof animate !== "function") return;
+    this.#stopWiggle();
+    this.#wiggle = prompt.animate(
+      [
+        { transform: "translateX(-50%)" },
+        { transform: "translateX(calc(-50% + 8px))" },
+        { transform: "translateX(-50%)" },
+      ],
+      { duration: 1600, iterations: Number.POSITIVE_INFINITY, easing: "ease-in-out" },
+    );
+    this.#wiggle?.pause?.();
+    this.#wiggle?.play?.();
+  }
+
+  /** Create the hint lazily; a host that clears `innerHTML` gets a fresh one. */
+  #ensureInteractionPrompt(): HTMLElement | null {
+    const existing = this.#prompt;
+    if (existing && this.contains(existing)) return existing;
+    if (typeof document === "undefined") return null;
+    this.#ensurePositionedHost();
+    const prompt = document.createElement("div");
+    prompt.setAttribute("data-se-interaction-prompt", "");
+    prompt.setAttribute("aria-hidden", "true");
+    Object.assign(prompt.style, {
+      position: "absolute",
+      left: "50%",
+      bottom: "18px",
+      transform: "translateX(-50%)",
+      width: "44px",
+      height: "44px",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      borderRadius: "50%",
+      background: "rgba(0, 0, 0, 0.32)",
+      color: "#ffffff",
+      pointerEvents: "none",
+      zIndex: "2",
+      opacity: "0",
+      transition: "opacity 300ms ease",
+    } satisfies Partial<CSSStyleDeclaration>);
+    prompt.innerHTML =
+      '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" ' +
+      'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M20 12a8 8 0 1 1-2.7-6.04"/>' +
+      '<path d="M20 4.5v3.2h-3.2"/></svg>';
+    this.appendChild(prompt);
+    this.#prompt = prompt;
+    return prompt;
+  }
+
+  #resetInteractionPrompt(): void {
+    this.#clearPromptTimer();
+    if (this.#promptHideTimer !== null) {
+      clearTimeout(this.#promptHideTimer);
+      this.#promptHideTimer = null;
+    }
+    this.#stopWiggle();
+    this.#promptShown = false;
+    this.#interacted = false;
+    // Ours, not the host's: a reconnect builds a fresh one in `#init`.
+    this.#prompt?.remove();
+    this.#prompt = null;
   }
 
   /** Glue `hotspot-*` anchors to their world position after camera/resize moves. */
@@ -791,6 +1266,9 @@ export class SceneEditorElement extends HTMLElement {
   #resetSlots(): void {
     this.#slotsObserver?.disconnect();
     this.#slotsObserver = null;
+    // Drop any fade first: the timeout would otherwise restyle a node whose
+    // original `cssText` has just been restored below.
+    this.#cancelPosterFade();
     for (const entry of this.#slotted) entry.el.style.cssText = entry.cssText;
     this.#slotted = [];
     this.#poster = null;
@@ -830,6 +1308,8 @@ export class SceneEditorElement extends HTMLElement {
     this.#deferredSrcLoad = false;
     this.#documentOwner = "src";
     this.#contentLoaded = false;
+    // New content, new clip list: the old name would point at nothing.
+    this.#activeClipName = null;
     // Preview mode may have just switched the default preset to `neutral`.
     this.#applyEnvironmentPreset();
     this.#setLoading(true);
@@ -839,6 +1319,11 @@ export class SceneEditorElement extends HTMLElement {
       const runtime = editor.runtime;
       if (runtime.frameViewer) runtime.frameViewer();
       else runtime.autoFrame?.();
+      // A loaded document applies its own `view` *after* the `load` event, so
+      // display-only attributes (tone mapping / exposure / contact shadow) are
+      // re-asserted here, once the host's document is the current one. Framing
+      // comes first: the shadow pass re-applies the camera it reads.
+      this.#reassertDisplaySettings();
     } catch {
       // The facade already emitted `error`; swallowing keeps the
       // fire-and-forget call site free of unhandled rejections.
@@ -863,15 +1348,37 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   /**
-   * Display-only settings. `src` previews default to ACES because raw linear
-   * output looks flat for arbitrary glTF assets; documents loaded through
+   * `alt` — the canvas is the accessible representation of the model
+   * (model-viewer parity). Without the attribute the label falls back to the
+   * file name, which beats an unlabelled canvas: a screen-reader user then hears
+   * *something* instead of "graphic".
+   */
+  #applyAlt(): void {
+    const canvas = this.#canvas;
+    if (!canvas) return;
+    canvas.setAttribute("role", "img");
+    const text = this.getAttribute("alt")?.trim() || this.#fallbackAlt();
+    if (text) canvas.setAttribute("aria-label", text);
+    else canvas.removeAttribute("aria-label");
+  }
+
+  #fallbackAlt(): string {
+    const name = this.src?.split(/[?#]/)[0]?.split("/").pop() ?? "";
+    return name ? `3D model: ${name}` : "";
+  }
+
+  /**
+   * Display-only settings. `src` previews default to `neutral` because that is
+   * what model-viewer's `tone-mapping="auto"` resolves to on a glTF asset
+   * (measured: identical mean/p95 luminance on the Khronos Fox, while ACES
+   * renders ~35% darker and more saturated). Documents loaded through
    * `loadDocument()` keep three's default unless the host opts in.
    */
   #applyDisplaySettings(): void {
     const runtime = this.#editor?.runtime;
     if (!runtime) return;
 
-    const mode = this.getAttribute("tone-mapping") ?? (this.src ? "aces" : null);
+    const mode = this.getAttribute("tone-mapping") ?? (this.src ? "neutral" : null);
     if (mode) {
       const normalized = normalizeToneMapping(mode);
       if (normalized) runtime.setToneMapping?.(normalized);
@@ -882,6 +1389,405 @@ export class SceneEditorElement extends HTMLElement {
       const exposure = Number(rawExposure);
       if (Number.isFinite(exposure)) runtime.setExposure?.(exposure);
     }
+
+    this.#applyShadowSettings();
+    this.#applyVariantName();
+    // An authored camera is a complete pose, so it gets the first word;
+    // `#applyCameraPose` stands down while one is selected.
+    this.#applyCameraName();
+    this.#applyCameraPose();
+  }
+
+  /**
+   * Re-run the display settings after a load. Unlike the attribute path this
+   * also forgets the applied camera pose: the document's own `view` is restored
+   * after the `load` event, which silently overwrites whatever the attributes
+   * applied before it.
+   */
+  #reassertDisplaySettings(): void {
+    this.#appliedCameraPose = null;
+    this.#applyDisplaySettings();
+  }
+
+  /**
+   * `camera-orbit` / `camera-target` / `field-of-view` — model-viewer's
+   * declarative pose.
+   *
+   * Only the axes a host actually spells out are touched: `camera-orbit="auto
+   * auto 2m"` keeps the current angles and just moves the eye, which is what
+   * `auto` means in model-viewer. The pose goes through `applyViewState` on the
+   * *runtime*, never the document — a viewer attribute must not dirty the scene
+   * (the persisted pose stays `view.camera`).
+   *
+   * `force` is what keeps the two paths apart: an attribute *change* always
+   * applies, while the post-load re-assert applies once and then stands down, so
+   * an unrelated `tone-mapping` tweak cannot snap a user's drag back.
+   */
+  #applyCameraPose(force = false): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return;
+    // `camera-name` owns the whole pose while it is set.
+    if (this.cameraName !== null) return;
+
+    const orbitRaw = this.getAttribute("camera-orbit");
+    const targetRaw = this.getAttribute("camera-target");
+    const fovRaw = this.getAttribute("field-of-view");
+    if (orbitRaw === null && targetRaw === null && fovRaw === null) {
+      this.#appliedCameraPose = null;
+      return;
+    }
+    const signature = `${orbitRaw ?? ""}|${targetRaw ?? ""}|${fovRaw ?? ""}`;
+    if (!force && signature === this.#appliedCameraPose) return;
+    this.#appliedCameraPose = signature;
+
+    const view = runtime.getViewState();
+    const camera = {
+      position: [...view.camera.position] as [number, number, number],
+      target: [...view.camera.target] as [number, number, number],
+      fov: view.camera.fov,
+    };
+    const targetValue = parseVector3(targetRaw);
+    const target = targetValue ?? camera.target;
+    const current = orbitFromCamera(camera.position, camera.target);
+
+    const tokens = (orbitRaw ?? "").trim().split(/\s+/);
+    const theta = orbitRaw === null ? undefined : parseOrbitToken(tokens[0], "theta");
+    const phi = orbitRaw === null ? undefined : parseOrbitToken(tokens[1], "phi");
+    const radius = orbitRaw === null ? undefined : parseOrbitToken(tokens[2], "radius");
+    const targetGiven = targetValue !== null;
+
+    if (theta !== undefined || phi !== undefined || radius !== undefined) {
+      // Nothing framed yet (an empty scene): assume the reference's default
+      // front view rather than inventing `NaN`s.
+      const base = current ?? { theta: 0, phi: 75, radius: 1 };
+      camera.position = cameraFromOrbit(target, {
+        theta: theta ?? base.theta,
+        phi: phi ?? base.phi,
+        radius: radius ?? base.radius,
+      });
+      camera.target = target;
+    } else if (targetGiven) {
+      // Target alone: keep the angles, translate the eye with it.
+      if (current) camera.position = cameraFromOrbit(target, current);
+      camera.target = target;
+    }
+
+    const fov = parseAngle(fovRaw ?? undefined);
+    if (fov !== undefined) camera.fov = this.#clampFieldOfView(fov);
+
+    runtime.applyViewState({ ...view, camera });
+  }
+
+  /** `min-field-of-view` / `max-field-of-view`; absent on either side = no clamp. */
+  #clampFieldOfView(value: number): number {
+    const min = readNumberAttr(this, "min-field-of-view", 0);
+    const max = readNumberAttr(this, "max-field-of-view", 0);
+    const lower = min > 0 ? min : 0;
+    const upper = max > 0 ? max : Number.POSITIVE_INFINITY;
+    const clamped = Math.min(Math.max(value, lower), upper);
+    return Number.isFinite(clamped) && clamped > 0 ? clamped : value;
+  }
+
+  /* ----------------------------------------------------------- camera api ---- */
+
+  /** Current orbit angles (`theta` / `phi` in degrees, `radius` in world units). */
+  getCameraOrbit(): CameraOrbit | null {
+    const view = this.#editor?.runtime.getViewState();
+    if (!view) return null;
+    return orbitFromCamera(view.camera.position, view.camera.target);
+  }
+
+  /**
+   * Set the orbit. Missing axes keep their current value, mirroring
+   * `camera-orbit="auto"`. Returns `false` only when nothing is mounted; an empty
+   * scene falls back to model-viewer's default front view rather than failing.
+   */
+  setCameraOrbit(orbit: Partial<CameraOrbit>): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return false;
+    const view = runtime.getViewState();
+    const current = orbitFromCamera(view.camera.position, view.camera.target);
+    const base = current ?? { theta: 0, phi: 75, radius: 1 };
+    const position = cameraFromOrbit(view.camera.target, {
+      theta: orbit.theta ?? base.theta,
+      phi: orbit.phi ?? base.phi,
+      radius: orbit.radius ?? base.radius,
+    });
+    runtime.applyViewState({ ...view, camera: { ...view.camera, position } });
+    return true;
+  }
+
+  /** Orbit target (the point the camera circles). */
+  getCameraTarget(): [number, number, number] {
+    const target = this.#editor?.runtime.getViewState().camera.target;
+    return target ? [target[0], target[1], target[2]] : [0, 0, 0];
+  }
+
+  setCameraTarget(target: readonly [number, number, number]): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return false;
+    const view = runtime.getViewState();
+    const orbit = orbitFromCamera(view.camera.position, view.camera.target);
+    const nextTarget: [number, number, number] = [target[0], target[1], target[2]];
+    const position = orbit ? cameraFromOrbit(nextTarget, orbit) : nextTarget;
+    runtime.applyViewState({
+      ...view,
+      camera: { ...view.camera, position, target: nextTarget },
+    });
+    return true;
+  }
+
+  /** Vertical FOV in degrees, as rendered. */
+  getFieldOfView(): number {
+    return this.#editor?.runtime.getViewState().camera.fov ?? 0;
+  }
+
+  setFieldOfView(degrees: number): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime || !Number.isFinite(degrees) || degrees <= 0) return false;
+    const view = runtime.getViewState();
+    runtime.applyViewState({
+      ...view,
+      camera: { ...view.camera, fov: this.#clampFieldOfView(degrees) },
+    });
+    return true;
+  }
+
+  /* ----------------------------------------------------------- transport ---- */
+
+  /**
+   * Clip names on the mounted content — model-viewer's `availableAnimations`.
+   * De-duplicated: two objects may ship a clip called `Take 001`, and a host
+   * building a `<select>` wants one entry per name.
+   */
+  get availableAnimations(): string[] {
+    const clips = this.#editor?.runtime.animations;
+    if (!clips || clips.length === 0) return [];
+    return [...new Set(clips.map((clip) => clip.name))];
+  }
+
+  /** Active clip name; falls back to the `animation-name` attribute. */
+  get animationName(): string | null {
+    if (this.#activeClipName !== null) return this.#activeClipName;
+    const raw = this.getAttribute("animation-name");
+    return raw === null || raw.trim() === "" ? null : raw.trim();
+  }
+  /**
+   * Select and start a clip (model-viewer semantics: assigning the name plays
+   * it). Honours an explicit `pause()`: a paused transport stays paused and only
+   * changes which clip it will resume.
+   */
+  set animationName(value: string | null) {
+    if (value === null || value.trim() === "") this.removeAttribute("animation-name");
+    else this.setAttribute("animation-name", value);
+    if (this.#explicitPause) return;
+    this.play();
+  }
+
+  /** `true` while nothing advances the mixers — before load and after `pause()`. */
+  get paused(): boolean {
+    return !(this.#editor?.runtime.animationPlaying ?? false);
+  }
+
+  /**
+   * Start (or resume) playback. A paused transport continues from its playhead;
+   * otherwise the `animation-name` clip starts from the top, falling back to the
+   * first clip of the first animated object. Returns `false` when there is
+   * nothing to play.
+   */
+  play(): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.playAnimation) return false;
+    this.#explicitPause = false;
+    if (runtime.resumeAnimations?.()) {
+      this.#noteActiveClip(this.animationName);
+      return true;
+    }
+    const name = this.getAttribute("animation-name")?.trim() || null;
+    const started = name === null ? runtime.playAnimation() : this.#startClipNamed(name);
+    if (started) this.#noteActiveClip(name ?? runtime.animations?.[0]?.name ?? null);
+    return started;
+  }
+
+  /** Hold the playhead. Outranks `autoplay` for every later load. */
+  pause(): void {
+    this.#explicitPause = true;
+    this.#editor?.runtime.pauseAnimations?.();
+  }
+
+  /** Playhead of the active clip, in seconds. */
+  get currentTime(): number {
+    return this.#editor?.runtime.animationTime ?? 0;
+  }
+  set currentTime(seconds: number) {
+    if (!Number.isFinite(seconds) || seconds < 0) return;
+    this.#editor?.runtime.setAnimationTime?.(seconds);
+  }
+
+  /** Playback rate multiplier (`1` = authored speed, `0` freezes the mixer). */
+  get timeScale(): number {
+    return this.#editor?.runtime.animationSpeed ?? 1;
+  }
+  set timeScale(value: number) {
+    if (!Number.isFinite(value) || value < 0) return;
+    this.#editor?.runtime.setAnimationSpeed?.(value);
+  }
+
+  /**
+   * Start a clip by name. Runtimes that expose `playAnimationByName` own the
+   * lookup; the rest are resolved against the clip list the same way
+   * `animation-rig` does (case-insensitive, first hit wins).
+   */
+  #startClipNamed(name: string): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return false;
+    const byName = runtime.playAnimationByName?.(name);
+    if (byName !== undefined) return byName;
+    const wanted = name.toLowerCase();
+    const clip = runtime.animations?.find((candidate) => candidate.name.toLowerCase() === wanted);
+    return clip ? (runtime.playAnimation?.(clip.objectId, clip.index) ?? false) : false;
+  }
+
+  #noteActiveClip(name: string | null): void {
+    if (name !== null) this.#activeClipName = name;
+  }
+
+  /**
+   * `camera-name` — look through a camera authored inside the asset.
+   *
+   * Display-only and re-asserted after every load, like `variant-name`: camera
+   * names only exist once the asset parses, and a document's own `view` would
+   * otherwise win the race and leave the attribute ignored.
+   */
+  #applyCameraName(): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.setCameraByName) return;
+    const name = this.cameraName;
+    // `null` only clears an active camera; it must not reset a restored view.
+    if (name === null && runtime.cameraName === null) return;
+    runtime.setCameraByName(name);
+  }
+
+  /**
+   * `variant-name` — a `KHR_materials_variants` pick (model-viewer parity).
+   *
+   * Display-only: the choice describes how to look at the asset, not what the
+   * document contains, so it never reaches the document. Like the shadow knobs it
+   * re-runs after every load — variants are only known once the asset parses, and
+   * a name set beforehand has to be applied retroactively.
+   */
+  #applyVariantName(): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.setVariant) return;
+    const raw = this.getAttribute("variant-name");
+    const name = raw === null || raw.trim() === "" ? null : raw.trim();
+    runtime.setVariant(name);
+  }
+
+  /** Variant names declared by the loaded asset(s) — model-viewer `availableVariants`. */
+  get availableVariants(): string[] {
+    return this.#editor?.runtime.variants ?? [];
+  }
+
+  /** Current `KHR_materials_variants` pick; `null` = the asset's own materials. */
+  get variantName(): string | null {
+    const raw = this.getAttribute("variant-name");
+    return raw === null || raw.trim() === "" ? null : raw.trim();
+  }
+  set variantName(value: string | null) {
+    if (value === null || value === "") this.removeAttribute("variant-name");
+    else this.setAttribute("variant-name", value);
+  }
+
+  /* ------------------------------------------------- embedded cameras ---- */
+
+  /** Cameras authored inside the loaded asset (glTF `node.camera`). */
+  get cameras(): string[] {
+    return this.#editor?.runtime.cameras ?? [];
+  }
+
+  /** Active embedded camera; `null` = the document/orbit view. */
+  get cameraName(): string | null {
+    const raw = this.getAttribute("camera-name");
+    return raw === null || raw.trim() === "" ? null : raw.trim();
+  }
+  set cameraName(value: string | null) {
+    if (value === null || value === "") this.removeAttribute("camera-name");
+    else this.setAttribute("camera-name", value);
+  }
+
+  /**
+   * Look through an authored camera (`null` restores the orbit view). Returns
+   * `false` when the name is not loaded yet — it stays remembered and applies on
+   * the next load, which is also what the `camera-name` attribute does.
+   */
+  setCameraByName(name: string | null): boolean {
+    const runtime = this.#editor?.runtime;
+    if (!runtime?.setCameraByName) return false;
+    if (name === null) {
+      this.removeAttribute("camera-name");
+      return runtime.setCameraByName(null);
+    }
+    this.setAttribute("camera-name", name);
+    return runtime.setCameraByName(name);
+  }
+
+  /* ------------------------------------------------------ morph targets ---- */
+
+  /** Every morph channel on the mounted content, with weights and animation state. */
+  get morphTargets(): MorphTargetInfo[] {
+    return this.#editor?.runtime.morphTargets ?? [];
+  }
+
+  /**
+   * Set one morph weight. Returns `false` when the channel is gone or a playing
+   * clip drives it — pause the animation first, or the mixer wins the next frame.
+   */
+  setMorphInfluence(
+    objectId: string,
+    meshIndex: number,
+    targetIndex: number,
+    value: number,
+  ): boolean {
+    return (
+      this.#editor?.runtime.setMorphInfluence?.(objectId, meshIndex, targetIndex, value) ??
+      false
+    );
+  }
+
+  /**
+   * `shadow-intensity` / `shadow-softness` — model-viewer's contact shadow knobs.
+   *
+   * Display-only, so it patches the *runtime* view (`applyViewState` never
+   * touches the document). It has to re-run after every load: a document's own
+   * `view.environment` wins over whatever was applied before it, which is
+   * exactly how the promo page's shadow used to disappear the moment the GLB
+   * finished loading.
+   */
+  #applyShadowSettings(): void {
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return;
+    const intensityAttr = this.getAttribute("shadow-intensity");
+    const softnessAttr = this.getAttribute("shadow-softness");
+    if (intensityAttr === null && softnessAttr === null) return;
+
+    const intensity = clamp01(intensityAttr === null ? 1 : Number(intensityAttr));
+    const view = runtime.getViewState();
+    const environment = { ...view.environment };
+    if (intensity <= 0) {
+      delete environment.contactShadow;
+    } else {
+      const softness = Number(softnessAttr ?? 1);
+      environment.contactShadow = {
+        enabled: true,
+        // Straight through: the shadow rig applies the reference's own
+        // softness-dependent easing, so a flat fudge factor here would darken
+        // the comparison twice.
+        opacity: intensity,
+        ...(Number.isFinite(softness) ? { softness: clamp01(softness) } : {}),
+      };
+    }
+    runtime.applyViewState({ ...view, environment });
   }
 
   /**
@@ -893,10 +1799,12 @@ export class SceneEditorElement extends HTMLElement {
     if (!runtime) return;
 
     const limits = readOrbitLimits(this);
+    const damping = readDamping(this);
     runtime.setCameraControls?.({
       pan: !this.hasAttribute("disable-pan"),
       zoom: !this.hasAttribute("disable-zoom"),
       ...(limits === undefined ? {} : { limits }),
+      ...(damping === undefined ? {} : { damping }),
     });
 
     runtime.setAutoRotate?.(
@@ -916,7 +1824,9 @@ export class SceneEditorElement extends HTMLElement {
     if (!runtime) return;
 
     runtime.setAnimationOptions?.({
-      autoplay: this.hasAttribute("autoplay"),
+      // `pause()` before the content arrives must survive the load: the host
+      // asked for a still frame, not for autoplay to win the race.
+      autoplay: this.hasAttribute("autoplay") && !this.#explicitPause,
       clipName: this.getAttribute("animation-name"),
       crossfadeSeconds: readNumberAttr(this, "animation-crossfade-duration", 0) / 1000,
       pauseAtEnd: this.hasAttribute("pause-at-end"),
@@ -961,11 +1871,19 @@ export class SceneEditorElement extends HTMLElement {
       canvas.style.height = "100%";
       canvas.style.display = "block";
       this.appendChild(canvas);
+      // The canvas is the accessible representation of the model (`alt`).
+      this.#canvas = canvas;
+      this.#applyAlt();
       const assetResolver = this.assetResolver ?? this.#createSrcResolver();
       const environmentPreset = this.#environmentPreset;
       const runtime = SceneEditorElement.runtimeFactory(canvas, {
         ...(assetResolver ? { assetResolver } : {}),
         environmentPreset,
+        getDecoders: () => ({
+          dracoLoader: this.#dracoLoader,
+          ktx2Loader: this.#ktx2Loader,
+          meshoptDecoder: this.#meshoptDecoder,
+        }),
       });
       const editor = createSceneEditor({ runtime });
       this.#editor = editor;
@@ -997,7 +1915,10 @@ export class SceneEditorElement extends HTMLElement {
 
       // `reveal="interaction"`: the first gesture (orbit, zoom, key) dismisses
       // the poster. Passive — the viewer must never block gestures.
-      const onFirstInteraction = (): void => this.#dismissPoster("interaction");
+      const onFirstInteraction = (): void => {
+        this.#dismissInteractionPrompt();
+        this.#dismissPoster("interaction");
+      };
       for (const type of ["pointerdown", "wheel", "touchstart"]) {
         this.addEventListener(type, onFirstInteraction, { signal, passive: true });
       }
@@ -1027,6 +1948,17 @@ export class SceneEditorElement extends HTMLElement {
         this.#onVisibilityChange,
       );
       this.#visibilityObserver?.observe(this);
+
+      // Background tabs pause too; rAF is throttled there but a hidden viewer
+      // still wakes up for animation ticks and paints.
+      if (typeof document !== "undefined") {
+        const onDocumentHidden = (): void => {
+          this.#tabHidden = document.hidden === true;
+          this.#setRenderingPaused();
+        };
+        document.addEventListener("visibilitychange", onDocumentHidden, { signal });
+        this.#tabHidden = document.hidden === true;
+      }
 
       // Facade events → DOM CustomEvents (element public contract, D18/D20).
       editor.on("selection-change", (payload) => {
@@ -1081,6 +2013,8 @@ export class SceneEditorElement extends HTMLElement {
       // there, then keep watching for later additions.
       this.#observeSlots();
       this.#collectSlots();
+      // Editors without `src` still have content — the hint counts down anyway.
+      this.#scheduleInteractionPrompt();
 
       this.dispatchEvent(new CustomEvent("scene-ready"));
       this.#resolveReady();
@@ -1117,13 +2051,31 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   #onVisibilityChange = (visible: boolean): void => {
-    if (visible === this.#intersectionVisible) return;
+    const changed = visible !== this.#intersectionVisible;
     this.#intersectionVisible = visible;
+    // Off-screen viewers must not burn a frame budget. Applied even when the
+    // flag did not change: the observer's first report can be `false`, and the
+    // initial state is already `false` — the render loop still has to stop.
+    this.#visibilityPaused = !visible;
+    this.#setRenderingPaused();
+    if (visible) this.#scheduleInteractionPrompt();
+    if (!changed) return;
     this.dispatchEvent(new CustomEvent("visibility-change", { detail: { visible } }));
     // Viewer-compatible alias (model-viewer `model-visibility`).
     this.dispatchEvent(new CustomEvent("model-visibility", { detail: { visible } }));
     if (visible && this.#deferredSrcLoad) this.#maybeLoadSrc();
   };
+
+  /**
+   * Two independent reasons to stop drawing: the element scrolled out of view,
+   * and the tab went to the background. The runtime sees one boolean.
+   */
+  #setRenderingPaused(): void {
+    const paused = this.#tabHidden || this.#visibilityPaused;
+    if (paused === this.#renderPaused) return;
+    this.#renderPaused = paused;
+    this.#editor?.runtime.setRenderingPaused?.(paused);
+  }
 
   #onKeyDown = (event: Event): void => {
     const editor = this.#editor;
@@ -1134,7 +2086,60 @@ export class SceneEditorElement extends HTMLElement {
     // Key semantics (undo/redo + reserved G/R/S) are shared with the headless
     // facade; this only decides whether the element owns the keystroke.
     editor.handleKeyDown(event as KeyboardEvent);
+    // Viewer navigation is the fallback for keys the editor did not claim, so a
+    // host with edit shortcuts never loses them to camera keys.
+    const key = event as KeyboardEvent;
+    if (!key.defaultPrevented) this.#handleViewerKey(key);
   };
+
+  /**
+   * model-viewer's keyboard camera: arrows orbit, +/- dolly, Shift = fine step.
+   *
+   * Mirrors what a drag does — the pose changes on the runtime only, so no
+   * document is dirtied and no `view-change` fires (that event is for gestures;
+   * `camera-change` still samples the new pose).
+   */
+  #handleViewerKey(event: KeyboardEvent): void {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
+      return;
+    }
+    const orbit = this.getCameraOrbit();
+    if (orbit === null) return;
+    const step = event.shiftKey ? 1 : 5;
+    let next: Partial<CameraOrbit> | null = null;
+    switch (event.key) {
+      case "ArrowLeft":
+        next = { theta: orbit.theta - step };
+        break;
+      case "ArrowRight":
+        next = { theta: orbit.theta + step };
+        break;
+      case "ArrowUp":
+        next = { phi: orbit.phi - step };
+        break;
+      case "ArrowDown":
+        next = { phi: orbit.phi + step };
+        break;
+      case "+":
+      case "=":
+        next = { radius: orbit.radius * 0.9 };
+        break;
+      case "-":
+      case "_":
+        next = { radius: orbit.radius * 1.1 };
+        break;
+      default:
+        return;
+    }
+    event.preventDefault();
+    this.setCameraOrbit(next);
+    // A key is a first gesture too: retire the hint and reveal an
+    // `interaction`-mode poster, exactly as a pointerdown would.
+    this.#dismissInteractionPrompt();
+    this.#dismissPoster("interaction");
+  }
 
   #emitError(code: string, message: string, cause?: unknown): void {
     const detail: { code: string; message: string; cause?: unknown } = { code, message };

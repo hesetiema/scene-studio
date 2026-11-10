@@ -452,6 +452,39 @@ describe("SceneEditorElement viewer attributes (model-viewer parity)", () => {
     expect(lastItem(fake.calls.setAutoRotate)).toBeNull();
   });
 
+  it("maps camera-damping, keeping 'absent' and 'zero' distinct", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+    // Absent = no inertia: a render-on-demand editor stops with the pointer.
+    expect(lastItem(fake.calls.setCameraControls)).not.toHaveProperty("damping");
+
+    el.setAttribute("camera-damping", "0.25");
+    expect(lastItem(fake.calls.setCameraControls)?.damping).toBe(0.25);
+
+    // A bare attribute means the addon's own default, not zero.
+    el.setAttribute("camera-damping", "");
+    expect(lastItem(fake.calls.setCameraControls)?.damping).toBeCloseTo(0.08);
+
+    el.setAttribute("camera-damping", "0");
+    expect(lastItem(fake.calls.setCameraControls)?.damping).toBe(0);
+  });
+
+  it("pauses rendering while off-screen and resumes when it comes back", async () => {
+    const { el, fake } = makeElement();
+    await connected(el);
+
+    visibilityCallback?.(false);
+    expect(lastItem(fake.calls.setRenderingPaused)).toBe(true);
+
+    visibilityCallback?.(true);
+    expect(lastItem(fake.calls.setRenderingPaused)).toBe(false);
+
+    // Repeats are de-duplicated before reaching the runtime.
+    const count = fake.calls.setRenderingPaused.length;
+    visibilityCallback?.(true);
+    expect(fake.calls.setRenderingPaused).toHaveLength(count);
+  });
+
   it("maps the playback attributes, converting ms → seconds", async () => {
     const { el, fake } = makeElement();
     await connected(el);
@@ -537,6 +570,85 @@ describe("SceneEditorElement viewer attributes (model-viewer parity)", () => {
 
     expect(fake.calls.loadDocument).toHaveLength(1);
     expect(el.getDocument().sceneId).toBe("s1");
+  });
+});
+
+describe("SceneEditorElement interaction prompt", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function promptOf(el: SceneEditorElement): HTMLElement | null {
+    return el.querySelector<HTMLElement>("[data-se-interaction-prompt]");
+  }
+
+  it("appears after the threshold and retires on the first gesture", async () => {
+    const { el } = makeElement();
+    el.setAttribute("interaction-prompt-threshold", "100");
+
+    vi.useFakeTimers();
+    await connected(el);
+    expect(promptOf(el)).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(150);
+    const prompt = promptOf(el);
+    expect(prompt).not.toBeNull();
+    expect(prompt?.style.display).toBe("flex");
+    expect(prompt?.style.pointerEvents).toBe("none");
+
+    el.dispatchEvent(new Event("pointerdown"));
+    expect(prompt?.style.opacity).toBe("0");
+
+    // It never comes back, even after another threshold elapses.
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(prompt?.style.opacity).toBe("0");
+  });
+
+  it("stays out of the way with interaction-prompt=none", async () => {
+    const { el } = makeElement();
+    el.setAttribute("interaction-prompt", "none");
+    el.setAttribute("interaction-prompt-threshold", "10");
+
+    vi.useFakeTimers();
+    await connected(el);
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(promptOf(el)).toBeNull();
+  });
+
+  it("waits for the poster to go before hinting", async () => {
+    const { el } = makeElement();
+    el.setAttribute("reveal", "manual");
+    el.setAttribute("interaction-prompt-threshold", "10");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+
+    vi.useFakeTimers();
+    await connected(el);
+    await el.loadDocument(doc);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(promptOf(el)).toBeNull();
+
+    el.dismissPoster();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(promptOf(el)?.style.display).toBe("flex");
+  });
+
+  it("drops the hint when the element is torn down", async () => {
+    const { el } = makeElement();
+    el.setAttribute("interaction-prompt-threshold", "10");
+
+    vi.useFakeTimers();
+    await connected(el);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(promptOf(el)).not.toBeNull();
+
+    el.remove();
+    expect(promptOf(el)).toBeNull();
   });
 });
 
@@ -647,6 +759,74 @@ describe("SceneEditorElement slots (model-viewer parity)", () => {
 
     expect(posterOf(el).style.display).toBe("none");
     expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("cross-fades the poster with seamless-poster instead of cutting to it", async () => {
+    const { el } = makeElement();
+    el.setAttribute("seamless-poster", "");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+    const spy = vi.fn();
+    el.addEventListener("poster-dismissed", spy);
+
+    await connected(el);
+    await el.loadDocument(doc);
+
+    const poster = posterOf(el);
+    // The node stays mounted but transparent: the first frame dissolves
+    // through it instead of replacing it in one frame.
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(poster.style.display).not.toBe("none");
+    expect(poster.style.opacity).toBe("0");
+    expect(poster.style.transition).toContain("opacity");
+    // Passive while fading — the model behind is already interactive.
+    expect(poster.style.pointerEvents).toBe("none");
+  });
+
+  it("unmounts the faded poster once the transition ends", async () => {
+    const { el } = makeElement();
+    el.setAttribute("seamless-poster", "");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+
+    // Timers faked up-front: the fade is scheduled during `loadDocument`.
+    vi.useFakeTimers();
+    try {
+      await connected(el);
+      await el.loadDocument(doc);
+      const poster = posterOf(el);
+      expect(poster.style.display).not.toBe("none");
+
+      await vi.advanceTimersByTimeAsync(400);
+
+      expect(poster.style.display).toBe("none");
+      // The host's own inline opacity comes back with the node.
+      expect(poster.style.opacity).toBe("");
+      expect(poster.style.transition).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the fade cancellation honest when a new poster replaces it", async () => {
+    const { el } = makeElement();
+    el.setAttribute("seamless-poster", "");
+    el.innerHTML = '<div slot="poster">loading…</div>';
+
+    await connected(el);
+    await el.loadDocument(doc);
+    const first = posterOf(el);
+    expect(first.style.opacity).toBe("0");
+
+    // A replacement poster starts a fresh reveal cycle.
+    first.remove();
+    const second = document.createElement("div");
+    second.setAttribute("slot", "poster");
+    second.style.opacity = "0.5";
+    el.appendChild(second);
+    await nextTick();
+
+    expect(second.style.display).not.toBe("none");
+    // Its own inline opacity survives; the cancelled fade no longer fires.
+    expect(second.style.opacity).toBe("0.5");
   });
 
   it("waits for the first gesture with reveal=interaction", async () => {

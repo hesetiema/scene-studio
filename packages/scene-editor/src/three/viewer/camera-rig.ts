@@ -17,6 +17,8 @@ export interface OrbitControlsLike {
   maxPolarAngle?: number;
   minAzimuthAngle?: number;
   maxAzimuthAngle?: number;
+  enableDamping?: boolean;
+  dampingFactor?: number;
 }
 
 export type CameraView = ViewState["camera"];
@@ -46,6 +48,11 @@ export interface CameraRig {
   applyControls(options: CameraControlsOptions): void;
   /** Turntable rotation; `null` stops it. Survives a late controls mount. */
   setAutoRotate(options: AutoRotateOptions | null): void;
+  /**
+   * Gate both rAF loops (turntable + damping settle) without dropping their
+   * configuration — used when the viewer goes off-screen.
+   */
+  setActive(active: boolean): void;
   readView(): CameraView;
   applyView(view: CameraView): void;
   /** Keep the target in sync when no controls exist (headless / disabled, D22). */
@@ -90,11 +97,25 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
   let resumeAt = 0;
   let interacting = false;
   let disposed = false;
+  /** Off-screen gate: loops stop but keep their configuration. */
+  let active = true;
+  /** Damping settle loop: separate from the turntable loop both may want. */
+  let settleFrame: number | null = null;
+  /** Set by the controls' `change` event; read once per settle frame. */
+  let movedThisFrame = false;
 
   const applyToOrbit = (): void => {
     if (!orbit) return;
     if (controls.pan !== undefined) orbit.enablePan = controls.pan;
     if (controls.zoom !== undefined) orbit.enableZoom = controls.zoom;
+
+    // Inertia: the addon only decays its spherical delta inside `update()`, so
+    // a render-on-demand viewer needs the settle loop below to keep feeding it
+    // frames after the pointer lifts.
+    if (controls.damping !== undefined) {
+      orbit.enableDamping = controls.damping > 0;
+      if (controls.damping > 0) orbit.dampingFactor = controls.damping;
+    }
 
     const limits = controls.limits;
     if (!limits) return;
@@ -119,6 +140,38 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
     frame = null;
   };
 
+  const stopSettle = (): void => {
+    if (settleFrame !== null && typeof cancelAnimationFrame === "function") {
+      cancelAnimationFrame(settleFrame);
+    }
+    settleFrame = null;
+  };
+
+  /**
+   * Feed OrbitControls frames until its damped motion falls under the addon's
+   * own epsilon (it stops dispatching `change`, which is what we watch).
+   *
+   * The rig never calls `update()` here: `onRender` → render loop → `update()`
+   * is the single per-frame step, so damping is not decayed twice per frame.
+   */
+  const settleTick = (): void => {
+    settleFrame = null;
+    if (disposed || !active || interacting) return;
+    movedThisFrame = false;
+    options.onRender();
+    if (!movedThisFrame) return;
+    settleFrame =
+      typeof requestAnimationFrame === "function" ? requestAnimationFrame(settleTick) : null;
+  };
+
+  const startSettle = (): void => {
+    if (disposed || !active || interacting || settleFrame !== null) return;
+    if (!orbit?.enableDamping) return;
+    if (typeof requestAnimationFrame !== "function") return;
+    movedThisFrame = false;
+    settleFrame = requestAnimationFrame(settleTick);
+  };
+
   const rotateYaw = (radians: number): void => {
     if (radians === 0) return;
     const target = orbit?.target ?? fallbackTarget;
@@ -130,7 +183,7 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
 
   const tick = (now: number): void => {
     frame = null;
-    if (disposed || !autoRotate?.enabled) return;
+    if (disposed || !active || !autoRotate?.enabled) return;
 
     // A drag owns the camera; `end` restarts the loop after the idle delay.
     if (interacting) return;
@@ -150,7 +203,7 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
   };
 
   const startAutoRotate = (): void => {
-    if (disposed || frame !== null || !autoRotate?.enabled) return;
+    if (disposed || !active || frame !== null || !autoRotate?.enabled) return;
     if (typeof requestAnimationFrame !== "function") return;
     lastTick = nowMs();
     frame = requestAnimationFrame(tick);
@@ -167,14 +220,19 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       orbit = next;
       if (!next) return;
       next.target?.set(fallbackTarget.x, fallbackTarget.y, fallbackTarget.z);
-      next.addEventListener?.("change", options.onRender);
+      next.addEventListener?.("change", () => {
+        movedThisFrame = true;
+        options.onRender();
+      });
       next.addEventListener?.("start", () => {
         interacting = true;
+        stopSettle();
       });
       next.addEventListener?.("end", () => {
         interacting = false;
         // model-viewer's `auto-rotate-delay`: idle before the turntable resumes.
         resumeAt = nowMs() + (autoRotate?.delayMs ?? 0);
+        startSettle();
         startAutoRotate();
         options.onInteractionEnd();
       });
@@ -212,6 +270,19 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       resumeAt = Math.max(resumeAt, nowMs());
       startAutoRotate();
     },
+    setActive(next: boolean): void {
+      if (next === active) return;
+      active = next;
+      if (!next) {
+        stopAutoRotate();
+        stopSettle();
+        return;
+      }
+      // Turntable picks up where it left off; a stale settle is only worth
+      // resuming if the controls still report inertia, which one frame answers.
+      startAutoRotate();
+      startSettle();
+    },
     readView(): CameraView {
       const target = rig.target;
       return {
@@ -238,6 +309,7 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
       disposed = true;
       autoRotate = null;
       stopAutoRotate();
+      stopSettle();
       orbit?.dispose();
       orbit = null;
     },
