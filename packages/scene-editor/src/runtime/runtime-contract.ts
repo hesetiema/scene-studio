@@ -258,10 +258,23 @@ export interface RuntimeContract {
   /**
    * Canvas-local CSS-pixel projection of a world point; `visible: false` when it
    * is behind the camera. Drives `slot="hotspot-*"` anchors.
+   *
+   * `z` is the NDC depth of the projected point (`-1`…`1`), which
+   * `queryHotspot()` forwards as `canvasPosition.z`, the way model-viewer does.
    */
   projectPoint?(
     point: readonly [number, number, number],
-  ): { x: number; y: number; visible: boolean };
+  ): { x: number; y: number; z?: number; visible: boolean };
+  /**
+   * `projectPoint` plus the camera-facing test a hotspot's `data-normal` asks
+   * for: `facingCamera` is `(camera − point) · normal >= 0`, i.e. false once the
+   * surface turns away. Both the point and the normal are world-space, matching
+   * `positionAndNormalFromPoint()`.
+   */
+  projectHotspot?(
+    point: readonly [number, number, number],
+    normal: readonly [number, number, number],
+  ): { x: number; y: number; z?: number; visible: boolean; facingCamera: boolean };
   /** World-space hit point + surface normal under a client coordinate. */
   positionAndNormalFromPoint?(
     clientX: number,

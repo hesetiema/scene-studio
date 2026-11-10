@@ -4,6 +4,10 @@ export { defineSceneEditor } from "./element/register";
 export {
   SceneEditorElement,
   CAPTURED_COMBOS,
+  type CameraOrbit,
+  type HotspotConfig,
+  type HotspotData,
+  type HotspotVector,
   type VisibilityObserver,
   type VisibilityObserverFactory,
 } from "./element/scene-editor-element";

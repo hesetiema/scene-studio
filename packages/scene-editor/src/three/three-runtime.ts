@@ -643,7 +643,34 @@ export class ThreeRuntime implements RuntimeContract {
    */
   projectPoint(
     point: readonly [number, number, number],
-  ): { x: number; y: number; visible: boolean } {
+  ): { x: number; y: number; z: number; visible: boolean } {
+    return this.#projectToCanvas(point);
+  }
+
+  /**
+   * The projection above plus model-viewer's facing test, so `data-normal` can
+   * dim a hotspot once the surface it sits on turns away from the camera.
+   *
+   * The reference does `(camera − anchor) · normal < 0` on the **signed** dot,
+   * without normalising either vector: length does not change the sign, and a
+   * zero-length normal therefore counts as facing (a hotspot with no meaningful
+   * normal stays visible rather than disappearing).
+   */
+  projectHotspot(
+    point: readonly [number, number, number],
+    normal: readonly [number, number, number],
+  ): { x: number; y: number; z: number; visible: boolean; facingCamera: boolean } {
+    const projected = this.#projectToCanvas(point);
+    const dot =
+      (this.camera.position.x - point[0]) * normal[0] +
+      (this.camera.position.y - point[1]) * normal[1] +
+      (this.camera.position.z - point[2]) * normal[2];
+    return { ...projected, facingCamera: dot >= 0 };
+  }
+
+  #projectToCanvas(
+    point: readonly [number, number, number],
+  ): { x: number; y: number; z: number; visible: boolean } {
     const rect = this.#canvas.getBoundingClientRect?.();
     const width = rect?.width || this.#canvas.clientWidth || 1;
     const height = rect?.height || this.#canvas.clientHeight || 1;
@@ -652,6 +679,7 @@ export class ThreeRuntime implements RuntimeContract {
     return {
       x: (projected.x * 0.5 + 0.5) * width,
       y: (-projected.y * 0.5 + 0.5) * height,
+      z: projected.z,
       // Behind the camera or outside the depth range → the anchor is not visible.
       visible: projected.z >= -1 && projected.z <= 1 && projected.z < 1,
     };

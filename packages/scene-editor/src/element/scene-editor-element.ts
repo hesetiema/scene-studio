@@ -228,6 +228,25 @@ const REVEAL_MODES: ReadonlySet<string> = new Set<RevealMode>(["auto", "interact
 /** The three slot families this element styles itself (no shadow root). */
 type SlotRole = "poster" | "progress" | "hotspot";
 
+/**
+ * A `slot="hotspot-*"` anchor, plus what this element projects onto it.
+ *
+ * `data-position` is world space (what `positionAndNormalFromPoint()` hands
+ * back), `data-normal` defaults to `+Y` — model-viewer's own default, so an
+ * anchor that never declares a normal is always considered facing.
+ */
+interface HotspotAnchor {
+  el: HTMLElement;
+  /** The slot name, which is also the key `queryHotspot()` looks up. */
+  name: string;
+  position: [number, number, number];
+  normal: [number, number, number];
+  /** `data-visibility-attribute`: mirror the verdict onto `data-<value>`. */
+  visibilityAttr: string | null;
+  /** Last verdict, so `hotspot-visibility` fires on change instead of per frame. */
+  facing: boolean | null;
+}
+
 const ORBIT_AXES = ["theta", "phi", "radius"] as const;
 
 /** 0..1 range for opacity-like attributes; `NaN` collapses to 0. */
@@ -302,6 +321,50 @@ export interface CameraOrbit {
   phi: number;
   /** Distance from the orbit target, world units. */
   radius: number;
+}
+
+/** A vector in the `{x, y, z}` shape model-viewer's `queryHotspot()` returns. */
+export interface HotspotVector {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * What `queryHotspot()` reports — model-viewer's `HotspotData`, field for field.
+ *
+ * `position` / `normal` are the values declared on the anchor (world space, the
+ * same space `positionAndNormalFromPoint()` returns), `canvasPosition` is where
+ * the anchor currently sits in canvas-local CSS pixels, and `facingCamera` is
+ * the `data-normal` verdict. Deliberately `{x, y, z}` objects rather than this
+ * repo's usual tuples, so host code written for model-viewer keeps working.
+ */
+export interface HotspotData {
+  position: HotspotVector;
+  normal: HotspotVector;
+  /** Canvas pixels plus the projected NDC depth in `z`. */
+  canvasPosition: HotspotVector;
+  facingCamera: boolean;
+}
+
+/**
+ * `updateHotspot()` input — model-viewer's `HotspotConfiguration`.
+ *
+ * The three geometry fields are *strings*, in the same format as the anchor
+ * attributes (`data-position` / `data-normal` / `data-surface`), not vectors:
+ * a host migrating from model-viewer passes through whatever it stored.
+ */
+export interface HotspotConfig {
+  /**
+   * Full slot name, prefix included (`"hotspot-tank"`) — the same key
+   * `queryHotspot()` takes, because the reference keys its map by `node.slot`.
+   */
+  name: string;
+  position?: string;
+  normal?: string;
+  /** Accepted for signature compatibility; surface tracking is not implemented. */
+  surface?: string;
+  modelIndex?: number;
 }
 
 const DEG = Math.PI / 180;
@@ -522,7 +585,7 @@ export class SceneEditorElement extends HTMLElement {
   #slotted: Array<{ el: HTMLElement; cssText: string }> = [];
   #poster: HTMLElement | null = null;
   #progressBar: HTMLElement | null = null;
-  #hotspots: Array<{ el: HTMLElement; position: [number, number, number] }> = [];
+  #hotspots: HotspotAnchor[] = [];
   /** Inline values to restore when this element stops owning a node's look. */
   readonly #originalDisplay = new WeakMap<HTMLElement, string>();
   readonly #originalVisibility = new WeakMap<HTMLElement, string>();
@@ -867,6 +930,74 @@ export class SceneEditorElement extends HTMLElement {
     );
   }
 
+  /**
+   * Live state of a `slot="hotspot-<name>"` anchor — model-viewer's
+   * `queryHotspot()`, for hosts that draw leader lines or collision-sort labels
+   * in screen space.
+   *
+   * `null` when no anchor carries that slot name, before the runtime exists, or
+   * when the projection is non-finite (the anchor sits far outside the frustum).
+   * Unlike the projection used for placement, a hotspot that is merely
+   * behind the camera still reports — check `facingCamera` / `canvasPosition`
+   * rather than assuming non-null means on-screen.
+   */
+  queryHotspot(name: string): HotspotData | null {
+    const anchor = this.#hotspots.find((entry) => entry.name === name);
+    if (!anchor) return null;
+    const runtime = this.#editor?.runtime;
+    if (!runtime) return null;
+
+    const projected = runtime.projectHotspot
+      ? runtime.projectHotspot(anchor.position, anchor.normal)
+      : runtime.projectPoint
+        ? { ...runtime.projectPoint(anchor.position), facingCamera: true }
+        : null;
+    if (!projected) return null;
+    if (!Number.isFinite(projected.x) || !Number.isFinite(projected.y)) return null;
+
+    const [px, py, pz] = anchor.position;
+    const [nx, ny, nz] = anchor.normal;
+    return {
+      position: { x: px, y: py, z: pz },
+      normal: { x: nx, y: ny, z: nz },
+      canvasPosition: { x: projected.x, y: projected.y, z: projected.z ?? 0 },
+      facingCamera: projected.facingCamera,
+    };
+  }
+
+  /**
+   * Move a hotspot without touching the DOM — model-viewer's
+   * `updateHotspot({name, position?, normal?, surface?})`.
+   *
+   * `position` / `normal` are strings in the same format as `data-position` /
+   * `data-normal` (`"1 2 3"`, unit suffixes allowed). Omitted fields are left
+   * alone; an unparseable field is ignored rather than throwing, so a host
+   * feeding user input cannot break the anchor. Unknown names are a silent
+   * no-op, exactly like the reference.
+   *
+   * Every anchor sharing the slot name moves: the reference keeps one hotspot
+   * per slot name, so all of its nodes travel together.
+   *
+   * `surface` is accepted for signature compatibility but has no effect —
+   * surface tracking (`data-surface` / `surfaceFromPoint()`) is not
+   * implemented. Unlike the reference, this element *does* observe
+   * `data-position` / `data-normal`, so the attribute route works too.
+   */
+  updateHotspot(config: HotspotConfig): void {
+    if (!config || typeof config.name !== "string") return;
+    const matches = this.#hotspots.filter((entry) => entry.name === config.name);
+    if (matches.length === 0) return;
+
+    const position = parseVector3(config.position ?? null);
+    const normal = parseVector3(config.normal ?? null);
+    if (position === null && normal === null) return;
+    for (const anchor of matches) {
+      if (position !== null) anchor.position = [...position];
+      if (normal !== null) anchor.normal = [...normal];
+    }
+    this.#updateHotspots();
+  }
+
   /** Render, then capture the canvas (`image/png` by default). */
   async toDataURL(type = "image/png", quality?: number): Promise<string> {
     const runtime = this.#requireEditor().runtime;
@@ -918,11 +1049,16 @@ export class SceneEditorElement extends HTMLElement {
     const observer = new MutationObserver(() => {
       this.#collectSlots();
     });
-    // We only ever write `style`, which is not in the filter — no feedback loop.
+    // `subtree` matters: the anchors are *children*, so without it an anchor
+    // that changes its own `data-normal` (a host flipping a label to the back of
+    // the model) would never be re-collected. We only ever write `style` and the
+    // opted-in `data-<visibility-attribute>`, neither of which is in the filter —
+    // no feedback loop.
     observer.observe(this, {
       childList: true,
       attributes: true,
-      attributeFilter: ["slot", "data-position"],
+      subtree: true,
+      attributeFilter: ["slot", "data-position", "data-normal", "data-visibility-attribute"],
     });
     this.#slotsObserver = observer;
   }
@@ -931,7 +1067,7 @@ export class SceneEditorElement extends HTMLElement {
   #collectSlots(): void {
     let poster: HTMLElement | null = null;
     let progress: HTMLElement | null = null;
-    const hotspots: Array<{ el: HTMLElement; position: [number, number, number] }> = [];
+    const hotspots: HotspotAnchor[] = [];
     const owned: Array<{ el: HTMLElement; role: SlotRole }> = [];
 
     for (const child of Array.from(this.children)) {
@@ -951,7 +1087,16 @@ export class SceneEditorElement extends HTMLElement {
       if (!slot.startsWith(HOTSPOT_PREFIX)) continue;
       const position = parseVector3(child.getAttribute("data-position"));
       if (position === null) continue;
-      hotspots.push({ el: child, position });
+      hotspots.push({
+        el: child,
+        name: slot,
+        position,
+        // model-viewer's default: an anchor with no `data-normal` faces +Y and
+        // is therefore never dimmed.
+        normal: parseVector3(child.getAttribute("data-normal")) ?? [0, 1, 0],
+        visibilityAttr: child.getAttribute("data-visibility-attribute"),
+        facing: null,
+      });
       owned.push({ el: child, role: "hotspot" });
     }
 
@@ -1121,16 +1266,44 @@ export class SceneEditorElement extends HTMLElement {
   #updateHotspots(): void {
     if (this.#hotspots.length === 0) return;
     const runtime = this.#editor?.runtime;
-    const project = runtime?.projectPoint;
-    if (!runtime || !project) return;
-    for (const { el, position } of this.#hotspots) {
-      const projected = project.call(runtime, position);
+    if (!runtime) return;
+    const projectHotspot = runtime.projectHotspot;
+    const projectPoint = runtime.projectPoint;
+    if (!projectHotspot && !projectPoint) return;
+
+    for (const anchor of this.#hotspots) {
+      const { el, position, normal } = anchor;
+      const projected = projectHotspot
+        ? projectHotspot.call(runtime, position, normal)
+        : { ...projectPoint!.call(runtime, position), facingCamera: true };
       // `visible: false` = behind the camera or outside the depth range.
       this.#setHotspotVisible(el, projected.visible);
       if (projected.visible) {
         el.style.transform = `translate(-50%, -50%) translate(${projected.x}px, ${projected.y}px)`;
       }
+      this.#setHotspotFacing(anchor, projected.facingCamera);
     }
+  }
+
+  /**
+   * Apply a `data-normal` verdict: dim the node the way model-viewer does
+   * (`--min-hotspot-opacity`, default `0.25`), mirror the verdict onto
+   * `data-<visibility-attribute>` when the host opted in, and announce it.
+   *
+   * Only runs on a change — the projection above happens every frame, and a
+   * `hotspot-visibility` event per frame would be useless noise.
+   */
+  #setHotspotFacing(anchor: HotspotAnchor, facing: boolean): void {
+    if (anchor.facing === facing) return;
+    anchor.facing = facing;
+    // Facing front removes the inline value rather than writing `1`, so the
+    // host's own opacity (or `--max-hotspot-opacity`) still has a say.
+    anchor.el.style.opacity = facing ? "" : "var(--min-hotspot-opacity, 0.25)";
+    const { visibilityAttr } = anchor;
+    if (visibilityAttr) anchor.el.toggleAttribute(`data-${visibilityAttr}`, facing);
+    anchor.el.dispatchEvent(
+      new CustomEvent("hotspot-visibility", { detail: { visible: facing } }),
+    );
   }
 
   #setHotspotVisible(el: HTMLElement, visible: boolean): void {
