@@ -301,10 +301,12 @@ el.setViewState(view);           // record + apply a view; dirty, never undoable
 | `camera-change` | `{ position, target, fov }` | Camera moved (drag, damping, auto-rotate); always on, camera-only |
 | `environment-change` | `{ environment, source }` | Background / grid / IBL / HDR / contact shadow changed |
 | `visibility-change` | `{ visible: boolean }` | Element entered/left the viewport (element-only) |
-| `model-visibility` | `{ visible: boolean }` | model-viewer-compatible alias of `visibility-change` (element-only) |
+| `model-visibility` | `{ visible: boolean }` | model-viewer's verdict: loaded × in-viewport × poster dismissed (element-only) |
+| `play` / `pause` | `{ objectId, index, name }` / — | A clip started or resumed / playback stopped from a playing state |
+| `loop` / `finished` | `{ count, name }` / `{ objectId, name }` | The clip wrapped (`count` starts at 1) / a one-shot clip ended |
 | `error` | `{ code, message, cause? }` | Any SDK failure — the reliable failure channel |
 
-`view-changing` exists for live consumers (remote camera sync, recording, a HUD); persist on `view-change` instead. `visibility-change` needs no plumbing on hosts without `IntersectionObserver`, and `SceneEditorElement.visibilityObserverFactory = () => null` disables it. Full contract + versioning rules: [API.md](API.md#element-events-customevent).
+`view-changing` exists for live consumers (remote camera sync, recording, a HUD); persist on `view-change` instead. `visibility-change` needs no plumbing on hosts without `IntersectionObserver`, and `SceneEditorElement.visibilityObserverFactory = () => null` disables it. `model-visibility` is the composite verdict, so it also moves when a poster appears or is dismissed — read `el.modelIsVisible` / `el.loaded` for the current state. Full contract + versioning rules: [API.md](API.md#element-events-customevent).
 
 Keyboard shortcuts captured while focus is inside the element: `Ctrl+Z`, `Ctrl+Shift+Z`, `Ctrl+Y`, and `G`/`R`/`S` (reserved tool modes, currently swallowed) — exported as `CAPTURED_COMBOS`.
 

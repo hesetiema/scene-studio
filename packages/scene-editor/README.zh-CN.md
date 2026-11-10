@@ -144,7 +144,7 @@ editor.requestSave();
 
 `createSceneEditor({ runtime })` 必须传入 runtime：单测用 `FakeRuntime`，生产用 `ThreeRuntime`，也可以实现自己的 `RuntimeContract`。事件包括 `selection-change`、`history-change`、`document-dirty`、`save-request`、`view-change`、`view-changing`（需开启）、`camera-change`（常开，仅相机）、`environment-change`（边沿触发）、`error`。
 
-Element 额外提供 DOM 专属事件：`visibility-change`（进入/离开视口，`{ visible: boolean }`）、与 model-viewer 同名的 `model-visibility` 别名，以及恒有的 `scene-ready`。`view-changing` 是高频相机采样，需要 `<scene-editor live-view-events>` 显式开启；持久化请用 `view-change`。完整契约（含冒泡/合成/可取消均为 `false` 与版本策略）见 [API.md](API.md#element-events-customevent)。
+Element 额外提供 DOM 专属事件：`visibility-change`（进入/离开视口，`{ visible: boolean }`）、与 model-viewer 同名同口径的 `model-visibility`（`loaded × 视口内 × 海报已消失`，可直接读 `el.modelIsVisible` / `el.loaded`），以及恒有的 `scene-ready`；播放侧另有 `play` / `pause` / `loop` / `finished`。`view-changing` 是高频相机采样，需要 `<scene-editor live-view-events>` 显式开启；持久化请用 `view-change`。完整契约（含冒泡/合成/可取消均为 `false` 与版本策略）见 [API.md](API.md#element-events-customevent)。
 
 ## 文档模型
 

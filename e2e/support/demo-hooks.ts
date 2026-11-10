@@ -115,6 +115,14 @@ export interface ViewerState {
   orbit: { theta: number; phi: number; radius: number } | null;
   fov: number;
   alt: string | null;
+  orbitSensitivity: number;
+  touchAction: string;
+  interpolationDecay: number;
+  environmentImage: string | null;
+  skyboxImage: string | null;
+  withCredentials: boolean;
+  environmentMapId: string | null;
+  backgroundIsTexture: boolean;
 }
 
 export interface ViewerDemoHook {
@@ -144,6 +152,13 @@ export interface ViewerDemoHook {
     setTimeScale: (value: number) => void;
     setOrbit: (orbit: { theta?: number; phi?: number; radius?: number }) => void;
     setFieldOfView: (degrees: number) => void;
+    setOrbitSensitivity: (value: number) => void;
+    setTouchAction: (value: string) => void;
+    setInterpolationDecay: (ms: number) => void;
+    jumpCamera: () => boolean;
+    setEnvironment: (environmentImage: string | null, skyboxImage: string | null) => void;
+    setWithCredentials: (on: boolean) => void;
+    resetTurntable: (theta?: number) => boolean;
   };
 }
 

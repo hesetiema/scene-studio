@@ -67,6 +67,35 @@
       .demo-morph-row.is-driven {
         opacity: 0.45;
       }
+
+      /*
+        A hotspot anchor. The element already gives it `position: absolute;
+        top/left: 0` and drives `transform`; only the look is ours. The dimmed
+        state comes from the element (`opacity: var(--min-hotspot-opacity,
+        0.25)`), so the ring below shows the *opt-in* attribute instead.
+      */
+      .se-hotspot {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 10px;
+        color: #fff;
+        background: #4f8ef7;
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+        transition: opacity 0.18s ease, box-shadow 0.18s ease;
+        user-select: none;
+      }
+
+      /* `data-visibility-attribute="visible"` → the element mirrors the verdict. */
+      .se-hotspot[data-visible="true"] {
+        box-shadow: 0 0 0 2px #7dffb0;
+      }
+
+      .se-hotspot[data-visible="false"] {
+        box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.08);
+      }
     </style>
   </head>
   <body>
@@ -130,7 +159,6 @@
           </div>
           <div class="demo-row">
             <label><input type="checkbox" id="camera-damping" /> 阻尼（camera-damping）</label>
-            <label><input type="checkbox" id="interaction-prompt" checked /> 交互提示</label>
           </div>
           <div class="demo-row">
             <label>camera-orbit
@@ -228,6 +256,69 @@
         </div>
 
         <div class="demo-group">
+          <h3>交互与环境</h3>
+          <div class="demo-row">
+            <label>orbit-sensitivity
+              <input type="number" id="orbit-sensitivity" value="1" min="-3" max="3" step="0.1" style="width: 64px" />
+            </label>
+            <label>touch-action
+              <select id="touch-action">
+                <option value="pan-y">pan-y</option>
+                <option value="pan-x">pan-x</option>
+                <option value="none">none</option>
+              </select>
+            </label>
+          </div>
+          <div class="demo-row">
+            <label>interpolation-decay
+              <input type="number" id="interpolation-decay" value="50" min="0" max="2000" step="50" style="width: 74px" />ms
+            </label>
+            <button class="demo-btn" id="jump-camera">jumpCameraToGoal()</button>
+          </div>
+          <div class="demo-row">
+            <label>environment-image
+              <input type="text" id="environment-image" placeholder="neutral / legacy / URL.hdr" style="width: 190px" />
+            </label>
+            <label>skybox-image
+              <input type="text" id="skybox-image" placeholder="URL（留空=无背景）" style="width: 170px" />
+            </label>
+          </div>
+          <div class="demo-row">
+            <label><input type="checkbox" id="with-credentials" /> with-credentials</label>
+            <button class="demo-btn" id="apply-env">应用环境</button>
+          </div>
+          <p class="demo-note">
+            <code>orbit-sensitivity</code> 负值反向；<code>touch-action</code> 默认
+            <code>pan-y</code>——单指竖滑留给页面滚动，横滑才转视角。
+            相机位姿变化按 <code>interpolation-decay</code> 缓动（首次放置直接落位），
+            想立刻到目标就按 <code>jumpCameraToGoal()</code>。
+            <code>environment-image</code> 接受 <code>neutral</code> / <code>legacy</code> /
+            一个 HDR·EXR·全景图 URL；<code>skybox-image</code> 是可见背景，
+            没设 <code>environment-image</code> 时它同时当光照探针。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>标注（hotspot）</h3>
+          <div class="demo-row">
+            <button class="demo-btn" id="add-hotspots">在模型正中加两个标注</button>
+            <button class="demo-btn" id="query-hotspot">queryHotspot()</button>
+            <button class="demo-btn" id="move-hotspots">updateHotspot() 上下移</button>
+            <button class="demo-btn" id="remove-hotspots">移除</button>
+          </div>
+          <p class="demo-note">
+            两个锚点贴在模型上同一处表面，左边 <code>data-normal</code> 就是表面法线，
+            右边取反。转一下视角——反法线那个总有一半时间是背对的，会淡到
+            <code>--min-hotspot-opacity</code>（默认 <code>0.25</code>）；
+            绿色描边是 <code>data-visibility-attribute</code> 镜像出来的
+            <code>data-visible</code>。<code>queryHotspot()</code> 会打印屏幕坐标与
+            <code>facingCamera</code>，引线、避让都能靠它算；
+            <code>updateHotspot()</code> 不改 DOM 直接把锚点挪到新坐标（字符串格式，
+            和 <code>data-position</code> 一致）。
+          </p>
+        </div>
+
+        <div class="demo-group">
           <h3>事件</h3>
           <div class="demo-row">
             <button class="demo-btn" id="clear-log">清空日志</button>
@@ -236,7 +327,7 @@
         </div>
 
         <div class="demo-group">
-          <h3>对标 model-viewer</h3>
+          <h3 id="alignment">对标 model-viewer</h3>
           <table class="demo-table">
             <tr><th>能力</th><th>本页演示</th></tr>
             <tr><td><code>src</code> / 自动取景</td><td class="ok">已对齐</td></tr>
@@ -254,11 +345,27 @@
             <tr><td><code>tone-mapping</code> / <code>exposure</code></td><td class="ok">已对齐</td></tr>
             <tr><td><code>camera-change</code> / <code>model-visibility</code> / <code>environment-change</code></td><td class="ok">已对齐</td></tr>
             <tr><td><code>poster</code> / <code>reveal</code> / <code>seamless-poster</code></td><td class="ok">已对齐</td></tr>
-            <tr><td><code>interaction-prompt</code> / <code>interaction-prompt-threshold</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>interaction-prompt</code> / <code>interaction-prompt-threshold</code></td><td class="fail">不做（只留 canvas，不加装饰件）</td></tr>
+            <tr><td><code>orbit-sensitivity</code>（含负值反向）</td><td class="ok">已对齐</td></tr>
+            <tr><td><code>touch-action</code>（默认 <code>pan-y</code>）</td><td class="ok">已对齐</td></tr>
+            <tr><td><code>interpolation-decay</code> / <code>jumpCameraToGoal()</code></td><td class="ok">已对齐（球面插值）</td></tr>
+            <tr><td><code>environment-image</code>（预设 / HDR·EXR·全景 URL）</td><td class="ok">已对齐（+<code>legacy</code> 别名）</td></tr>
+            <tr><td><code>skybox-image</code></td><td class="ok">已对齐（未设 env 时兼作光照）</td></tr>
+            <tr><td><code>with-credentials</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>resetTurntableRotation(theta)</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>slot="hotspot-*"</code> / <code>data-position</code> / <code>data-normal</code></td><td class="ok">已对齐（背面淡出 <code>--min-hotspot-opacity</code>、<code>data-visibility-attribute</code>、<code>hotspot-visibility</code>）</td></tr>
+            <tr><td><code>queryHotspot(name)</code> / <code>updateHotspot({name, position, normal})</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>loaded</code> / <code>modelIsVisible</code></td><td class="ok">已对齐（<code>model-visibility</code> 同口径：loaded × 视口内 × 海报已消失）</td></tr>
+            <tr><td><code>zoom-sensitivity</code> / <code>pan-sensitivity</code></td><td class="ok">已对齐</td></tr>
+            <tr><td><code>play</code> / <code>pause</code> / <code>loop</code> / <code>finished</code> 事件</td><td class="ok">已对齐（<code>loop.count</code> 从 1 起）</td></tr>
+            <tr><td><code>data-surface</code> / <code>surfaceFromPoint()</code></td><td class="fail">未做（跟随动画的标注）</td></tr>
+            <tr><td><code>appendAnimation()</code> 等多动画混播</td><td class="fail">未做（一次只播一个 clip）</td></tr>
+            <tr><td><code>interact()</code> / <code>interact-stopped</code></td><td class="fail">未做（无编程运镜编排）</td></tr>
             <tr><td><code>camera-name</code>（glTF 内嵌相机）</td><td class="ok">扩展能力</td></tr>
             <tr><td>morph target 手动控制</td><td class="ok">扩展能力</td></tr>
             <tr><td><code>camera-damping</code></td><td class="ok">扩展能力</td></tr>
             <tr><td>离屏 / 隐藏标签页暂停渲染</td><td class="ok">已实现</td></tr>
+            <tr><td><code>generate-intrinsic-size</code> / UltraHDR JPEG</td><td class="fail">未做（官方文档亦无前者）</td></tr>
             <tr><td><code>ar</code> / <code>ar-modes</code> / <code>xr-environment</code></td><td class="fail">不做（无 XR）</td></tr>
           </table>
         </div>

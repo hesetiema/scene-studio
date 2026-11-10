@@ -12,7 +12,7 @@
 - **拖拽惯性**：`camera-damping`（数值 = OrbitControls `dampingFactor`，裸属性取 0.08）。
   - 按需渲染下阻尼拿不到帧，所以 `CameraRig` 多了一个**收敛循环**：`end` 之后逐帧渲染，直到控件不再派发 `change`（addon 自己的 epsilon 就是停的条件）。循环本身不调用 `update()`——渲染循环里的那一次才是唯一的一步，避免每帧衰减两次。
   - 循环与转盘循环互斥：`start` 立即取消，`setActive(false)`（离屏）同时停掉两者且保留配置。
-- **交互提示**：`interaction-prompt="auto" | "none"`（默认 auto）+ `interaction-prompt-threshold`（ms，默认 3000）。提示是元素自建的 light-DOM 节点（无 shadow root），淡入 + 轻微水平摆动（`Element.animate`，不支持时静默跳过），首次手势后退场且不再出现；海报未撤下时不显示。
+- ~~**交互提示**~~：已移除。查看器只负责画布，不加装饰件——`interaction-prompt` / `interaction-prompt-threshold` 连同那个自建的「拖动旋转」气泡、摆动动画与 `#interacted` 状态一起删掉了（宿主想要提示，自己往 `<scene-editor>` 上叠一层即可，slot 与 `poster-dismissed` 事件都在）。
 - **离屏 / 后台暂停渲染**：`RuntimeContract.setRenderingPaused?(paused)`。元素把两个来源（IntersectionObserver 的不可见、`document.hidden`）合成一个布尔量；`ThreeRuntime` 停掉动画与转盘循环、`#render()` 直接返回，恢复时**立刻补一帧**（drawing buffer 不保留，不补就是白屏）。显式截图（`toDataURL` / `toBlob` / 公开的 `render()`）走 `force` 通道，暂停不影响它们。
   - 注意：`#onVisibilityChange` 即使标志未变也会应用暂停——观察者的首次报告可能是 `false`，而初始状态本来就是 `false`，早退会漏掉「一开始就在视口外」的情况。
 - **内嵌相机**：`camera-name` 属性 + `cameras` / `cameraName` / `setCameraByName()`。只借位姿与 FOV，运行时仍是自己的透视相机 + 轨道控制（所以用户能从内嵌视角拖走，不会被锁死）。轨道 `target` 由「内容中心投影到视线轴」推出——glTF 相机只有朝向没有 target，而 OrbitControls 每次 update 都用 target 重算朝向，不落在视线上就会一拖就跳。加载前设的名字会记住并在挂载时套用；文档 `view` 一旦应用就清空当前相机名（持久化的位姿优先级更高）。
@@ -43,6 +43,65 @@
 - **键盘导航与 `alt`**：方向键 orbit（5°，Shift 1°）、`+`/`-` 推拉 ±10%，只处理编辑器没认领的键（`preventDefault` 已置位就跳过），焦点在输入类元素内不响应。`alt` 落到 canvas 的 `role="img"` + `aria-label`，缺省回退成 `3D model: <文件名>`——一个没有标签的 canvas 对读屏用户等于零信息。
 
 三项都有单测（`test/element/viewer-surface.test.ts`，23 条），并在 `/demos/viewer.html` 上加了传输控件、`camera-orbit` 预设、`field-of-view` 输入与「读取 orbit」按钮。
+
+### 查看器表面：交互、环境、位姿过渡（0.9.x）
+
+同一批思路的第三轮：仍然只加元素属性与 `RuntimeContract` 的可选方法，`view` schema 未动。
+
+- **交互手感**：`orbit-sensitivity`（乘法系数，直接映射 `OrbitControls.rotateSpeed`）+ `touch-action`（`none` / `pan-x` / `pan-y`，默认 `pan-y`）。
+  - 两个值都刻意允许边界语义：`orbit-sensitivity="0"` 冻结轨道但仍可平移缩放，负值反向——看 `radius="0"` 的洞穴内部就靠它。所以下发给 addon 时判的是「有没有」而不是「真不真」。
+  - `touch-action="auto"` 不接受：`auto` 正是「把拖拽交给浏览器」的那个值，也就等于不拦截滚动，而这条属性的目的恰好相反。iOS 上 canvas 的 CSS `touch-action` 无效，所以走属性而不是样式表。
+  - **`touch-action` 是抢来的**（本轮唯一一次踩坑）：`OrbitControls` 与 `TransformControls` 都在 `connect()` 里硬写 `this.domElement.style.touchAction = 'none'`（three 自己的注释是 "Disable touch scroll"），而这两次 connect 都来自各自的动态 import，顺序不由调用方决定。第一版实现「mount 之后重申一次」，真机上约一半的加载仍然是 `none`。定位过程：元素与 rig 两侧都插桩记录写入顺序 → 发现我们的 `pan-y` 明明是最后一次写；再用 MutationObserver 盯 `style` 属性，看到在我们之后还有一次 `none`，而它不来自 OrbitControls 的日志 → grep 构建产物，`TransformControls` 里也有同样的赋值。修法是新增 `viewer/touch-action-owner.ts`：值由查看器持有，画布上挂一个 `style` 观察者，谁写偏了就写回去（同值不重写，所以不会自激）。
+- **环境贴图**：`environment-image` 现在一个属性两种形态——预设 `neutral` / `room` / `legacy`，或 HDR/EXR/LDR 的 URL；`skybox-image` 单独管背景。
+  - 语义按 model-viewer：URL 形态只换反射，**不动背景**；背景要换只能给 `skybox-image`。
+  - 反过来，只给 `skybox-image` 而没给 URL 形态的 `environment-image` 时，同一张图兼作光照探针——一次下载既照亮又当背景，这是 model-viewer 的行为，也是「只想换张环境图」的宿主最常见的写法。
+  - `legacy` 是 `room` 的别名（model-viewer 保留了旧预设名）。
+  - 换图用 token 做 last-call-wins：异步解码回来的旧图自己 dispose，不覆盖后发的那张，也不泄漏 GPU 资源。three r186 里 `RGBELoader` 已废弃，改用 `HDRLoader`。
+- **位姿过渡**：`interpolation-decay`（ms，默认 50；官方选项是「大于 0 的值」，所以非正值回退默认值，要立刻到位用 `jumpCameraToGoal()`）+ `jumpCameraToGoal()` / `resetTurntableRotation(theta?)`。
+  - 衰减是**渐近**的：`p = 1 - e^(-3t/decay)`。第一版把 `t/decay` 截断到 1，结果 `p` 永远到不了 0.999，缓动永远不结束——现在不截断，靠 epsilon 收尾。
+  - 位姿之间走**球面插值**：offset 方向 `slerp`、radius 线性、target 线性。直接线性插值相机位置会在 180° 换边时穿模而过。
+  - 缓动与转盘循环互斥（两者都要独占相机）：起缓动先停转盘，落地、被 `jumpCameraToGoal()` 收掉、或被用户拖拽打断后都交还。
+  - `resetTurntableRotation(theta)` 是**绝对**语义：调用后转盘读数就是 `theta`（默认 0），所以内部做的是「差值回滚」，而不是无条件归零；用户自己拖出来的方位角不受影响。
+  - 加载完成后的重断言走 **snap**（不缓动），只有属性变更与 API 写入才淡入——否则每次加载都会看到相机自己飘一段。这条用「意图参数」表达，而不是靠「首帧特判」，后者会把 `setFieldOfView` 的第一次调用也变成缓动，还会把文档标脏。
+- **加载凭据**：`with-credentials` → `Loader.setWithCredentials`，在**每次 load 前**下发，所以模型本体与它引用的外部 buffer / 贴图都能带上 cookie（私有 CDN 的常见要求）。
+
+未实现（经核对，不是差距）：`interaction-policy` / `allow-when-focused` / `generate-intrinsic-size` 在 model-viewer 的官方属性表与其 `features/controls.ts` 里都不存在，前者是此前凭记忆写下的误记；AR/XR 相关（`ar` / `ar-modes` / `quick-look` / `xr-environment`）维持不做。
+
+验证：`test/element/viewer-interaction.test.ts`、`viewer-environment.test.ts`、`viewer-loading.test.ts`、`viewer-camera-transition.test.ts`，以及 `test/three/touch-action-owner.test.ts`（含「第三方后写仍被纠正」）、`camera-rig.test.ts` 的 `rotateSpeed` / 转盘回滚 / 位姿缓动 / `touch-action` 组。真机脚本 `e2e/manual-viewer-check.mjs`（对生产构建跑，用法写在文件头）18/18（含 `touch-action` 默认值、HDR 换图、skybox 兼作光照、淡入是否落地、`jumpCameraToGoal`、`resetTurntableRotation`、「查看器属性不写脏文档」）。
+
+### 标注视口：`data-normal` + `queryHotspot()`（0.9.x）
+
+标注（annotations）原先把 `slot="hotspot-*"` + `data-position` 做到「能钉在模型上」就停了，其余四个 API 里先补了最便宜的两个：
+
+- **`data-normal`**：表面法线，默认 `0 1 0`（官方 `Hotspot` 的默认值）。判定照抄官方 `updateHotspotsVisibility`——`(camera − anchor) · normal < 0` 即背面，且**不归一化**（长度不影响符号；零长法线因此算「朝向」，不会让标注莫名消失）。
+  - 背面时写 `opacity: var(--min-hotspot-opacity, 0.25)`；正面时把内联值**删掉**而不是写 `1`，宿主自己的 `opacity` 与 `--max-hotspot-opacity` 才仍有发言权。官方是在自己的 shadow 样式表里给包裹层加 `.hide`，我们是 light DOM，只能落到节点上。
+  - `data-visibility-attribute="visible"` 时镜像成 `data-visible`（官方同样只在显式声明时才写，不擅自加属性），并在**状态变化**时派 `hotspot-visibility`。投影每帧都跑，所以事件必须只在翻转时发，否则就是噪声。
+- **`queryHotspot(name)`**：返回 `{ position, normal, canvasPosition, facingCamera }`，`canvasPosition` 是 canvas 本地 CSS 像素 + 投影的 NDC `z`（官方 `HotspotData` 就是这种 `{x,y,z}` 对象——这里刻意不跟随本仓库的 tuple 惯例，否则从 model-viewer 迁过来的代码要全改）。找不到锚点、runtime 未就绪、投影非有限值都返回 `null`。
+- **运行时契约**：新增可选 `projectHotspot(point, normal)`，`projectPoint` 顺带多返回一个 `z`。`ThreeRuntime` 里两者共用一个私有 `#projectToCanvas`，避免重复算包围盒。
+
+顺带修掉一个真 bug：slot 观察者只 observe 了 `this` 而没有 `subtree: true`，所以锚点自己改 `data-position` / `data-normal` 根本不会被重新收集（`attributeFilter` 里写着 `data-position` 但永远不会触发）。模型这侧反而比官方宽松——官方文档明确 `data-position`/`data-normal` 不被观察，必须调 `updateHotspot()`；我们现在改属性即可，`updateHotspot()` 因此不必急着补。
+
+未做：`data-surface` / `surfaceFromPoint()`（跟随蒙皮动画的标注，要做三角形 + 重心坐标 + 每帧 `animateSurfaceHotspots`，需单独立项）、`materialFromPoint()`。
+
+验证：`test/element/viewer-hotspot.test.ts`（16 条：queryHotspot 三态、默认法线、背面改写 opacity、事件只在变化时发、`data-visibility-attribute` 镜像、改 `data-normal` 重新收集、出深度范围隐藏、`updateHotspot()` 的五条）、`test/three/hotspot-projection.test.ts`（6 条：投影一致、正/背、签名点积、零长法线、相机换边、锚点自身在相机后）。演示页新增「标注（hotspot）」分组：在模型上取一点放两个法线相反的锚点，转视角即可看到淡出，另有按钮演示 `updateHotspot()` 上下移动。
+
+### 查看器表面：状态、传输事件、指针灵敏度（0.9.x）
+
+这一轮补的是宿主最常依赖、但我们一直缺的三块「读数 + 事件」，仍然只动元素/RuntimeContract 的可选面。
+
+- **`loaded` / `modelIsVisible`**：`loaded` 就是 `#contentLoaded`（`load` 事件之后为真，换源与销毁归零）；`modelIsVisible = loaded × 视口内 × 海报已消失`，与官方 `$getModelIsVisible() && $modelIsRevealed` 同构。
+  - 顺带修了一处语义债：`model-visibility` 以前是 `visibility-change` 的别名（只反映交叉），现在按官方的**复合判定**发——海报重新出现也算一次翻转。`visibility-change` 保持纯交叉语义不动，需要原始信号的人不受影响。旧测试里「没加载过内容也发 `model-visibility`」的那条已按新口径改写。
+  - 没有 `IntersectionObserver` 时（SSR、部分测试 DOM、显式关掉工厂）按「在视口内」处理——官方在没有 IO 时也是这个默认值。
+- **传输事件 `play` / `pause` / `loop` / `finished`**：rig 在起播、暂停、绕回、one-shot 结束时通知，`ThreeRuntime` 转到事件总线，元素再转成 `CustomEvent`。
+  - `pause` 只在「由播放转暂停」时发——官方明确模型初始就是 paused，加载时发一次纯属噪声。`loop.count` 从 1 起，且每次起播归零（跟 three 的 `action._loopCount` 一致，不跨 clip 累计）。
+  - `loop` 只有 repeat / ping-pong 会触发：three 的 `LoopOnce` 只发 `finished`，不做多余的模拟。
+  - 另一个副作用：`play` 事件里的 clip 名会顺手写进 `#activeClipName`，所以 `animationName` 终于反映「实际在播什么」，而不只是「属性写了什么」。
+- **`zoom-sensitivity` / `pan-sensitivity`**：与 `orbit-sensitivity` 同一套语义，映射到 `OrbitControls.zoomSpeed` / `panSpeed`。`0` 是合法值（`zoom-sensitivity="0"` 冻结滚轮但保留拖拽），所以下发时判「有没有」而不是「真不真」。
+
+未做（并列入对照表）：`appendAnimation()` 等多动画混播、`interact()` / `interact-stopped`（没有编程运镜编排）、`materialFromPoint()`、`before-render`（按需渲染下「首帧」没有统一定义，宁可缺席也不谎报）。
+
+验证：`test/three/animation-rig.test.ts` 新增 4 条传输事件用例（含「没在播时 pause 不发声」「one-shot 只发 finished」），`test/element/viewer-surface.test.ts` 2 条（事件转成 CustomEvent、`animationName` 跟随实际播放），新增 `test/element/viewer-model-visibility.test.ts` 7 条，`viewer-interaction.test.ts` 2 条灵敏度用例。
+
 
 ### 资源兼容（0.8.0）
 

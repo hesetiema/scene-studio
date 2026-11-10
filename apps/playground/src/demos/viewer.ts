@@ -64,6 +64,16 @@ export interface ViewerDemoState {
   orbit: { theta: number; phi: number; radius: number } | null;
   fov: number;
   alt: string | null;
+  /* interaction + environment surface */
+  orbitSensitivity: number;
+  touchAction: string;
+  interpolationDecay: number;
+  environmentImage: string | null;
+  skyboxImage: string | null;
+  withCredentials: boolean;
+  /** `uuid` of `scene.environment` — changes when the IBL is swapped. */
+  environmentMapId: string | null;
+  backgroundIsTexture: boolean;
 }
 
 interface ViewerDemoHook {
@@ -93,6 +103,13 @@ interface ViewerDemoHook {
     setTimeScale: (value: number) => void;
     setOrbit: (orbit: { theta?: number; phi?: number; radius?: number }) => void;
     setFieldOfView: (degrees: number) => void;
+    setOrbitSensitivity: (value: number) => void;
+    setTouchAction: (value: string) => void;
+    setInterpolationDecay: (ms: number) => void;
+    jumpCamera: () => boolean;
+    setEnvironment: (environmentImage: string | null, skyboxImage: string | null) => void;
+    setWithCredentials: (on: boolean) => void;
+    resetTurntable: (theta?: number) => boolean;
   };
 }
 
@@ -440,11 +457,130 @@ function bindUi(el: SceneEditorElement): void {
     el.toggleAttribute("camera-damping", on);
     log(`camera-damping = ${on}`);
   });
-  q<HTMLInputElement>("#interaction-prompt").addEventListener("change", (event) => {
-    const on = (event.target as HTMLInputElement).checked;
-    // The default is `auto`; the checkbox only ever switches it off.
-    if (on) el.removeAttribute("interaction-prompt");
-    else el.setAttribute("interaction-prompt", "none");
+  // ---- interaction & environment -------------------------------------------
+  q<HTMLInputElement>("#orbit-sensitivity").addEventListener("input", (event) => {
+    const value = Number((event.target as HTMLInputElement).value);
+    el.setAttribute("orbit-sensitivity", String(value));
+    log(`orbit-sensitivity = ${value}${value < 0 ? "（反向）" : ""}`);
+  });
+  q<HTMLSelectElement>("#touch-action").addEventListener("change", (event) => {
+    el.setAttribute("touch-action", (event.target as HTMLSelectElement).value);
+  });
+  q<HTMLInputElement>("#interpolation-decay").addEventListener("input", (event) => {
+    el.setAttribute("interpolation-decay", String((event.target as HTMLInputElement).value));
+  });
+  q("#jump-camera").addEventListener("click", () => {
+    el.jumpCameraToGoal();
+    log("jumpCameraToGoal()");
+  });
+  q("#apply-env").addEventListener("click", () => {
+    const env = q<HTMLInputElement>("#environment-image").value.trim();
+    const sky = q<HTMLInputElement>("#skybox-image").value.trim();
+    if (env) el.setAttribute("environment-image", env);
+    else el.removeAttribute("environment-image");
+    if (sky) el.setAttribute("skybox-image", sky);
+    else el.removeAttribute("skybox-image");
+    log(`environment-image = ${env || "（默认）"} / skybox-image = ${sky || "（无）"}`);
+    // Backdrop is a document-side concern only when the host writes it; the
+    // element attributes must leave `view.environment` alone.
+    renderStatus();
+  });
+  q<HTMLInputElement>("#with-credentials").addEventListener("change", (event) => {
+    el.toggleAttribute("with-credentials", (event.target as HTMLInputElement).checked);
+  });
+
+  // ---- hotspots ------------------------------------------------------------
+  // Two anchors on the same point, with opposite normals: the surface's normal
+  // and its negation. Orbit around and the second one dims to
+  // `--min-hotspot-opacity` once it faces away — that is `data-normal` working.
+  let hotspots: HTMLElement[] = [];
+  /** Where each anchor was authored, so `updateHotspot()` can offset from it. */
+  const hotspotBase = new Map<HTMLElement, [number, number, number]>();
+  let hotspotLifted = false;
+  const clearHotspots = (): void => {
+    for (const node of hotspots) node.remove();
+    hotspots = [];
+    hotspotBase.clear();
+    hotspotLifted = false;
+  };
+  q("#add-hotspots").addEventListener("click", () => {
+    clearHotspots();
+    const rect = el.getBoundingClientRect();
+    const hit = el.positionAndNormalFromPoint(
+      rect.left + rect.width / 2,
+      rect.top + rect.height / 2,
+    );
+    if (!hit) {
+      log.err("正中没打到模型——先把视角转回模型上");
+      return;
+    }
+    const [px, py, pz] = hit.position;
+    const [nx, ny, nz] = hit.normal;
+    // Side by side, so both are actually visible: two anchors on the same point
+    // would just stack, and the dimmed one would sit on top of the bright one.
+    const dims = el.getDimensions();
+    const shift = Math.max(dims.width, dims.depth) * 0.22;
+    const add = (
+      name: string,
+      label: string,
+      normal: [number, number, number],
+      dx = 0,
+    ): void => {
+      const node = document.createElement("div");
+      node.className = "se-hotspot";
+      node.setAttribute("slot", name);
+      node.dataset.position = `${px + dx} ${py} ${pz}`;
+      node.dataset.normal = normal.join(" ");
+      // Opt in to the mirrored attribute so CSS can react; the dimming itself
+      // needs no CSS (the element writes `--min-hotspot-opacity` inline).
+      node.dataset.visibilityAttribute = "visible";
+      node.textContent = label;
+      el.appendChild(node);
+      node.addEventListener("hotspot-visibility", (event) => {
+        const visible = (event as CustomEvent<{ visible: boolean }>).detail.visible;
+        log(`hotspot-visibility ${name} = ${visible}`);
+      });
+      hotspots.push(node);
+      hotspotBase.set(node, [px + dx, py, pz]);
+    };
+    add("hotspot-front", "正", [nx, ny, nz], -shift / 2);
+    add("hotspot-back", "反", [-nx, -ny, -nz], shift / 2);
+    log(`两个标注 @ ${px.toFixed(2)} ${py.toFixed(2)} ${pz.toFixed(2)}`);
+  });
+  q("#query-hotspot").addEventListener("click", () => {
+    const data = el.queryHotspot("hotspot-front");
+    if (!data) {
+      log.err("queryHotspot() → null（还没有标注）");
+      return;
+    }
+    const { x, y } = data.canvasPosition;
+    log(
+      `queryHotspot() → 屏幕 (${x.toFixed(0)}, ${y.toFixed(0)}) · facing=${data.facingCamera}`,
+    );
+  });
+  q("#move-hotspots").addEventListener("click", () => {
+    if (hotspots.length === 0) {
+      log.err("updateHotspot() 没有锚点——先建两个");
+      return;
+    }
+    hotspotLifted = !hotspotLifted;
+    const lift = el.getDimensions().height * 0.15 * (hotspotLifted ? 1 : 0);
+    for (const node of hotspots) {
+      const base = hotspotBase.get(node);
+      const slot = node.getAttribute("slot");
+      if (!base || !slot) continue;
+      // No DOM write: the element owns the anchor's placement. Coordinates stay
+      // strings, the same shape `data-position` takes.
+      el.updateHotspot({
+        name: slot,
+        position: `${base[0]} ${base[1] + lift} ${base[2]}`,
+      });
+    }
+    log(`updateHotspot() → ${hotspotLifted ? "上移" : "复位"} ${lift.toFixed(2)}m`);
+  });
+  q("#remove-hotspots").addEventListener("click", () => {
+    clearHotspots();
+    log("标注已移除");
   });
 
   q<HTMLInputElement>("#autoplay").addEventListener("change", (event) => {
@@ -575,7 +711,22 @@ function snapshot(): ViewerDemoState {
     orbit: editor?.getCameraOrbit() ?? null,
     fov: Number((editor?.getFieldOfView() ?? 0).toFixed(2)),
     alt: editor?.getAttribute("alt") ?? null,
+    orbitSensitivity: Number(editor?.getAttribute("orbit-sensitivity") ?? 1),
+    touchAction: canvasTouchAction(),
+    interpolationDecay: Number(editor?.getAttribute("interpolation-decay") ?? 50),
+    environmentImage: editor?.getAttribute("environment-image") ?? null,
+    skyboxImage: editor?.getAttribute("skybox-image") ?? null,
+    withCredentials: editor?.hasAttribute("with-credentials") ?? false,
+    // Identity of what is actually bound, so a swap is observable from a test.
+    environmentMapId: rt?.scene.environment?.uuid ?? null,
+    backgroundIsTexture: Boolean((rt?.scene.background as { isTexture?: boolean } | null)?.isTexture),
   };
+}
+
+/** What the browser actually got, not what the attribute says. */
+function canvasTouchAction(): string {
+  const canvas = editor?.querySelector("canvas");
+  return canvas instanceof HTMLElement ? canvas.style.touchAction : "";
 }
 
 async function main(): Promise<void> {
@@ -667,6 +818,30 @@ async function main(): Promise<void> {
         el.setFieldOfView(degrees);
         q<HTMLInputElement>("#field-of-view").value = String(degrees);
       },
+      setOrbitSensitivity: (value) => {
+        el.setAttribute("orbit-sensitivity", String(value));
+        q<HTMLInputElement>("#orbit-sensitivity").value = String(value);
+      },
+      setTouchAction: (value) => {
+        el.setAttribute("touch-action", value);
+        q<HTMLSelectElement>("#touch-action").value = value;
+      },
+      setInterpolationDecay: (ms) => {
+        el.setAttribute("interpolation-decay", String(ms));
+        q<HTMLInputElement>("#interpolation-decay").value = String(ms);
+      },
+      jumpCamera: () => el.jumpCameraToGoal(),
+      setEnvironment: (environmentImage, skyboxImage) => {
+        if (environmentImage === null) el.removeAttribute("environment-image");
+        else el.setAttribute("environment-image", environmentImage);
+        if (skyboxImage === null) el.removeAttribute("skybox-image");
+        else el.setAttribute("skybox-image", skyboxImage);
+      },
+      setWithCredentials: (on) => {
+        el.toggleAttribute("with-credentials", on);
+        q<HTMLInputElement>("#with-credentials").checked = on;
+      },
+      resetTurntable: (theta) => el.resetTurntableRotation(theta),
     },
   };
 

@@ -203,6 +203,19 @@
         color: var(--text);
       }
 
+      .cmp-foot p {
+        margin: 0 0 6px;
+      }
+
+      .cmp-foot a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .cmp-foot a:hover {
+        text-decoration: underline;
+      }
+
       .cmp-foot ul {
         margin: 0;
         padding-left: 18px;
@@ -285,62 +298,28 @@
 
     <footer class="cmp-foot">
       <h2>差异（诚实版）</h2>
+      <p>
+        只列还没对齐的。取景、光照、接触阴影、属性面、交互与环境贴图都已对齐，
+        逐项（含已对齐项）见 <a href="/demos/viewer.html#alignment">查看器对标表</a>。
+      </p>
       <ul>
         <li>
-          <code>poster</code> / <code>reveal</code> / <code>progress-bar</code> / hotspot 插槽：
-          已实现；<code>seamless-poster</code> 也已实现——首帧渲染完成后海报以 300ms 淡出，
-          不再是一帧切换的闪变。<code>interaction-prompt</code>（3s 无操作后出现的转动提示）
-          与 <code>interaction-prompt-threshold</code> 同样对齐。
-        </li>
-        <li><code>ar</code> / <code>ar-modes</code> / <code>quick-look</code> / <code>xr-environment</code>：不做（无 XR）。</li>
-        <li>
-          <code>variant-name</code>（<code>KHR_materials_variants</code>）：已实现——元素
-          <code>variant-name</code> / <code>availableVariants</code>，运行时
-          <code>variants</code> / <code>setVariant()</code>。three r186 不解析该扩展，这里直接读
-          glTF JSON 的 mappings，并用 <code>parser.associations</code> 把每个 primitive 对回 Mesh。
-          本页的 Fox 不含变体，故此项无法在此对照。
+          整幅平均亮度仍差约 5%：反射形状已同源（<code>environment-image="neutral"</code> 直接移植
+          model-viewer <code>EnvironmentScene('neutral')</code> 的几何、遮挡体与 σ=0.04 预滤波），
+          差在 three r183 与 r186 的预滤波 / 色调映射实现，不是数据差异。
         </li>
         <li>
-          接触阴影已同源：不再是方向光投影，而是移植 model-viewer <code>Shadow</code> 的算法——
-          正交相机贴在**地面上**朝上，用深度材质把「离地高度」写成 alpha，两遍可分离模糊后
-          贴在透明面上。所以阴影贴住足印并向上淡出，而不是从脚下拖出去。
-          <code>shadow-softness</code> 同时决定贴图分辨率与相机 <code>far</code>
-          （越软只保留越贴近地面的那一段高度），动画模型再按 2× 放大阴影体积。
+          动画相位不同步：两栏各自从加载完成起播，姿态随时间漂移，姿态不同则阴影形状自然不同。
+          这是取样问题，不是渲染差异——暂停并回到同一 <code>currentTime</code> 即可对齐。
         </li>
         <li>
-          属性面也已补齐：<code>camera-orbit</code> / <code>camera-target</code> /
-          <code>field-of-view</code>（含 <code>auto</code> 与 <code>min/max-field-of-view</code>）、
-          <code>getCameraOrbit()</code> / <code>getFieldOfView()</code>、方向键转视角，
-          以及动画传输 <code>availableAnimations</code> / <code>animationName</code> /
-          <code>play()</code> / <code>pause()</code> / <code>paused</code> /
-          <code>currentTime</code> / <code>timeScale</code>、<code>alt</code>。
-          角度约定与 <code>min/max-camera-orbit</code> 一致（theta 从 +Z、phi 从 +Y），
-          宿主的属性值可以直接在两边复用。
+          <code>ar</code> / <code>ar-modes</code> / <code>quick-look</code> /
+          <code>xr-environment</code>：不做（无 XR）。
         </li>
         <li>
-          本仓库多出的三件事（model-viewer 没有）：<code>camera-name</code> 切换到 glTF 内嵌相机、
-          <code>setMorphInfluence()</code> 手动驱动 morph target（动画正在写该通道时拒绝）、
-          <code>camera-damping</code> 拖拽惯性；另外离屏元素与后台标签页会暂停渲染。
-        </li>
-        <li>
-          环境已同源：右侧 <code>environment-image="neutral"</code> 预设直接移植了 model-viewer
-          <code>EnvironmentScene('neutral')</code> 的几何——同样的房间、6 个遮挡体、7 块发光板、
-          1 盏顶光，同样的 σ=0.04 预滤波。反射形状因此一致；整幅平均亮度仍有约 5% 差
-          （three r183 与 r186 的预滤波/色调映射实现差异，非数据差异）。
-        </li>
-        <li>
-          取景已逐像素对齐：按 model-viewer <code>updateFraming()</code> 的算法复刻——距离取
-          顶点（而非包围盒角点）到目标中心的球半径，宽模型不改距离而是放宽垂直 FOV，
-          相机在 105% 半径处，正面 15° 仰角，无地面网格。实测 Fox / Helmet / Milk Truck /
-          Water Bottle / Boom Box 的距离比均为 0.975–1.006。
-        </li>
-        <li>
-          光照已对齐：<code>tone-mapping</code> 默认 <code>neutral</code>（即 model-viewer
-          <code>auto</code> 在 glTF 上的解析结果），只由环境贴图照明。
-        </li>
-        <li>
-          仍有差距：动画各自从加载完成起播，两栏的姿态会随时间漂移（取样问题，不是渲染差异），
-          姿态不同则阴影形状自然不同；整幅平均亮度残留约 5%（见上条）。
+          <code>interaction-prompt</code> / <code>interaction-prompt-threshold</code>：
+          <strong>不做</strong>。查看器只负责画布，提示与控制条归宿主页面
+          （<code>poster</code> 插槽与 <code>poster-dismissed</code> 事件都在）。
         </li>
       </ul>
     </footer>
