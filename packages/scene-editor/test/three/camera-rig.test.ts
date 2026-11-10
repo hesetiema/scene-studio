@@ -7,6 +7,7 @@ interface ControlsHarness {
   orbit: OrbitControlsLike & {
     enablePan: boolean;
     enableZoom: boolean;
+    rotateSpeed: number;
     minDistance: number;
     maxDistance: number;
     minPolarAngle: number;
@@ -25,6 +26,7 @@ function makeControls(): ControlsHarness {
     dispose: vi.fn(),
     enablePan: true,
     enableZoom: true,
+    rotateSpeed: 1,
     minDistance: 0,
     maxDistance: Infinity,
     minPolarAngle: 0,
@@ -106,6 +108,31 @@ describe("CameraRig controls policy", () => {
     rig.mount(second.orbit);
 
     expect(second.orbit.enablePan).toBe(false);
+  });
+
+  it("maps orbit-sensitivity onto rotateSpeed, keeping 0 and negatives", () => {
+    const { rig, orbit } = makeRig();
+    rig.mount(orbit);
+
+    rig.applyControls({ sensitivity: 0.25 });
+    expect(orbit.rotateSpeed).toBe(0.25);
+
+    // 0 freezes orbit while pan/zoom stay live; a negative value inverts the
+    // drag (model-viewer's use case: looking around a cave interior).
+    rig.applyControls({ sensitivity: 0 });
+    expect(orbit.rotateSpeed).toBe(0);
+    rig.applyControls({ sensitivity: -2 });
+    expect(orbit.rotateSpeed).toBe(-2);
+  });
+
+  it("leaves rotateSpeed alone when sensitivity is absent", () => {
+    const { rig, orbit } = makeRig();
+    rig.mount(orbit);
+    orbit.rotateSpeed = 0.5;
+
+    rig.applyControls({ zoom: true, pan: false });
+
+    expect(orbit.rotateSpeed).toBe(0.5);
   });
 });
 

@@ -20,6 +20,12 @@ export interface OrbitControlsLike {
   maxAzimuthAngle?: number;
   enableDamping?: boolean;
   dampingFactor?: number;
+  /** `orbit-sensitivity` multiplier; the addon's own default is 1. */
+  rotateSpeed?: number;
+  /** `zoom-sensitivity` multiplier; the addon's own default is 1. */
+  zoomSpeed?: number;
+  /** `pan-sensitivity` multiplier; the addon's own default is 1. */
+  panSpeed?: number;
 }
 
 export type CameraView = ViewState["camera"];
@@ -139,6 +145,14 @@ export function createCameraRig(options: CameraRigOptions): CameraRig {
     if (!orbit) return;
     if (controls.pan !== undefined) orbit.enablePan = controls.pan;
     if (controls.zoom !== undefined) orbit.enableZoom = controls.zoom;
+    // 0 is a legal value (orbit frozen, pan/zoom still live) and negatives are
+    // how `orbit-sensitivity` inverts the drag, so test for presence rather
+    // than truthiness — `undefined` means "leave it alone".
+    if (controls.sensitivity !== undefined) orbit.rotateSpeed = controls.sensitivity;
+    // Same rule for the other two verbs: `zoom-sensitivity="0"` freezes the
+    // wheel while the drag still orbits, which is how a page keeps the scroll.
+    if (controls.zoomSensitivity !== undefined) orbit.zoomSpeed = controls.zoomSensitivity;
+    if (controls.panSensitivity !== undefined) orbit.panSpeed = controls.panSensitivity;
 
     // Inertia: the addon only decays its spherical delta inside `update()`, so
     // a render-on-demand viewer needs the settle loop below to keep feeding it

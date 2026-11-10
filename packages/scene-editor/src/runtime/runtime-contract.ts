@@ -47,6 +47,17 @@ export interface CameraControlsOptions {
    * the instant the pointer does.
    */
   damping?: number;
+  /**
+   * `orbit-sensitivity` (default 1): multiplier on the angle the pointer
+   * produces. `0.5` = half speed, `0` = orbit frozen while pan/zoom still work,
+   * negative = inverted (model-viewer's own use case: look around the inside of
+   * a cave model at radius 0).
+   */
+  sensitivity?: number;
+  /** `zoom-sensitivity` (default 1): multiplier on the zoom step; `0` freezes it. */
+  zoomSensitivity?: number;
+  /** `pan-sensitivity` (default 1): multiplier on the pan distance; `0` freezes it. */
+  panSensitivity?: number;
 }
 
 /** model-viewer `auto-rotate` + `rotation-per-second` + `auto-rotate-delay`. */
@@ -148,6 +159,17 @@ export type RuntimeEventMap = {  "selection-change": { ids: string[] };
   "load-progress": { totalProgress: number; reason: string };
   /** The current document finished loading; the runtime is renderable. */
   load: { sceneId: string };
+  /**
+   * Playback transport transitions, mirroring model-viewer's animation events.
+   * Low frequency (once per clip start, wrap or end), so they are always on.
+   * `pause` and `finished` carry nothing: a viewer starts paused, so `pause`
+   * only fires when playback was actually stopped (never on load).
+   */
+  play: { objectId: string; index: number; name: string };
+  pause: null;
+  /** `count` is the wrap count of the clip in flight, starting at 1. */
+  loop: { count: number; name: string };
+  finished: { objectId: string; name: string };
   error: { code: string; message: string; cause?: unknown };
 };
 

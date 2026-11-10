@@ -250,7 +250,30 @@ export class ThreeRuntime implements RuntimeContract {
       canvas: dom as HTMLCanvasElement,
     });
 
-    this.#animation = createAnimationRig();
+    this.#animation = createAnimationRig({
+      // Transport transitions are host-facing events (`play` / `pause` /
+      // `loop` / `finished`); the rig knows when they happen, the bus carries them.
+      onTransport: (event) => {
+        switch (event.type) {
+          case "play":
+            this.events.emit("play", {
+              objectId: event.objectId,
+              index: event.index,
+              name: event.name,
+            });
+            break;
+          case "pause":
+            this.events.emit("pause", null);
+            break;
+          case "loop":
+            this.events.emit("loop", { count: event.count, name: event.name });
+            break;
+          case "finished":
+            this.events.emit("finished", { objectId: event.objectId, name: event.name });
+            break;
+        }
+      },
+    });
     this.#morph = createMorphRig({
       roots: () => this.#framingRoots(),
       // A clip driving `morphTargetInfluences` owns the channel; the rig asks

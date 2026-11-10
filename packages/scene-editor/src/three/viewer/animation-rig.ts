@@ -5,12 +5,28 @@ import type { AnimationClipInfo } from "../../runtime/runtime-contract";
 // `availableAnimations`); re-exported here so `three-entry` keeps one import.
 export type { AnimationClipInfo };
 
+/**
+ * Transport notifications — model-viewer's `play` / `pause` / `loop` /
+ * `finished` events, minus the DOM. `loop.count` follows the reference: three's
+ * mixer counts completed wraps, so the first one reports `1`.
+ */
+export type AnimationTransportEvent =
+  | { type: "play"; objectId: string; index: number; name: string }
+  | { type: "pause" }
+  | { type: "loop"; count: number; name: string }
+  | { type: "finished"; objectId: string; name: string };
+
 /** Transport knobs (model-viewer `animation-crossfade-duration` / `pause-at-end`). */
 export interface AnimationRigOptions {
   /** Seconds of crossfade when switching clips; `0` = hard cut. */
   crossfadeSeconds?: number;
   /** One-shot playback that holds the last frame instead of looping. */
   pauseAtEnd?: boolean;
+  /**
+   * Mirrors playback transitions for the host (`ThreeRuntime` forwards them to
+   * its event bus). Called synchronously from the mixer, so keep it cheap.
+   */
+  onTransport?: (event: AnimationTransportEvent) => void;
 }
 
 interface Track {
@@ -75,13 +91,31 @@ const END_EPSILON = 1e-4;
  * clips on the *same* object; across objects the outgoing mixers still stop
  * immediately (there is no meaningful blend between two skeletons).
  */
-export function createAnimationRig(): AnimationRig {
+export function createAnimationRig(options: AnimationRigOptions = {}): AnimationRig {
+  const notify = options.onTransport ?? null;
   const tracks = new Map<string, Track>();
   let active: ActivePlayback | null = null;
   let playing = false;
   let speed = 1;
   let crossfadeSeconds = 0;
   let pauseAtEnd = false;
+  /**
+   * Completed wraps of the *active* clip. Reset on every start, like the
+   * reference: the first loop of a clip reports `1`, not the clip's lifetime
+   * total (three keeps that on the action, which survives a rewind).
+   */
+  let loopCount = 0;
+
+  /** glTF clips may be unnamed; the reference's `availableAnimations` names them. */
+  const clipName = (action: THREE.AnimationAction, index: number): string =>
+    action.getClip().name || `Animation ${index + 1}`;
+
+  /** Name of the clip in flight, spelled the same way `list()` spells it. */
+  const activeName = (): string => {
+    if (!active) return "";
+    const index = active.track.actions.indexOf(active.action);
+    return clipName(active.action, index < 0 ? 0 : index);
+  };
 
   const applyLoopPolicy = (action: THREE.AnimationAction): void => {
     action.loop = pauseAtEnd ? THREE.LoopOnce : THREE.LoopRepeat;
@@ -120,6 +154,8 @@ export function createAnimationRig(): AnimationRig {
 
     active = { track, action };
     playing = true;
+    loopCount = 0;
+    notify?.({ type: "play", objectId: track.objectId, index, name: clipName(action, index) });
     return true;
   };
 
@@ -151,6 +187,16 @@ export function createAnimationRig(): AnimationRig {
         applyLoopPolicy(action);
         return action;
       });
+      // Wraps of the clip in flight. three dispatches `loop` for repeat /
+      // ping-pong actions only; a `LoopOnce` clip ends with `finished` alone,
+      // which is the same split the reference exposes.
+      mixer.addEventListener("loop", (event) => {
+        const looped = (event as { action?: THREE.AnimationAction }).action;
+        if (!active || active.track.objectId !== objectId) return;
+        if (looped && looped !== active.action) return;
+        loopCount += 1;
+        notify?.({ type: "loop", count: loopCount, name: activeName() });
+      });
       // One-shot clips end on their own; keep `playing` honest so the runtime
       // can stop its rAF loop instead of rendering a frozen scene forever.
       mixer.addEventListener("finished", (event) => {
@@ -158,6 +204,7 @@ export function createAnimationRig(): AnimationRig {
         if (!active || active.track.objectId !== objectId) return;
         if (finished && finished !== active.action) return;
         playing = false;
+        notify?.({ type: "finished", objectId, name: activeName() });
       });
 
       const previous = tracks.get(objectId);
@@ -200,16 +247,23 @@ export function createAnimationRig(): AnimationRig {
       if (action.time >= action.getClip().duration - END_EPSILON) {
         action.reset();
         applyLoopPolicy(action);
+        loopCount = 0;
       }
       action.paused = false;
       action.enabled = true;
       playing = true;
       track.mixer.update(0);
+      const index = track.actions.indexOf(action);
+      notify?.({ type: "play", objectId: track.objectId, index, name: clipName(action, index) });
       return true;
     },
     pause(): void {
+      // The reference stays silent when there was nothing playing: a viewer
+      // always starts paused, so a `pause` event there would be noise.
+      const wasPlaying = playing;
       if (active) active.action.paused = true;
       playing = false;
+      if (wasPlaying) notify?.({ type: "pause" });
     },
     setSpeed(next: number): void {
       speed = Math.max(0, next);

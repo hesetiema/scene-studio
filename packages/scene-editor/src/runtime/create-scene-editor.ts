@@ -74,6 +74,18 @@ export type SceneEditorEventMap = {
   /** The document finished loading and the runtime is renderable. */
   load: { sceneId: string };
   /**
+   * Animation transport — model-viewer's `play` / `pause` / `loop` /
+   * `finished`. Low frequency: one per clip start, wrap or end, so a viewer can
+   * drive transport chrome from them without sampling every frame.
+   */
+  play: { objectId: string; index: number; name: string };
+  /** Edge-only: a viewer starts paused, so this never fires on load. */
+  pause: Record<string, never>;
+  /** The clip in flight completed a wrap; `count` starts at 1. */
+  loop: { count: number; name: string };
+  /** A one-shot clip (`pause-at-end`) reached its last frame. */
+  finished: { objectId: string; name: string };
+  /**
    * Element-only: the `<scene-editor>` host entered or left the viewport.
    * The headless facade owns no DOM, so `editor.on("visibility-change")` never
    * fires — listen on the element instead.
@@ -209,6 +221,20 @@ class SceneEditorFacade implements SceneEditor, PluginHostEditor {
     });
     this.runtime.events.on("load", (payload) => {
       this.#emit("load", payload);
+    });
+    // Playback transport: the runtime's rig owns the transitions, the facade
+    // only re-labels them (same shape, so a forward is enough).
+    this.runtime.events.on("play", (payload) => {
+      this.#emit("play", payload);
+    });
+    this.runtime.events.on("pause", () => {
+      this.#emit("pause", {});
+    });
+    this.runtime.events.on("loop", (payload) => {
+      this.#emit("loop", payload);
+    });
+    this.runtime.events.on("finished", (payload) => {
+      this.#emit("finished", payload);
     });
     // Runtime failures (asset resolve/load, render) are one error channel for
     // hosts — the element docs promise `error` is the reliable surface (D6).

@@ -363,3 +363,41 @@ describe("alt (accessible label)", () => {
     expect(canvas.getAttribute("aria-label")).toBe("3D model: fox.glb");
   });
 });
+
+/* --------------------------------------------------------------- animation events */
+
+describe("animation transport events (model-viewer parity)", () => {
+  it("re-launches play / pause / loop / finished as CustomEvents", async () => {
+    const { el, fake } = makeElement();
+    fake.clips = CLIPS;
+    await connected(el);
+
+    const seen: Array<{ type: string; detail: unknown }> = [];
+    for (const type of ["play", "pause", "loop", "finished"]) {
+      el.addEventListener(type, (event) => {
+        seen.push({ type, detail: (event as CustomEvent).detail });
+      });
+    }
+
+    fake.events.emit("play", { objectId: "fox", index: 1, name: "Walk" });
+    fake.events.emit("loop", { count: 2, name: "Walk" });
+    fake.events.emit("pause", null);
+    fake.events.emit("finished", { objectId: "fox", name: "Walk" });
+
+    expect(seen).toEqual([
+      { type: "play", detail: { objectId: "fox", index: 1, name: "Walk" } },
+      { type: "loop", detail: { count: 2, name: "Walk" } },
+      { type: "pause", detail: {} },
+      { type: "finished", detail: {} },
+    ]);
+  });
+
+  it("tracks the playing clip so animationName follows the transport", async () => {
+    const { el, fake } = makeElement();
+    fake.clips = CLIPS;
+    await connected(el);
+
+    fake.events.emit("play", { objectId: "fox", index: 1, name: "Walk" });
+    expect(el.animationName).toBe("Walk");
+  });
+});

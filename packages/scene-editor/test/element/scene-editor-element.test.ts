@@ -523,6 +523,9 @@ describe("SceneEditorElement viewer attributes (model-viewer parity)", () => {
       seen.push((event as CustomEvent<{ visible: boolean }>).detail.visible);
     });
     await connected(el);
+    // `model-visibility` is the composite verdict (loaded × in-viewport ×
+    // revealed), so there has to be something loaded before it can say true.
+    await el.loadDocument(doc);
 
     visibilityCallback?.(true);
     visibilityCallback?.(false);

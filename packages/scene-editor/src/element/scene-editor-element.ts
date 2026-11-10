@@ -601,6 +601,12 @@ export class SceneEditorElement extends HTMLElement {
   #loading = false;
   /** Content mounted — `reveal="auto"` then dismisses a late poster at once. */
   #contentLoaded = false;
+  /**
+   * Last announced `modelIsVisible`. `model-visibility` is edge-triggered on the
+   * composite verdict (loaded × in-viewport × poster dismissed), not on the raw
+   * intersection — a poster that hides the model is "not visible" too.
+   */
+  #modelVisible = false;
 
   /* ------------------------------------------------------ playback state ---- */
   /** Set by `pause()`: an explicit transport stop outranks `autoplay` for later loads. */
@@ -629,6 +635,29 @@ export class SceneEditorElement extends HTMLElement {
   /** Whether the element currently intersects the viewport (`visibility-change`). */
   get visible(): boolean {
     return this.#intersectionVisible;
+  }
+
+  /**
+   * model-viewer's `loaded`: true once the `load` event has fired for the
+   * current source, and false again as soon as the source changes or the
+   * element tears down. It answers "is there content to show", not "is it on
+   * screen" — that is {@link modelIsVisible}.
+   */
+  get loaded(): boolean {
+    return this.#contentLoaded;
+  }
+
+  /**
+   * model-viewer's `modelIsVisible`: content loaded, element in the viewport,
+   * and the poster dismissed. The reference also counts `loaded`, so an element
+   * that is on screen but still loading reports `false` — this is what a host
+   * uses to start/stall a render loop, not a CSS concern.
+   */
+  get modelIsVisible(): boolean {
+    // No IntersectionObserver (SSR, some test DOMs, an explicit opt-out) means
+    // "no reason to think it is hidden" — the reference makes the same call.
+    const inViewport = this.#intersectionVisible || this.#visibilityObserver === null;
+    return this.#contentLoaded && inViewport && this.#revealed;
   }
 
   attributeChangedCallback(name: string, _old: string | null, value: string | null): void {
@@ -1112,6 +1141,9 @@ export class SceneEditorElement extends HTMLElement {
     this.#applyPosterVisibility();
     this.#applyProgressVisibility();
     this.#updateHotspots();
+    // Adding a poster to a loaded element hides the model again (the reference
+    // shows a replacement poster for a new reveal cycle), so the verdict moves.
+    this.#syncModelVisibility();
   }
 
   /** Absolute slot chrome needs a positioned containing block (the host). */
@@ -1258,6 +1290,7 @@ export class SceneEditorElement extends HTMLElement {
     const dismissing = this.#poster !== null && !this.#revealed;
     this.#revealed = true;
     this.#applyPosterVisibility();
+    this.#syncModelVisibility();
     if (!dismissing) return;
     this.dispatchEvent(new CustomEvent("poster-dismissed", { detail: {} }));
   }
@@ -1330,6 +1363,9 @@ export class SceneEditorElement extends HTMLElement {
     this.#loading = false;
     this.#revealed = true;
     this.#contentLoaded = false;
+    // Teardown: the model is gone, so a host that parked work on
+    // `model-visibility` learns about it instead of waiting forever.
+    this.#syncModelVisibility();
   }
 
   #requireEditor(): SceneEditor {
@@ -1945,11 +1981,21 @@ export class SceneEditorElement extends HTMLElement {
 
     const limits = readOrbitLimits(this);
     const damping = readDamping(this);
+    // `orbit-sensitivity` follows model-viewer: any finite number, negatives
+    // invert the drag. A garbage value falls back to 1 rather than freezing.
+    const sensitivity = readNumberAttr(this, "orbit-sensitivity", 1);
+    // Same contract for the other two verbs — `zoom-sensitivity="0"` freezes
+    // the wheel while the drag still orbits.
+    const zoomSensitivity = readNumberAttr(this, "zoom-sensitivity", 1);
+    const panSensitivity = readNumberAttr(this, "pan-sensitivity", 1);
     runtime.setCameraControls?.({
       pan: !this.hasAttribute("disable-pan"),
       zoom: !this.hasAttribute("disable-zoom"),
       ...(limits === undefined ? {} : { limits }),
       ...(damping === undefined ? {} : { damping }),
+      ...(Number.isFinite(sensitivity) ? { sensitivity } : {}),
+      ...(Number.isFinite(zoomSensitivity) ? { zoomSensitivity } : {}),
+      ...(Number.isFinite(panSensitivity) ? { panSensitivity } : {}),
     });
 
     runtime.setAutoRotate?.(
@@ -2169,12 +2215,28 @@ export class SceneEditorElement extends HTMLElement {
         this.#setLoading(true);
         this.dispatchEvent(new CustomEvent("progress", { detail: payload }));
       });
+      // Playback transport (model-viewer parity). `play` keeps a payload that
+      // says *what* started; `pause` / `finished` carry none upstream either.
+      editor.on("play", (payload) => {
+        this.#noteActiveClip(payload.name);
+        this.dispatchEvent(new CustomEvent("play", { detail: payload }));
+      });
+      editor.on("pause", () => {
+        this.dispatchEvent(new CustomEvent("pause", { detail: {} }));
+      });
+      editor.on("loop", (payload) => {
+        this.dispatchEvent(new CustomEvent("loop", { detail: payload }));
+      });
+      editor.on("finished", () => {
+        this.dispatchEvent(new CustomEvent("finished", { detail: {} }));
+      });
       editor.on("load", (payload) => {
         // Only the `src` path knows a URL; headless/host documents report null.
         const url = this.#documentOwner === "src" ? this.src : null;
         this.#contentLoaded = true;
         this.#setLoading(false);
         this.dispatchEvent(new CustomEvent("load", { detail: { ...payload, url } }));
+        this.#syncModelVisibility();
         this.#updateHotspots();
         // `reveal="auto"` (the default): the model is on screen — drop the poster.
         this.#dismissPoster("load");
@@ -2225,6 +2287,18 @@ export class SceneEditorElement extends HTMLElement {
     }
   }
 
+  /**
+   * Announce `model-visibility` when the composite verdict flips. Every input
+   * (load, intersection, poster) calls this instead of dispatching directly, so
+   * the event always agrees with the `modelIsVisible` getter.
+   */
+  #syncModelVisibility(): void {
+    const visible = this.modelIsVisible;
+    if (visible === this.#modelVisible) return;
+    this.#modelVisible = visible;
+    this.dispatchEvent(new CustomEvent("model-visibility", { detail: { visible } }));
+  }
+
   #onVisibilityChange = (visible: boolean): void => {
     const changed = visible !== this.#intersectionVisible;
     this.#intersectionVisible = visible;
@@ -2235,8 +2309,8 @@ export class SceneEditorElement extends HTMLElement {
     this.#setRenderingPaused();
     if (!changed) return;
     this.dispatchEvent(new CustomEvent("visibility-change", { detail: { visible } }));
-    // Viewer-compatible alias (model-viewer `model-visibility`).
-    this.dispatchEvent(new CustomEvent("model-visibility", { detail: { visible } }));
+    // The viewer-compatible signal is the composite one, not the raw crossing.
+    this.#syncModelVisibility();
     if (visible && this.#deferredSrcLoad) this.#maybeLoadSrc();
   };
 

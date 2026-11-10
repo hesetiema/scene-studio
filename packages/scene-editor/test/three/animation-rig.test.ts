@@ -1,7 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
-import { createAnimationRig } from "../../src/three/viewer/animation-rig";
+import {
+  createAnimationRig,
+  type AnimationTransportEvent,
+} from "../../src/three/viewer/animation-rig";
 
 function makeClip(name = "Slide"): THREE.AnimationClip {
   return new THREE.AnimationClip(name, 1, [
@@ -151,5 +154,65 @@ describe("AnimationRig transport (model-viewer parity)", () => {
     rig.setOptions({ pauseAtEnd: true });
     expect(rig.update(1.2)).toBe(false);
     expect(root.position.x).toBeCloseTo(10, 5);
+  });
+});
+
+describe("AnimationRig transport events (model-viewer parity)", () => {
+  function watched(): { rig: ReturnType<typeof createAnimationRig>; seen: AnimationTransportEvent[] } {
+    const seen: AnimationTransportEvent[] = [];
+    const rig = createAnimationRig({ onTransport: (event) => seen.push(event) });
+    return { rig, seen };
+  }
+
+  it("reports the clip that started, then one loop per wrap", () => {
+    const { rig, seen } = watched();
+    rig.register("box-1", new THREE.Group(), [clipOn("x", "Loop")]);
+
+    rig.play("box-1");
+    expect(seen).toEqual([{ type: "play", objectId: "box-1", index: 0, name: "Loop" }]);
+
+    rig.update(1.2);
+    rig.update(1);
+    expect(seen.slice(1)).toEqual([
+      { type: "loop", count: 1, name: "Loop" },
+      { type: "loop", count: 2, name: "Loop" },
+    ]);
+  });
+
+  it("reports finished — and never a loop — for a one-shot clip", () => {
+    const { rig, seen } = watched();
+    rig.register("box-1", new THREE.Group(), [clipOn("x", "Once")]);
+
+    rig.setOptions({ pauseAtEnd: true });
+    rig.play("box-1");
+    expect(rig.update(1.2)).toBe(false);
+
+    expect(seen.map((event) => event.type)).toEqual(["play", "finished"]);
+    expect(seen[1]).toEqual({ type: "finished", objectId: "box-1", name: "Once" });
+  });
+
+  it("stays silent when there is nothing to pause, and replays on resume", () => {
+    const { rig, seen } = watched();
+    rig.register("box-1", new THREE.Group(), [clipOn("x", "Idle")]);
+
+    // A viewer starts paused: no event for "still paused".
+    rig.pause();
+    expect(seen).toEqual([]);
+
+    rig.play("box-1");
+    rig.pause();
+    expect(seen.map((event) => event.type)).toEqual(["play", "pause"]);
+
+    expect(rig.resume()).toBe(true);
+    expect(seen.map((event) => event.type)).toEqual(["play", "pause", "play"]);
+  });
+
+  it("names an unnamed clip the way list() does", () => {
+    const { rig, seen } = watched();
+    rig.register("box-1", new THREE.Group(), [clipOn("x", "")]);
+
+    rig.play("box-1");
+    expect(rig.list()[0]?.name).toBe("Animation 1");
+    expect(seen[0]).toEqual({ type: "play", objectId: "box-1", index: 0, name: "Animation 1" });
   });
 });
