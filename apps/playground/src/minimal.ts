@@ -1,16 +1,12 @@
 /**
- * `minimal.html` entry point — two jobs, one HTML file.
+ * `minimal.html` entry point — the smallest end-to-end host integration:
+ * element + `loadDocument` + save loop. The code runs synchronously so
+ * `scene-editor` upgrades at once: some decoder/e2e probes wait on
+ * `customElements.get()` and must not race a dynamic import.
  *
- * Bare URL      → the smallest end-to-end host integration (the code below,
- *                  executed synchronously so `scene-editor` upgrades at once).
- * ?demo=hub     → index of the SDK-coverage scenarios.
- * ?demo=<name>  → one coverage scenario with its full `window.__*` hook; the
- *                  router is imported only on this path, so the bare page does
- *                  not pay for the scenario markup or the 33 kB viewer harness.
- *
- * The scenarios used to be seven standalone `/demos/*.html` pages. Keeping both
- * jobs here gives the host-shaped API exactly one regression surface and one
- * build input, without deleting a single check.
+ * The SDK coverage scenarios that used to share this entry (`?demo=<name>`)
+ * have been removed. Studio-side regression now lives in `e2e/*.spec.ts`
+ * against the bare pages (`/`, `/minimal.html`, `/perf.html`).
  */
 import { SCHEMA_VERSION, type SceneDocument, type Transform } from "@scenio/scene-editor";
 import { defineSceneEditor, type SceneEditorElement } from "@scenio/scene-editor/element";
@@ -159,26 +155,7 @@ async function main(): Promise<void> {
   saveBtn.addEventListener("click", () => el.requestSave());
 }
 
-const scenario = new URLSearchParams(location.search).get("demo");
-
-if (scenario === null) {
-  // Bare page: keep the original synchronous upgrade order. Some decoder/e2e
-  // probes wait on `customElements.get()` and must not race a dynamic import.
-  void main().catch((error: unknown) => {
-    statusEl.textContent = `初始化失败：${error instanceof Error ? error.message : String(error)}`;
-    log(`[fatal] ${String(error)}`);
-  });
-} else {
-  void (async () => {
-    const { bootScenario, hasScenario } = await import("./scenarios/router");
-    if (!hasScenario(scenario)) {
-      document.body.textContent = `未知场景：${scenario}。可用场景见 /minimal.html?demo=hub`;
-      return;
-    }
-    try {
-      await bootScenario(scenario);
-    } catch (error: unknown) {
-      document.body.textContent = `场景初始化失败：${error instanceof Error ? error.message : String(error)}`;
-    }
-  })();
-}
+void main().catch((error: unknown) => {
+  statusEl.textContent = `初始化失败：${error instanceof Error ? error.message : String(error)}`;
+  log(`[fatal] ${String(error)}`);
+});

@@ -56,6 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  vi.restoreAllMocks();
 });
 
 describe("createSrcDocument", () => {
@@ -152,8 +153,9 @@ describe("<scene-editor src> preview entry", () => {
     await expect(resolver()!.resolve(SRC_ASSET_ID)).resolves.toBe("ignored.glb");
   });
 
-  it("reloads when src changes and the element owns the document", async () => {
+  it("ignores src changes after connect", async () => {
     const { el, fake } = makeElement();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     el.setAttribute("src", "a.glb");
     await connected(el);
     await nextTick();
@@ -161,12 +163,16 @@ describe("<scene-editor src> preview entry", () => {
     el.setAttribute("src", "b.glb");
     await nextTick();
 
-    expect(fake.calls.loadDocument).toHaveLength(2);
-    expect(fake.calls.loadDocument[1]?.objects[0]?.name).toBe("b.glb");
+    // `src` is a connect-time declaration: no second load, no new document.
+    expect(fake.calls.loadDocument).toHaveLength(1);
+    expect(fake.calls.loadDocument[0]?.objects[0]?.name).toBe("a.glb");
+    expect(el.getDocument().objects[0]?.assetId).toBe(SRC_ASSET_ID);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the host document until src changes again", async () => {
+  it("keeps the host document even if src changes later", async () => {
     const { el, fake } = makeElement();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     el.setAttribute("src", "a.glb");
     await connected(el);
     await nextTick();
@@ -177,11 +183,11 @@ describe("<scene-editor src> preview entry", () => {
     await nextTick();
     expect(el.getDocument().sceneId).toBe("host-scene");
 
-    // Changing src is an explicit switch back to preview.
+    // A late `src` change no longer switches back to preview mode.
     el.setAttribute("src", "b.glb");
     await nextTick();
-    expect(fake.calls.loadDocument).toHaveLength(3);
-    expect(el.getDocument().objects[0]?.assetId).toBe(SRC_ASSET_ID);
+    expect(el.getDocument().sceneId).toBe("host-scene");
+    expect(fake.calls.loadDocument).toHaveLength(2);
   });
 
   it("stays inert without src", async () => {
@@ -307,12 +313,12 @@ describe("material variants (`variant-name`)", () => {
     const { el, fake } = makeElement();
     const setVariant = withVariants(fake);
     el.setAttribute("variant-name", "Red");
+    el.setAttribute("src", "a.glb");
     await connected(el);
     setVariant.mockClear();
 
     // A name set before the asset parsed has to be applied retroactively: the
     // runtime only learns the variant list once the glTF is in.
-    el.setAttribute("src", "a.glb");
     await nextTick();
 
     expect(setVariant).toHaveBeenCalledWith("Red");
@@ -364,10 +370,10 @@ describe("embedded cameras and morph targets", () => {
     const { el, fake } = makeElement();
     fake.camerasList = ["Detail"];
     el.setAttribute("camera-name", "Detail");
+    el.setAttribute("src", "a.glb");
     await connected(el);
     fake.calls.setCameraByName.length = 0;
 
-    el.setAttribute("src", "a.glb");
     await nextTick();
 
     expect(fake.calls.setCameraByName.at(-1)).toBe("Detail");

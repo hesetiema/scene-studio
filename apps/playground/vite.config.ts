@@ -6,8 +6,7 @@ const pkg = (path: string) =>
 
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
-/** Three HTML entries: the studio, the perf bench, and the minimal host
- *  (which also serves every `?demo=` coverage scenario). */
+/** Three HTML entries: the studio, the perf bench, and the minimal host. */
 export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)

@@ -1,5 +1,3 @@
-import "./styles/scene-editor.css";
-
 export { defineSceneEditor } from "./element/register";
 export {
   SceneEditorElement,

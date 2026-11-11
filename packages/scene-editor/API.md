@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.7.0`. Types are the contract; runtime values match the names below. Four entry points: `.` (core), `./element`, `./three`, `./style.css`.
+Version: `0.7.0`. Types are the contract; runtime values match the names below. Three entry points: `.` (core), `./element`, `./three`. The package ships no stylesheet; layout is the host's job.
 
 Docs: [English README](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.md)
 
@@ -358,7 +358,7 @@ No THREE or GPU internals are exposed to plugins — only the contract + editor 
 
 ## Element entry — `@scenio/scene-editor/element`
 
-Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-exported as `@scenio/scene-editor/style.css`).
+Web Component wrapper. No stylesheet side effect — the host styles the element (see "Styling is the host's job").
 
 | Export | Description |
 |---|---|
@@ -389,7 +389,7 @@ The shortest path from a glTF URL to a rendered model:
 - The element synthesizes a one-mesh `SceneDocument` (`assetId: "__src__"`, name taken from the filename), loads it through `createResolverAssetLoader`, then calls `autoFrame()`.
 - `progress` / `load` / `error` are the lifecycle surface; `load.url` carries the resolved source.
 - Previews default to `tone-mapping="neutral"` (what model-viewer's `auto` resolves to on glTF); pass `tone-mapping="aces"` for the filmic look or `none` to keep three's raw output.
-- `loadDocument()` overrides the preview. Changing `src` afterwards switches back to preview and re-frames.
+- `loadDocument()` overrides the preview. `src` is read **once, at connect**: changing it afterwards is ignored (with one `console.warn`) — the dynamic re-load path was removed because a second GLTF parse could hang without dispatching `load` or `error`. Replace the element to show another model.
 - No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` is wrapped, not replaced — the element's own ids (`__src__`, and the one `loadFiles()` mints) resolve internally, every other id goes to the host table.
 - `createSrcDocument(url)`, `SRC_ASSET_ID`, `SRC_SCENE_ID` are exported from `./element` for the same document shape in a headless setup.
 - The canvas is **transparent by default** (`WebGLRenderer({ alpha: true })`), so `view.environment.background: null` really shows the page behind the element. Pass `alpha: false` through a custom `runtimeFactory` if you need an opaque canvas.
@@ -398,7 +398,7 @@ The shortest path from a glTF URL to a rendered model:
 
 - A preview is a **viewer**, so its synthesized view uses viewer defaults rather than editor defaults: no floor grid, `field-of-view="auto"` (30° landscape / 45° portrait), and the environment map as the only light source (analytic ambient/key at `0`). Framing matches model-viewer's default orbit (`0deg 75deg`): front view, 15° above the horizon, at a distance calibrated to the reference viewer's rendered size.
 - **Viewer vs editor:** a preview is a viewer (`mode="viewer"`), so it has no authoring chrome — no transform gizmo, no click-to-select, no editor keystrokes. A `loadDocument()` flips the same element to `mode="editor"`; `mode` forces either one and the effective value is mirrored to `data-mode` for CSS. Clearing the selection and tearing the gizmo down happen on the switch, so a viewer never shows leftover axes.
-- `load` is dispatched **after** `frameViewer()`: a host reading `getDimensions()` or the camera inside the callback already sees the framed state. Overlapping `src` switches are counted, not flagged — two rapid swaps still release exactly one `load`, carrying the final `url`.
+- `load` is dispatched **after** `frameViewer()`: a host reading `getDimensions()` or the camera inside the callback already sees the framed state. A counter (not a boolean) keeps nested load notifications from releasing the event before the last framing pass.
 - A preview whose asset **failed** does not dispatch `load` at all: one `src` is one asset, so the store's "skip the broken object, keep the rest" rule leaves an empty scene, and `loaded` stays `false`. The `error` event (and the visible message) is the whole story. Host documents keep partial-success semantics — one bad asset among many still completes a load.
 - Failures are visual, not just events: a `slot="error"` child is shown on `error` (or an init failure), and without one the element paints a built-in message over the canvas. The next successful load clears it.
 - Clip planes follow the content, not a constant: `near/far` are re-derived from the camera-to-target distance and the content radius every frame, so millimetre CAD and kilometre terrain both stay visible.
@@ -435,7 +435,7 @@ The base URL holds three's own payload layout — copying `node_modules/three/ex
 |---|---|---|
 | `runtimeFactory` | **static** | `(canvas, options?) => RuntimeContract`. Defaults to `ThreeRuntime` + lazy GLTF. Override before connect to inject assets / WebGPU / test fakes |
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
-| `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. An explicit `loadDocument()` takes precedence until `src` changes again |
+| `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. **Declarative:** read once at connect; later changes are ignored. An explicit `loadDocument()` takes precedence |
 | `mode` | attribute / property | `viewer` \| `editor`. Absent = derived: `src` preview → viewer, host document → editor. A viewer keeps orbit/zoom and drops authoring chrome (gizmo, click-to-select, `G`/`R`/`S`, undo keys). Effective value mirrored to `data-mode` |
 | `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `neutral` (model-viewer's `auto` on glTF); documents stay on the engine default unless set. Shader relink is automatic: three's program cache key includes the tone mapping |
 | `exposure` | attribute | Exposure multiplier applied on top of the tone mapping |
@@ -763,9 +763,14 @@ Meshes above `bvhThreshold` triangles are raycast through a `MeshBVH` (`three-me
 
 ---
 
-## Style entry — `@scenio/scene-editor/style.css`
+## Styling is the host's job
 
-Minimal chrome for the custom element (layout of canvas host). Import once in the page that uses `<scene-editor>`; already imported by the element entry.
+The package ships no stylesheet and exports no `./style.css`. `<scene-editor>` is a light-DOM custom
+element with no shadow root, so the host gives it a block box and a size — e.g.
+`scene-editor { display: block; height: 480px }`, or an inline `style` on the element. The element
+sets its own `position: relative` and lays out its canvas, poster and slots with inline styles;
+everything else (panels, HUD, toolbar, hotspot treatment) belongs to the host. See
+`apps/playground/src/ui/` and `apps/playground/src/styles/base.css` for a reference implementation.
 
 ---
 

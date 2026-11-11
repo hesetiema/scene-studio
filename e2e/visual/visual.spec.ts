@@ -33,6 +33,10 @@ const SHOT_OPTIONS = {
   // still failing when a gizmo, object or material disappears.
   maxDiffPixelRatio: 0.01,
   animations: "disabled",
+  // SwiftShader cold start plus the element's ResizeObserver can keep the canvas
+  // "unstable" for longer than Playwright's 5 s default when workers run in
+  // parallel; the first shot of a full run used to time out here.
+  timeout: 15_000,
 } as const;
 
 async function waitForBoot(page: Page): Promise<void> {

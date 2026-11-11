@@ -13,7 +13,6 @@ export default defineConfig({
     rollupOptions: {
       external: ["three", /^three\//, "zod"],
     },
-    cssCodeSplit: false,
   },
   test: {
     environment: "node",

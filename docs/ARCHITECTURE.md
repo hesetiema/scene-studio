@@ -44,7 +44,7 @@
 └──────────────────────────────────────────────────────────────┘
 ```
 
-四入口：`.`（core）、`./element`、`./three`、`./style.css`。约束是硬的：
+三入口：`.`（core）、`./element`、`./three`（SDK 不附带样式，元素布局由宿主负责）。约束是硬的：
 **`three` 的 import 只出现在 `src/three/` 下**，core 与 element 不感知渲染器。
 
 | 层 | 目录 | 规模 |
@@ -81,7 +81,7 @@
 | 18 | **视口覆盖层（着色 / 分解）是包的 rig，且必须跨过合批这道缝** | 着色模式和分解视图是「每个宿主都会要、且写错不报错」的第三批样板：只改代理 mesh 的材质对 `InstancedMesh` 批次无效（xray 只对没合批的对象生效），只写 `obj.position` 不走 `markDirty` 则实例矩阵不刷新。收进包：`display-mode` / `explode` 属性 + `setDisplayMode()` / `setExplode()`（契约可选成员）+ `createDisplayRig` / `createExplodeRig`；着色共享一份覆盖材质（一次写入覆盖全批），分解经 `applyTransform` 落地；两者都是纯预览态，从不写文档 | 元素装载后 re-assert 属性时 `setExplode(0)` 曾触发基线全量重建（O(objects×bounds)），把 perf 页首帧从 2.4 s 推到 4.4 s——0→0 现在是无条件短路；色调映射的重编译交给了 three 自己的程序缓存键（r186 起包含 `toneMapping`），宿主侧的 `needsUpdate` 遍历是纯浪费 |
 | 19 | **光照预设是数据，不是行为** | `LIGHTING_PRESETS` 按文档 `view.lights` 的形状导出四套参考布光；应用路径仍是宿主的 `setViewState`（预设因此和其他灯光编辑一样持久化）。有自己审美的宿主定义同形状的表，包不提供注册机制 | 参考值而非真理：预设表不进撤销栈、不进 schema，纯粹省掉「每个宿主抄一遍 4 行光参数」 |
 | 20 | **首页「先查看、再编辑」是宿主的决定，不是 SDK 的第二套模式** | 宿主文档本来推导 `mode="editor"`，playground 在元素升级前把 `mode` 钉成 `viewer`，让首个 runtime 就以 `interactive: false` 建出来；顶栏开关只写 `el.mode` + `body[data-studio-mode]`，`mode.css` 负责收起控制面板 / 状态栏 / 保存。e2e 与视觉夹具用 `?mode=editor` 显式保留编辑态 | 隐藏面板会改变视口宽高比，SDK 的 `resize()` 只更新 `camera.aspect` 不重新取景；宽模型在切入编辑时可能略被裁切，按 `F` 重新取景即可。切换不写文档、不进撤销栈 |
-| 21 | **回归面收敛到单一 HTML 入口，但能力一条不删** | 7 个 `/demos/*.html` 页面降级为 `src/scenarios/markup/*.html` 的 `?raw` 片段；`src/scenarios/router.ts` 按 `?demo=<name>` 注入片段（head 里的 `<style>` 一起带过去、剥离 `<script>`、把旧 `/demos/` 链接重写成场景路由），再动态 import 原场景模块——`window.__*` 钩子与 `dataset.demo` / `dataset.coverage` 就绪标志零改动。`minimal.html` 裸 URL 仍同步跑最小接入示例，不加载任何场景代码 | 25 个 e2e 用例只改了 URL；CI 门禁只跑 `critical-flows.spec.ts`，所以「场景路由可达」必须靠 coverage suite 自己钉住。构建入口 10 → 3，viewer 的 33 kB harness 变成独立按需 chunk；代价是 minimal 入口携带约 47 kB 的片段字符串（gzip ~12 kB） |
+| 21 | **`?demo=` 场景体系整体移除，回归回到单测 + 主页面 e2e** | hub 索引与六个能力场景、`src/scenarios/`（router + 场景模块 + markup 片段）、`demo.css` 以及 25 个 e2e 用例全部删除；`minimal.html` 只保留同步执行的最小接入示例，Vite 仍为 3 个 HTML 入口，裸页不再携带场景片段字符串 | 宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot）改由 SDK 单测覆盖，浏览器侧只留首页 / minimal / perf 的 e2e；代价是声明式查看器属性失去真实浏览器里的端到端断言，只剩单测与契约测试 |
 
 
 ---
@@ -89,8 +89,8 @@
 ## 4. 亮点
 
 1. **双形态单内核**：`<scene-editor src>` 与完整编辑器共用同一文档/历史/选择链路，没有 fork；**形态差异落到 `mode`**——同一份文档加 `mode="viewer"` 就丢掉 gizmo、点选和编辑快捷键，`ThreeRuntime` 连 TransformControls 都不加载（`interactive: false`），因此查看器页面不存在"被误选中的坐标轴"。
-2. **model-viewer 语义级对标**：`camera-orbit`/`field-of-view`/`auto-rotate`/`reveal`/`poster`/hotspot/`variant-name`/`camera-name`/`shadow-*` 等同名同义，带 `minimal.html?demo=compare` 并排对照场景；取景复刻 `updateFraming()`，接触阴影复刻 `Shadow` 算法（地面正交相机朝上 + 高度写 alpha）。
-3. **可测性作为一等功能**：748 个单测（81 个文件）覆盖到 rig 级别；`FakeRuntime` 让编辑器逻辑不需要浏览器。
+2. **model-viewer 语义级对标**：`camera-orbit`/`field-of-view`/`auto-rotate`/`reveal`/`poster`/hotspot/`variant-name`/`camera-name`/`shadow-*` 等同名同义；取景复刻 `updateFraming()`，接触阴影复刻 `Shadow` 算法（地面正交相机朝上 + 高度写 alpha）。并排对照结论见 [TODOS.md](../TODOS.md) 第三节（对照页已移除）。
+3. **可测性作为一等功能**：379 个单测（37 个文件）覆盖用户可见契约——元素属性与事件、文档模型与迁移、资产解析、headless facade；内部 rig / controller 的实现细节不再单独建用例。`FakeRuntime` 让编辑器逻辑不需要浏览器。
 4. **质量门禁分层**：单测（three 版本矩阵）→ critical e2e → 视觉回归（SwiftShader、仅 canvas、1% 容差）→ 性能门禁（含 unload-zero 硬断言）→ `npm pack` 消费者冒烟 → 发布元数据一致性。
 5. **卸载零泄漏是断言，不是愿望**：`perf.spec.ts` 要求 `flushDisposers()` 后对象表清空、几何计数回到基线。
 6. **失败是可见状态**：`error` 事件之外还有 `slot="error"`（无该 slot 时自绘消息），空白画布不再是一种"正常结果"。
@@ -114,7 +114,6 @@
 | `@scenio/scene-editor/element`（全链路：core + element + three 适配，three 外部化） | 169.2 kB | **48.4 kB** |
 | `@scenio/scene-editor/three`（适配层 chunk 本体，含合批 / 资源共享 / 拾取 / 导出 / 着色与分解 rig） | 84.1 kB | 24.4 kB |
 | `three-mesh-bvh` 动态 chunk（仅点击重网格时下载） | 124.6 kB | 32.7 kB |
-| `style.css` | 0.05 kB | 0.07 kB |
 
 口径：core = `index` + `create-scene-editor` + `typed-event-bus`；element 全链路 = 上面三块 + `element-entry` + `three-runtime`（GLTF/OBJ 导出器与 BVH 都不在内，它们是动态 import）。
 
@@ -165,8 +164,8 @@
 
 | 层 | 数量 | 耗时 |
 |---|---|---|
-| 单元测试（vitest，3 种环境） | **748 通过 / 81 文件** | 34.1 s |
-| e2e（Playwright：critical / SDK / studio / visual / perf / instancing） | 51 用例（chromium 项目 50，含首页模式切换回归；其中 25 个 SDK 场景用例统一导航 `minimal.html?demo=`；visual 5 / perf 2 为独立项目） | CI 三个 job |
+| 单元测试（vitest） | **379 通过 / 37 文件**（用户可见契约；内部 rig / controller 用例已精简） | 22.2 s |
+| e2e（Playwright：critical / viewer / decoders / visual / perf） | 11 用例 / 5 个 spec（`playwright test --list` 实测；原 25 个 `?demo=` 场景用例与 playground 面板细节用例已移除，visual / perf 为独立项目） | CI 三个 job |
 | 视觉基线 | 4 张 canvas-only 截图 | SwiftShader |
 | 性能门禁 | 本地 p95 ≤ 40 ms、首帧 ≤ 3 s（设计目标 2 s，见 5.2 末段）；CI（SwiftShader）≤ 500 ms / ≤ 15 s，unload-zero 精确断言 | — |
 
@@ -174,7 +173,7 @@
 
 ```bash
 pnpm install && pnpm build
-pnpm test                 # 748 单测
+pnpm test                 # 379 单测
 pnpm test:perf            # 1k 对象：首帧、p95、draw calls、unload-zero
 pnpm test:e2e:visual      # 视觉回归（需 Playwright 浏览器）
 # 手工：pnpm --filter @scenio/playground dev → http://127.0.0.1:3000/perf.html?objects=5000

@@ -621,13 +621,13 @@ export class SceneEditorElement extends HTMLElement {
    * Optional decoders (D16). Assign the instance, not a path — three wants a
    * constructed `DRACOLoader` / `KTX2Loader` (the latter must already have
    * `detectSupport(renderer)` called). Read before every asset load, so these
-   * may be set before `connect`, before `src`, or between loads.
+   * may be set before `connect` or between `loadDocument()` / `loadFiles()` calls.
    *
    * ```js
+   * // <scene-editor src="/compressed.glb"></scene-editor> — declared in markup
    * const ktx2 = new KTX2Loader().setTranscoderPath("/basis/");
    * el.dracoLoader = new DRACOLoader().setDecoderPath("/draco/");
    * el.ktx2Loader = ktx2;
-   * el.src = "/compressed.glb";
    * ```
    */
   get dracoLoader(): unknown {
@@ -650,8 +650,15 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   /**
-   * Preview source (`glb` / `gltf`). When present and the host has not called
-   * `loadDocument()`, the element synthesizes a one-mesh document for it.
+   * Preview source (`glb` / `gltf`), read once when the element initializes.
+   *
+   * **Declarative only.** Put it in the markup, or set it before the element
+   * connects. A change after initialization is ignored with a one-time warning:
+   * re-loading through a second attribute value used a racy GLTF path that
+   * could hang without dispatching `load` or `error`. To show another model,
+   * replace the element, or call `loadDocument()` for a host-owned document.
+   * When present and the host has not called `loadDocument()`, the element
+   * synthesizes a one-mesh document for it.
    */
   get src(): string | null {
     const value = this.getAttribute("src");
@@ -763,6 +770,8 @@ export class SceneEditorElement extends HTMLElement {
   #srcLoadFailed = false;
   /** Who owns the document: declarative `src` or an explicit `loadDocument()`. */
   #documentOwner: "host" | "src" | null = null;
+  /** One-time warning when a host changes `src` after initialization. */
+  #warnedSrcChange = false;
   /** Last mode pushed to the runtime; `null` until a runtime exists. */
   #appliedMode: SceneEditorMode | null = null;
   #ready!: Promise<void>;
@@ -808,9 +817,8 @@ export class SceneEditorElement extends HTMLElement {
    * `getDimensions()` / the camera in that callback, and both are wrong before
    * `frameViewer()` runs.
    *
-   * Counted, not boolean: two rapid `src` switches overlap (the controller
-   * serializes the loads but both continuations run), and only the last one may
-   * release the event.
+   * A counter keeps nested/overlapping load notifications from releasing the
+   * event before the last framing pass has finished.
    */
   #pendingSrcLoads = 0;
   #deferredLoadDetail: { sceneId: string; url: string | null } | null = null;
@@ -953,14 +961,20 @@ export class SceneEditorElement extends HTMLElement {
       if (value !== "lazy" && this.#deferredSrcLoad) this.#maybeLoadSrc();
       return;
     }
-    if (name === "src" && this.#editor) {
-      // Changing `src` is an explicit switch back to preview mode: the host
-      // asked for this model, so it wins over a previously loaded document.
-      this.#applyDisplaySettings();
-      this.#applyMode();
-      // The fallback label is derived from the file name.
-      this.#applyAlt();
-      this.#maybeLoadSrc(true);
+    if (name === "src") {
+      // `src` is a connect-time declaration, not a reactive input. Re-loading
+      // on a later change went through a second GLTF parse that could hang
+      // forever with no `load` / `error`, so the dynamic path was removed.
+      // It stays in `observedAttributes` only so misuse is diagnosable.
+      if (this.#editor && value !== _old && !this.#warnedSrcChange) {
+        this.#warnedSrcChange = true;
+        console.warn(
+          "[scene-editor] `src` is declarative: set it before connecting the element. " +
+            "Changing it after initialization has no effect — replace the element " +
+            "to show another model, or call loadDocument() for a host-owned document.",
+        );
+      }
+      return;
     }
   }
 
@@ -1773,16 +1787,6 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   /**
-   * Identity resolver for `<scene-editor src>`; only the reserved id resolves.
-   *
-   * Always installed, never conditionally on `src` being set at connect time:
-   * `#init()` runs once, so building it lazily from the attribute that exists at
-   * that moment meant `el.src = "..."` after `ready` produced a runtime without
-   * an `AssetCache` — a placeholder cube plus a normal-looking `load` event.
-   * The URL is read per resolve instead, which is also what makes `src` changes
-   * reuse the same runtime.
-   */
-  /**
    * The host's resolver, with the element's own reserved ids in front.
    *
    * `src` and `loadFiles()` mint asset ids the host cannot know (a Blob URL has
@@ -1821,8 +1825,8 @@ export class SceneEditorElement extends HTMLElement {
 
   /**
    * Push the effective mode to the runtime and mirror it for CSS. Called on
-   * connect, on `mode` changes, and whenever the document owner switches
-   * (`src` ↔ host document) — the mode is derived, so it has to be re-derived.
+   * connect, on `mode` changes, and when a host document takes over from the
+   * declarative preview — the mode is derived, so it has to be re-derived.
    */
   #applyMode(): void {
     const mode = this.mode;
@@ -1900,7 +1904,7 @@ export class SceneEditorElement extends HTMLElement {
     this.#contentLoaded = false;
     // New content, new clip list: the old name would point at nothing.
     this.#activeClipName = null;
-    // A `src` change can flip the derived mode back to viewer (see `mode`).
+    // A preview load can flip the derived mode to viewer (see `mode`).
     this.#applyMode();
     // A new source is a fresh attempt: drop the previous failure surface.
     this.#clearError();
@@ -2581,15 +2585,14 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   /**
-   * Load the declarative `src` now — unless `loading="lazy"` and the element is
+   * Load the declarative `src` once — unless `loading="lazy"` and the element is
    * still off-screen. Without an IntersectionObserver there is no "visible"
    * moment to wait for, so the load stays eager.
    */
-  #maybeLoadSrc(force = false): void {
+  #maybeLoadSrc(): void {
     if (!this.src) return;
-    // A host-owned document outranks the declarative attribute — except when the
-    // host itself changed `src`, which is an explicit switch back to preview.
-    if (!force && this.#documentOwner === "host") return;
+    // A host-owned document outranks the declarative attribute.
+    if (this.#documentOwner === "host") return;
     const canDefer =
       this.getAttribute("loading") === "lazy" &&
       this.#visibilityObserver !== null &&
@@ -2673,7 +2676,8 @@ export class SceneEditorElement extends HTMLElement {
       // orbit addon overwrites `touch-action` when it mounts.
       this.#applyTouchAction();
       // Now that a runtime exists, the mode can be pushed to it (the factory
-      // already received `interactive`, this also covers `src` arriving later).
+      // already received `interactive`; this applies the derived viewer/editor
+      // mode from the connect-time `src` declaration).
       this.#applyMode();
 
       // Click-to-select (P2-T7): pick on canvas click, empty → clear.
@@ -2808,8 +2812,7 @@ export class SceneEditorElement extends HTMLElement {
         if (this.#pendingSrcLoads > 0) {
           // Hold the event back: `frameViewer()` has not run yet, so a host
           // reading `getDimensions()` or the camera here would see pre-fit state.
-          // The counter (not a flag) survives two overlapping `src` switches:
-          // only the load that drains it to zero releases the event.
+          // Only the load that drains the counter to zero releases the event.
           this.#deferredLoadDetail = detail;
           this.#syncModelVisibility();
           this.#updateHotspots();

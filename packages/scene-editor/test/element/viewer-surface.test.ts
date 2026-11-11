@@ -347,20 +347,24 @@ describe("alt (accessible label)", () => {
     expect(canvas.getAttribute("aria-label")).toBe("A fox trotting on the spot");
   });
 
-  it("falls back to the file name, then to nothing", async () => {
+  it("falls back to the file name declared before connect", async () => {
     const { el } = makeElement();
-    await connected(el);
-    const canvas = el.querySelector("canvas")!;
-    expect(canvas.getAttribute("aria-label")).toBeNull();
-
     el.setAttribute("alt", "  ");
     el.setAttribute("src", "assets/models/fox.glb");
+    await connected(el);
+    const canvas = el.querySelector("canvas")!;
     expect(canvas.getAttribute("aria-label")).toBe("3D model: fox.glb");
 
     el.setAttribute("alt", "Named");
     expect(canvas.getAttribute("aria-label")).toBe("Named");
     el.removeAttribute("alt");
     expect(canvas.getAttribute("aria-label")).toBe("3D model: fox.glb");
+  });
+
+  it("leaves the canvas unlabelled without src or alt", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    expect(el.querySelector("canvas")!.getAttribute("aria-label")).toBeNull();
   });
 });
 

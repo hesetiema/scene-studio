@@ -4,10 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>scene-editor · minimal demo</title>
-    <!-- Shared chrome for the `?demo=` coverage scenarios; the router removes
-         the inline style below in scenario mode so the two never collide. -->
-    <link rel="stylesheet" href="/src/styles/demo.css" />
-    <style id="minimal-style">
+    <style>
       :root {
         color-scheme: dark;
       }
@@ -50,12 +47,6 @@
         opacity: 0.45;
         cursor: default;
       }
-      #bar a {
-        margin-left: auto;
-        align-self: center;
-        color: #9cc0ff;
-        font: inherit;
-      }
       #viewport {
         flex: 1;
         min-height: 0;
@@ -84,7 +75,6 @@
       <button id="undo" disabled>撤销</button>
       <button id="redo" disabled>重做</button>
       <button id="save" disabled>保存</button>
-      <a href="/minimal.html?demo=hub">SDK 能力场景 →</a>
     </div>
 
     <scene-editor id="viewport"></scene-editor>

@@ -4,23 +4,38 @@
 
 ## 一、已完成（`0.7.0`）
 
+> 以下为各阶段的历史实测记录，其中提到的 `instancing-perf`、`sdk-coverage`、`demos-adversarial`
+> 等 spec 已在测试裁剪时删除；当前规模：单测 380 用例 / 37 文件，e2e 11 用例 / 5 spec
+> （`critical-flows` / `viewer-mode` / `decoders` / `visual` / `perf`）。
+
 - **Playground 首页「先查看、再编辑」**：首页虽然走 `loadDocument()`（SDK 默认推导 editor），但 `main.ts` 在元素升级前把 `mode` 钉成 `viewer`，首个 runtime 直接以 `interactive: false` 创建；顶栏新增 查看 / 编辑 分段开关（`src/ui/mode-switch.ts` + `src/styles/mode.css`），写入 `el.mode` 与 `body[data-studio-mode]`。查看态隐藏控制面板 / 状态栏 / 保存 / 恢复面板按钮，画布铺满；宿主侧 `G`/`R`/`S`、Ctrl+Z/Y 与 `save-request` 同步门禁，切回 viewer 由 SDK 清空选择，全程不写文档。`?mode=editor` 供 e2e / 视觉夹具显式进编辑态；回到首页复位为 viewer。`e2e/viewer-mode.spec.ts` 新增「默认 viewer → 切 editor → 切回清选择且不弄脏」用例，其余需要编辑态的夹具 URL 统一补 `mode=editor`。
-- **demos 精简：25 个用例已迁到 `minimal.html?demo=`**：首页覆盖工作室 UI 面，宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot 等约 60 个 SDK 标识符）由 7 个独立 `/demos/*.html` 页面承载。现把它们降级为 `src/scenarios/markup/*.html` 的 `?raw` 片段，`src/scenarios/router.ts` 按 `?demo=<name>` 注入 DOM 后动态 import 原场景模块；`window.__demo` / `__docDemo` / `__coverage` / `__assets` / `__viewerDemo` 与 `body.dataset.demo` / `dataset.coverage` 就绪标志原样保留，`sdk-coverage.spec.ts`(10) + `demos-adversarial.spec.ts`(15) 共 25 个用例只改 URL、零断言丢失。`apps/playground/demos/` 与 7 个构建入口已删除，HTML 入口从 10 个降到 3 个；每个场景 SDK 代码独立按需 chunk，默认 `minimal.html` 走同步路径不受影响。CI 只跑 `critical-flows.spec.ts`，这 25 个用例必须保持可达。
+- **`?demo=` 场景体系已移除**：hub 索引与 host-api / document / headless / assets / viewer / compare 六个场景，连同 `src/scenarios/`（router + 场景模块 + markup 片段）、`src/styles/demo.css`、`e2e/sdk-coverage.spec.ts`(10) + `e2e/demos-adversarial.spec.ts`(15) 共 25 个用例、`e2e/support/demo-hooks.ts` 与 `e2e/manual-viewer-check.mjs` 全部删除。宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot）改由 `packages/scene-editor/test/` 的单测覆盖；`minimal.html` 回到单一职责——同步跑最小接入示例，Vite 仍为 3 个 HTML 入口，裸页不再加载任何场景代码。
 - **查看器/编辑器分离**：新增 `mode="viewer|editor"`（缺省按 `src` / 宿主文档推导，生效值镜像到 `data-mode`）。
   viewer 不加载 TransformControls（`ThreeRuntime` 新增 `interactive` 选项 / `setInteractive()`），点选与
   `G`/`R`/`S`、撤销快捷键全部只在 editor 生效，切到 viewer 时清空选择。实测同一页：编辑器场景 8 个 scene 子节点
   （含 gizmo），viewer 5 个、点击不产生选择。
-- **动态 `src` 静默退化**（原 P0）：`#createSrcResolver()` 改为常驻，URL 在每次 resolve 时读取；`object-store`
-  遇到「有 `assetId` 但无 `AssetCache`」直接抛 `asset-not-found`，不再退化成 1×1×1 占位盒。实测 `ready` 后设
-  `src` 拿到 25×79×155、3 个 clip、无 error。
+- **动态 `src` 能力已移除**（原 P0「静默退化」）：`#createSrcResolver()` 曾改为常驻、URL 每次 resolve
+  时读取，`object-store` 遇到「有 `assetId` 但无 `AssetCache`」直接抛 `asset-not-found`，不再退化成
+  1×1×1 占位盒。**2026-11-12 复测**（Playwright 1.64 / Chromium 1248）：`ready` 后再设 `src` 仍会永久
+  挂起——Fox.glb 请求 200、`progress` 只到 `totalProgress:0`，既不派发 `load` 也不派发 `error`，
+  `loaded=false`、`getDimensions()` 全 0；而**连接前写好 `src` 的声明式写法完全正常**（25×79×155、
+  3 个 clip、`load` 正常）。根因收敛到第二条 GLTF 解析路径的初始化竞态，且该能力使用极少，按产品决策
+  **整体砍掉**：`src` 现在只在连接时读取一次，运行后修改不重载、不切换 mode，只发一次 `console.warn`；
+  `#maybeLoadSrc(force)` 的 force 分支与相关单测一并删除。声明式 viewer 是用户文档两个例子之一，
+  由 `e2e/viewer-mode.spec.ts` + `test/element/src-entry.test.ts` 守住。
+- **SDK 不再附带样式**：`src/styles/scene-editor.css` 只有 6 行 `:host` 占位规则，而元素用 light DOM
+  （无 `attachShadow`），该规则从未匹配过任何元素；画布、poster、slot 全靠内联样式自给自足。已删除
+  文件、`element-entry.ts` 的副作用 import、`package.json` 的 `./style.css` 导出与 `sideEffects`、
+  `vite.config.ts` 的 `cssCodeSplit`、`pack-smoke.mjs` 的产物断言，并在四份用户文档与 API.md 里明确
+  「宿主自己给 `scene-editor` 块级盒子与尺寸」——自定义元素默认 `display: inline`，原本那份 CSS
+  并不能修正这一点。
 - **裁剪面固定 0.1/1000**：每帧按相机距离与内容半径重算（`near = max(d·5e-4, r·1e-4)`、
   `far = max(d·50, r·50)`），滚轮缩放（距离变化）也跟随。实测 1× 与 1e6× 模型：near 7.4e-4 → 736、
   far 73.6 → 7.36e7。
 - **失败态无视觉出口**：新增 `slot="error"`；没有该 slot 时元素自绘提示（`[data-scene-editor-error]`，含
   `role="status"`），`render-init-failed` / 资产失败都走这里，下一次成功加载清除。
 - **`load` 早于取景**：`src` 路径把 `load` 压到 `frameViewer()` 与显示态重放之后派发；实测在 `load` 回调里
-  `getDimensions()` 已是取景后数值。压制用的是计数而非布尔，连续两次切换 `src` 只会在最后一次取景后释放一个
-  `load`（携带最终 `url`）。
+  `getDimensions()` 已是取景后数值。压制用的是计数而非布尔，嵌套的加载通知会在最后一次取景后才释放 `load`。
 - **进度粒度**：无 `Content-Length` 时用 `loaded/(loaded+1MB)` 渐近曲线，进度条不再全程贴 0。有长度时仍是字节比。
 - **`prefers-reduced-motion`**：自动旋转降级为静态，`smoothViewTo()` 直接落位。
 - **解码器开箱不可用**（原 P2）：新增 `decoder-path` / `decoder-cdn`，一个 base URL 按 three 自己的
@@ -130,7 +145,7 @@
 
 ## 三、与 model-viewer 的对照
 
-对照场景 `minimal.html?demo=compare`（模板片段 `apps/playground/src/scenarios/markup/compare.html`；同一 GLB、同一动画时间、同一视口；指标：平均/p95 亮度、包围盒像素尺寸、相机距离；左侧仍需外网 CDN）。
+并排对照场景 `minimal.html?demo=compare` 已随 `?demo=` 体系移除；以下对齐结论保留为历史实测记录（同一 GLB、同一动画时间、同一视口；指标：平均/p95 亮度、包围盒像素尺寸、相机距离；当时左侧需外网 CDN）。
 
 已对齐：色调映射默认值（预览 `neutral`）、`neutral` 环境预设、接触阴影算法、取景（`updateFraming()`）、`shadow-intensity` / `shadow-softness` 语义，以及「viewer 无编辑交互」这一条本身（model-viewer 也没有 gizmo 与点选）。
 
@@ -153,7 +168,7 @@
 
 - **CRDT / 实时多人协作**：首发面向单用户。并发编辑走既有路径（保存校验 `revision` → 结构化冲突 → 宿主决定 UX）。接入点在序列化与命令历史层，`SceneDocument` 已是纯数据模型，不预留代码。
 - **插件面板槽位**：`install(context)` 已交付（命令、事件、选择器、disposer），槽位是没有真实需求时的猜测性 API。
-- **按产品拆包**：出现真实复用需求前，保持单包四入口。
+- **按产品拆包**：出现真实复用需求前，保持单包三入口（`.` / `./element` / `./three`）。
 
 ## 六、发布清单
 

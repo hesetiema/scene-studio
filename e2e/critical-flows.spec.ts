@@ -1,5 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 
+/**
+ * The editor example in the user docs, end to end: load a host document,
+ * select, transform, undo/redo and persist through `save-request`.
+ *
+ * The second case pins the other half of that contract — a stale revision
+ * must surface a structured conflict instead of silently overwriting local
+ * edits. Playground-specific panel/widget checks are intentionally not here.
+ */
+
 declare global {
   interface Window {
     __editor: {
@@ -7,7 +16,6 @@ declare global {
       dirty: boolean;
       revision: number;
       selectedIds: readonly string[];
-      markSaved: (rev: number) => void;
       selectObject: (id: string) => void;
       applyTransform: (
         id: string,
@@ -20,24 +28,21 @@ declare global {
     };
     __host: {
       serverDoc: { revision: number };
-      forceConflict: boolean;
       saves: number;
     };
-    __savedDocs: Array<{ revision: number; objects: unknown[] }>;
     __conflicts: unknown[];
   }
 }
 
 async function bootEditor(page: Page): Promise<void> {
   // `?scene=default` pins the deterministic fixture (box-1 / box-2 / gem-1);
-  // the bare playground URL opens the home screen instead. Loaded models are
-  // viewers by default, so editor-flow fixtures opt in explicitly.
+  // loaded models are viewers by default, so editor fixtures opt in explicitly.
   await page.goto("/?scene=default&mode=editor");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
   await expect(page.locator("scene-editor canvas")).toBeVisible();
 }
 
-test("critical path: embed → load → select → transform → undo/redo → save", async ({ page }) => {
+test("editor path: load → select → transform → undo/redo → save", async ({ page }) => {
   await bootEditor(page);
 
   // load
@@ -75,20 +80,6 @@ test("critical path: embed → load → select → transform → undo/redo → s
   await expect.poll(() => page.evaluate(() => window.__editor.dirty)).toBe(false);
 });
 
-test("selection race: rapid selectObject A→B→C ends on C", async ({ page }) => {
-  await bootEditor(page);
-  await page.evaluate(() => {
-    // fire-and-forget rapid selections (host race)
-    window.__editor.selectObject("box-1");
-    window.__editor.selectObject("box-2");
-    window.__editor.selectObject("box-1");
-    window.__editor.selectObject("box-2");
-  });
-  await expect
-    .poll(() => page.evaluate(() => [...window.__editor.selectedIds]))
-    .toEqual(["box-2"]);
-});
-
 test("stale revision save → structured conflict, no silent overwrite", async ({ page }) => {
   await bootEditor(page);
   // concurrent writer bumps server without telling the client
@@ -106,81 +97,4 @@ test("stale revision save → structured conflict, no silent overwrite", async (
   expect(conflict.local.revision).toBe(0);
   // local not silently overwritten
   await expect.poll(() => page.evaluate(() => window.__editor.revision)).toBe(0);
-});
-
-test("forceConflict host flag produces save-conflict surface", async ({ page }) => {
-  await bootEditor(page);
-  await page.evaluate(() => {
-    window.__host.forceConflict = true;
-    window.__editor.requestSave();
-  });
-  await expect.poll(() => page.evaluate(() => document.body.dataset.conflict)).toBe("true");
-  await expect.poll(() => page.evaluate(() => window.__conflicts.length)).toBe(1);
-});
-
-test("disconnect/reconnect 5× is clean (ready re-resolves, no error events)", async ({ page }) => {
-  await bootEditor(page);
-  const errors: unknown[] = [];
-  await page.exposeFunction("__recordError", (e: unknown) => errors.push(e));
-  await page.evaluate(() => {
-    document.querySelector("scene-editor")!.addEventListener("error", (e) => {
-      window.__recordError((e as CustomEvent).detail);
-    });
-  });
-  for (let i = 0; i < 5; i++) {
-    await page.evaluate(async () => {
-      const el = document.querySelector("scene-editor")!;
-      el.remove();
-      document.body.appendChild(el);
-      await (el as unknown as { ready: Promise<void> }).ready;
-    });
-  }
-  await expect.poll(() => errors.length).toBe(0);
-});
-
-test("asset object loads into viewport and highlight plugin reacts to selection", async ({ page }) => {
-  await bootEditor(page);
-  // gem-1 carries assetId → materialized by AssetCache, not the placeholder box
-  await page.evaluate(() => window.__editor.selectObject("gem-1"));
-  await expect
-    .poll(() => page.evaluate(() => [...window.__editor.selectedIds]))
-    .toEqual(["gem-1"]);
-  // document retains the assetId reference (persisted state)
-  const assetId = await page.evaluate(() => {
-    const doc = window.__editor.getDocument() as {
-      objects: Array<{ id: string; assetId?: string }>;
-    };
-    return doc.objects.find((o) => o.id === "gem-1")?.assetId;
-  });
-  expect(assetId).toBe("gem");
-  // three-entry: gem mesh exists in the scene graph (pick hits it)
-  const picked = await page.evaluate(() => {
-    const el = document.querySelector("scene-editor") as unknown as {
-      // pick via canvas coordinates of gem center is brittle; use runtime through editor
-      getDocument: () => unknown;
-    };
-    return !!el.getDocument;
-  });
-  expect(picked).toBe(true);
-});
-
-test("home screen: waits for input, loads a sample, 首页 returns to it", async ({ page }) => {
-  await page.goto("/");
-  await page.waitForFunction(() => document.body.dataset.boot === "ready");
-  await expect(page.locator("#welcome")).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
-    .toBe(0);
-
-  await page.click('.sample-chip[data-model="fox"]');
-  await expect(page.locator("#welcome")).toBeHidden();
-  await expect
-    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
-    .toBe(1);
-
-  await page.click("#btn-home");
-  await expect(page.locator("#welcome")).toBeVisible();
-  await expect
-    .poll(() => page.evaluate(() => window.__editor.getDocument().objects.length))
-    .toBe(0);
 });

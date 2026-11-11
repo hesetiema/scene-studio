@@ -34,15 +34,11 @@
     "./element": {
       "types": "./dist/element-entry.d.ts",
       "import": "./dist/element-entry.js"
-    },
-    "./style.css": "./dist/scene-editor.css"
+    }
   },
   "files": [
     "dist",
     "README.zh-CN.md"
-  ],
-  "sideEffects": [
-    "**/*.css"
   ],
   "scripts": {
     "build": "vite build && tsc -p tsconfig.build.json",

@@ -60,6 +60,7 @@ beforeEach(() => {
 
 afterEach(() => {
   SceneEditorElement.runtimeFactory = ORIGINAL_FACTORY;
+  vi.restoreAllMocks();
 });
 
 describe("<scene-editor mode>", () => {
@@ -84,8 +85,9 @@ describe("<scene-editor mode>", () => {
     expect(fake.calls.setInteractive.at(-1)).toBe(true);
   });
 
-  it("flips to viewer when src takes the viewport back from a document", async () => {
+  it("does not flip to viewer when src changes after connect", async () => {
     const { el, fake } = makeElement();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     await connected(el);
     await el.loadDocument(sceneDocument({ sceneId: "s-1" }));
     fake.calls.setInteractive.length = 0;
@@ -93,8 +95,8 @@ describe("<scene-editor mode>", () => {
     el.setAttribute("src", "a.glb");
     await nextTick();
 
-    expect(el.mode).toBe("viewer");
-    expect(fake.calls.setInteractive).toContain(false);
+    expect(el.mode).toBe("editor");
+    expect(fake.calls.setInteractive).not.toContain(false);
   });
 
   it("honours an explicit mode over the derived one", async () => {
@@ -162,31 +164,28 @@ describe("viewer has no selection interaction", () => {
 });
 
 describe("src preview lifecycle", () => {
-  it("keeps an asset resolver after connect, so a later src still loads", async () => {
-    // Regression: the resolver used to be built from `src` at connect time, so
-    // `el.src = ...` after `ready` produced a runtime without an AssetCache and
-    // a silent 1x1x1 placeholder.
+  it("keeps the reserved src resolver installed for a declared src", async () => {
+    // The resolver is built once during #init; the URL it serves must be the
+    // one declared before connect (a late `src` is no longer a load trigger).
     const { el, resolver } = makeElement();
+    el.setAttribute("src", "https://cdn.test/robot.glb");
     await connected(el);
 
     const assetResolver = resolver();
     expect(assetResolver).toBeDefined();
-    el.setAttribute("src", "https://cdn.test/late.glb");
-    await nextTick();
-
     await expect(assetResolver!.resolve(SRC_ASSET_ID)).resolves.toBe(
-      "https://cdn.test/late.glb",
+      "https://cdn.test/robot.glb",
     );
   });
 
-  it("loads the model when src arrives after ready", async () => {
+  it("does not load a model when src arrives after ready", async () => {
     const { el, fake } = makeElement();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
     await connected(el);
     el.setAttribute("src", "https://cdn.test/late.glb");
     await nextTick();
 
-    expect(fake.calls.loadDocument).toHaveLength(1);
-    expect(fake.calls.loadDocument[0]?.objects[0]?.assetId).toBe(SRC_ASSET_ID);
+    expect(fake.calls.loadDocument).toHaveLength(0);
   });
 
   it("dispatches load only after the preview is framed", async () => {
@@ -203,10 +202,9 @@ describe("src preview lifecycle", () => {
     expect(framedAtLoad).toEqual([1]);
   });
 
-  it("releases one load when two src switches overlap", async () => {
-    // Overlapping switches both run their continuation; the counter (not a
-    // boolean flag) is what keeps the first one from announcing a half-framed
-    // scene and swallowing the second one's event.
+  it("dispatches exactly one load carrying the declared url", async () => {
+    // The counter (not a boolean) keeps the held `load` from being released
+    // before framing finished, and from firing twice for one declaration.
     const { el, fake } = makeElement();
     el.setAttribute("src", "a.glb");
     const urls: Array<string | null> = [];
@@ -215,12 +213,10 @@ describe("src preview lifecycle", () => {
     });
 
     await connected(el);
-    el.setAttribute("src", "b.glb");
-    el.setAttribute("src", "c.glb");
     await nextTick();
     await nextTick();
 
-    expect(urls).toEqual(["c.glb"]);
+    expect(urls).toEqual(["a.glb"]);
     expect(el.getAttribute("data-mode")).toBe("viewer");
     expect(fake.calls.frameViewer).toBeGreaterThanOrEqual(1);
   });
@@ -270,13 +266,17 @@ describe("failure surface", () => {
     // keep the rest" rule leaves an empty scene: `load` would tell the host to
     // frame nothing, and it would wipe the error overlay on the way out.
     const { el, fake } = makeElement();
-    await connected(el);
+    el.setAttribute("src", "broken.glb");
     const loads: number[] = [];
     el.addEventListener("load", () => loads.push(1));
-
-    el.setAttribute("src", "broken.glb");
-    // Same load: `#loadSrc` has set the owner but not yet awaited the fetch.
-    fake.events.emit("error", { code: "asset-load-failed", message: "404 Decoder" });
+    // Simulate a one-asset preview whose asset failed: the runtime reports the
+    // error *before* the load edge, which is what sets the preview failure flag.
+    fake.loadDocument = async (doc) => {
+      fake.calls.loadDocument.push(doc);
+      fake.events.emit("error", { code: "asset-load-failed", message: "404 Decoder" });
+      fake.events.emit("load", { sceneId: doc.sceneId });
+    };
+    await connected(el);
     await nextTick();
     await nextTick();
 

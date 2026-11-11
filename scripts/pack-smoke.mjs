@@ -2,7 +2,7 @@
 /**
  * Tarball consumption smoke (D9 消费测试 / D19 P3):
  * build → pack → install the tarball into a throwaway consumer → verify
- * exports (node ESM), types (tsc), CSS + element entry (vite build).
+ * exports (node ESM), types (tsc), and the element entry (vite build).
  * Run: node scripts/pack-smoke.mjs
  */
 import { execFileSync } from "node:child_process";
@@ -55,7 +55,7 @@ const SMOKE_DOC = `{
 step(`build ${pkg.name}@${pkg.version} (three floor ${threeFloor})`);
 run("pnpm", ["--filter", pkg.name, "build"], root);
 
-step("verify packed file list (exports/types/CSS artifacts)");
+step("verify packed file list (exports and type declarations)");
 const dryRun = JSON.parse(run("npm", ["pack", "--dry-run", "--json"], pkgDir));
 const packedFiles = new Set((dryRun[0]?.files ?? []).map((f) => f.path));
 const required = [
@@ -65,7 +65,6 @@ const required = [
   "dist/three-entry.d.ts",
   "dist/element-entry.js",
   "dist/element-entry.d.ts",
-  "dist/scene-editor.css",
   "package.json",
 ];
 const missing = required.filter((f) => !packedFiles.has(f));
@@ -164,7 +163,7 @@ writeFileSync(
   );
   run("npx", ["tsc", "--noEmit", "-p", "."], consumer);
 
-  step("consumer: vite build (element entry + CSS through a bundler)");
+  step("consumer: vite build (element entry through a bundler)");
   writeFileSync(
     join(consumer, "element-smoke.ts"),
     `import { defineSceneEditor } from "@scenio/scene-editor/element";\nconsole.log(typeof defineSceneEditor);\n`,
@@ -193,7 +192,7 @@ writeFileSync(
     throw new Error("element bundle missing or empty");
   }
 
-  step(`PASS — ${pkg.name}@${pkg.version} consumable (exports/types/CSS/SSR-import)`);
+  step(`PASS — ${pkg.name}@${pkg.version} consumable (exports/types/element/SSR-import)`);
   rmSync(tmp, { recursive: true, force: true });
 } catch (err) {
   console.error(`[pack-smoke] FAIL — kept workdir for debugging: ${tmp}`);

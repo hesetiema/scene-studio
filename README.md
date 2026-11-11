@@ -8,99 +8,119 @@ This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
 
 ## What this is
 
-One document model, one runtime contract, three ways to use it:
+One document model, one runtime contract, two shapes:
 
 | Shape | Entry | Use when |
 |---|---|---|
 | **Viewer** | `<scene-editor src="model.glb">` | You only need the model on screen, orbitable, model-viewer style |
 | **Editor** | `<scene-editor>` + `loadDocument(doc)` | The scene is editable: select, gizmo, add/remove, undo/redo, host save |
-| **Headless** | `createSceneEditor({ runtime })` | You bring your own UI and inputs — zero DOM |
 
 A preview is not a second code path: the element synthesizes a one-object document and drives
 the same load/select/history pipeline, so a viewer can be upgraded to an editor without a rewrite.
-
 The two shapes are **visually distinct by construction**: a `src` preview is `mode="viewer"` and
 owns no authoring chrome — no transform gizmo, no click-to-select, no editor keystrokes — while a
-host document is `mode="editor"`. `mode="viewer"` forces a read-only viewport for a saved scene;
-the effective value is mirrored to `data-mode` for CSS.
+host document is `mode="editor"`. The effective value is mirrored to `data-mode` for CSS. A headless
+facade (`createSceneEditor({ runtime })`) is also available for hosts bringing their own UI.
 
-```html
-<!-- Viewer: one line, auto-framed; lifecycle via progress → load → error -->
-<scene-editor src="/models/robot.glb" style="height: 480px"></scene-editor>
+Install with `npm install @scenio/scene-editor three` (`three@^0.186.0` is a peer dependency), then
+register the element once in your app entry with
+`import { defineSceneEditor } from "@scenio/scene-editor/element"; defineSceneEditor();`.
+After that, viewer pages need no JavaScript at all. The package ships no CSS: the element is an
+unstyled custom element, so the host gives it a block box and a size (the inline `style` below, or
+`scene-editor { display: block; height: 480px }`).
 
-<script type="module">
-  import { defineSceneEditor } from "@scenio/scene-editor/element";
-  import "@scenio/scene-editor/style.css";
-
-  defineSceneEditor(); // idempotent, SSR-safe
-
-  const el = document.querySelector("scene-editor");
-  el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
-  el.addEventListener("error", ({ detail }) => console.log(detail.code));
-</script>
-```
-
-Declarative viewer chrome (all attribute-only, never written to the document):
+## Example 1 — Viewer: attributes only, no JavaScript
 
 ```html
 <scene-editor
   src="/models/robot.glb"
-  loading="lazy"
+  style="display: block; width: 100%; height: 480px"
   auto-rotate
   camera-orbit="0deg 75deg 2m"
-  field-of-view="auto"
   environment-image="neutral"
+  tone-mapping="neutral"
   shadow-intensity="0.8"
-  autoplay
-  animation-name="Idle"
   reveal="interaction"
+  alt="Robot"
 >
   <img slot="poster" src="/poster.jpg" alt="" />
-  <div slot="progress-bar">Loading…</div>
   <div slot="error">Could not load the model</div>
-  <button slot="hotspot-lens" data-position="0 1.2 0.4" data-normal="0 0 1">Lens</button>
 </scene-editor>
 ```
 
+`src` is read once when the element connects: declare it in the markup (or set it before connection);
+changing it later has no effect — replace the element, or use `loadDocument()` when the host owns the
+document. Every other viewer-side switch is a live attribute and none of them writes to the document.
 `load` fires after the camera is framed, and a failure shows `slot="error"` (or a built-in message)
-instead of leaving an empty canvas. Compressed glTF (Draco / KTX2 / Meshopt) needs one more attribute —
-`decoder-path="/decoders/"` for a self-hosted payload directory or `decoder-cdn` for the pinned CDN;
-without it a Draco model still fails, but now names the missing decoder instead of showing a blank
-canvas.
+instead of an empty canvas. Compressed glTF (Draco / KTX2 / Meshopt) needs one more attribute — `decoder-path="/decoders/"`
+for a self-hosted payload directory or `decoder-cdn` for the pinned CDN; without it a Draco model still
+fails, but names the missing decoder instead of showing a blank canvas. The full attribute list,
+hotspots, `display-mode` / `explode` overlays and playback transport are in the
+[package quick start](packages/scene-editor/README.md).
+
+## Example 2 — Editor: a real host integration
+
+The host owns the document, the backend and the buttons. The SDK never talks to your API: it emits
+`save-request` and waits for `markSaved(revision)`.
+
+```html
+<scene-editor id="editor" style="display: block; width: 100%; height: 600px"></scene-editor>
+<button id="save" disabled>Save</button>
+
+<script type="module">
+  import { defineSceneEditor } from "@scenio/scene-editor/element";
+  defineSceneEditor();
+
+  const el = document.querySelector("#editor");
+  const saveBtn = document.querySelector("#save");
+
+  await el.ready;
+  await el.loadDocument(await (await fetch("/api/scenes/42")).json());
+
+  el.addEventListener("save-request", async ({ detail }) => {
+    const res = await fetch(`/api/scenes/${detail.document.sceneId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(detail.document),
+    });
+    if (res.ok) el.markSaved((await res.json()).revision);
+  });
+  el.addEventListener("history-change", ({ detail }) => {
+    saveBtn.disabled = !detail.dirty;
+  });
+  el.addEventListener("error", ({ detail }) => console.error(detail.code, detail.message));
+  saveBtn.addEventListener("click", () => el.requestSave());
+</script>
+```
 
 Editing is document-driven (`loadDocument` with a schema-v3 JSON), headless-first, and host-owned
-for persistence. Document shape, element API, assets, plugins and the save/conflict flow live in
+for persistence: on a revision mismatch your server rejects, you surface a structured conflict and
+the user decides — the SDK never auto-merges. The full host contract (undo/redo buttons, events,
+document model, assets, upload/export, plugins, errors) lives in
 [`packages/scene-editor/README.md`](packages/scene-editor/README.md); every symbol is in
 [`API.md`](packages/scene-editor/API.md).
 
 ## Layout
 
-```
-packages/scene-editor/   the npm package (headless core + element + three adapter)
-apps/playground/         reference host, ?demo= SDK scenarios, perf bench, visual fixtures
-e2e/                     Playwright specs (critical, SDK, studio, visual, perf)
-docs/                    architecture, highlights, measured benchmarks
-scripts/                 release-metadata guard and npm pack smoke test
-```
+- `packages/scene-editor/` — the npm package (headless core + element + three adapter)
+- `apps/playground/` — reference host, perf bench, visual fixtures
+- `e2e/` — Playwright specs (critical, studio, visual, perf)
+- `docs/` — architecture, highlights, measured benchmarks
+- `scripts/` — release-metadata guard and npm pack smoke test
 
 `three` is a peer dependency and only imported under `packages/scene-editor/src/three/`;
 the core and element entries never touch a renderer.
 
 ## Develop
 
-Requires Node 24+ and pnpm 11+.
-
-```bash
-pnpm install
-pnpm typecheck    # tsc across packages that define the script
-pnpm test         # 748 vitest unit tests
-pnpm build        # vite build + .d.ts for every package
-```
+Requires Node 24+ and pnpm 11+. From the repo root: `pnpm install`, then `pnpm typecheck` (tsc
+across packages), `pnpm test` (vitest unit tests) and `pnpm build` (vite build + `.d.ts` for every
+package).
 
 | Gate | Command | Covers |
 |---|---|---|
-| Unit | `pnpm test` | 81 test files, `three` version matrix in CI (`0.186.0` + `latest`) |
-| E2E | `pnpm test:e2e` | critical flows + SDK scenarios on `minimal.html?demo=` + studio tools |
+| Unit | `pnpm test` | vitest suites; CI runs a `three` version matrix (`0.186.0` + `latest`) |
+| E2E | `pnpm test:e2e` | critical viewer/editor flows + decoder regression |
 | Visual | `pnpm test:e2e:visual` | canvas-only baselines, SwiftShader, 1% tolerance |
 | Perf | `pnpm test:perf` | first-interactive, p95 frame time, unload-zero |
 | Release | `pnpm test:release` | package/README/LICENSE/repository consistency |
@@ -110,10 +130,8 @@ A red `latest` leg on a new `three` minor is the intended early warning for the 
 Playground: `pnpm --filter @scenio/playground dev` → <http://127.0.0.1:3000>
 (see [apps/playground/README.md](apps/playground/README.md)). A loaded model opens in
 **viewer** mode there; the header's 编辑 switch reveals the authoring chrome
-(`?mode=editor` boots straight into it). The host-shaped API regression surface
-now lives on `minimal.html?demo=<name>` — seven scenarios, the same 25 Playwright
-cases and the same `window.__*` hooks as before. The standalone `demos/` pages
-are gone; the coverage is not.
+(`?mode=editor` boots straight into it). Host-shaped API regression lives in the SDK unit tests;
+the browser e2e suites target the studio, the minimal host page and the perf bench.
 
 ## Status and roadmap
 

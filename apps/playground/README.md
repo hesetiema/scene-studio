@@ -33,16 +33,12 @@ pnpm --filter @scenio/playground typecheck
 | `src/ui/hud-controller.ts` | Telemetry panel, selection inspector, dirty state, toasts, FPS meter |
 | `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element) |
 | `src/styles/{base,controls,hud,welcome,mode}.css` | HUD styling extracted from the 680-line inline `<style>` block, plus the home-screen and viewer/editor chrome rules |
-| `src/scenarios/*.ts` | SDK coverage scenarios — one API surface each, loaded only for `?demo=<name>` (see below) |
-| `src/scenarios/shared.ts` | Scenario plumbing: DOM lookups, log panel, fixture document, transform helper |
-| `src/scenarios/router.ts` + `src/scenarios/markup/*.html` | `?demo=` router: injects one `?raw` markup fragment, rewrites legacy `/demos/` links, then dynamically imports the scenario module. The fragments are **not** HTML entries |
-| `minimal.html` + `src/minimal.ts` | Smallest end-to-end integration (element + load + save loop); bare URL runs it synchronously, `?demo=<name>` hands over to the coverage router |
+| `minimal.html` + `src/minimal.ts` | Smallest end-to-end integration (element + load + save loop), run synchronously on the bare URL |
 
 Additional entries: `perf.html` (performance bench — `?objects=5000&instancing=0` for the
 unbatched control; the report also carries a close-up pass that proves chunked batching still
 culls, and the shared-resource pool size as `sharedResources` / `sharedGeo`+`sharedMat`, which is
-what keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB) and the `?demo=` scenarios
-on `minimal.html` (SDK coverage, one shared HTML entry).
+what keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB).
 
 ## Viewer-first workflow
 
@@ -65,47 +61,21 @@ to 编辑 restores the panels, footer, save/undo/redo and the transform gizmo.
 - Switching editor → viewer only changes the layout; the camera keeps its orbit
   (press `F` to re-fit to the narrower viewport).
 
-## SDK coverage scenarios (`minimal.html?demo=…`)
+## Regression surface
 
-The seven standalone `/demos/*.html` pages are gone. Their markup now lives as
-`?raw` fragments in `src/scenarios/markup/`, and `src/scenarios/router.ts`
-injects one fragment into `minimal.html` before dynamically importing the same
-scenario module that used to be the page's `<script>`. **The hooks are unchanged**
-(`window.__demo` / `__docDemo` / `__coverage` / `__assets` / `__viewerDemo`, plus
-`body.dataset.demo` / `dataset.coverage` readiness flags), so all 25 Playwright
-cases (`sdk-coverage.spec.ts` + `demos-adversarial.spec.ts`) only changed their
-URL — not a single assertion was dropped.
-
-This is still a distinct surface from the studio homepage, not a duplicate:
-roughly 60 SDK identifiers (9 top-level exports, 30+ element attributes, 7
-events, 5 `window.__*` hooks) appear only here — headless facade, multi-select
-commands, document migration/validation, `assetResolver` trust boundary,
-declarative model-viewer attributes and hotspots. The CI gate only runs
-`critical-flows.spec.ts`, so keeping those 25 cases reachable matters.
-
-| Scenario | Surface |
-|---|---|
-| `?demo=hub` | index of all six scenarios (the only page that is pure markup, no SDK code) |
-| `?demo=host-api` | multi-select (`select` / `addToSelection` / `removeFromSelection` / `toggleSelection`), `executeCommand`, `applyRemote` fast-forward + structured conflict resolution |
-| `?demo=document` | `migrateSceneDocument` (v1→v2), `parseSceneDocument`, `validateHierarchy`, import into the editor |
-| `?demo=headless` | `createSceneEditor` + `FakeRuntime`: document, history, selection, save, remote sync, keyboard map, plugins, teardown — no DOM/GPU |
-| `?demo=assets` | `element.assetResolver` (allowlist trust boundary) + GLB instantiation, `decoder-path` loading a Draco GLB, `AssetCache` refcounts, `asset-resolve-failed` / `asset-unsupported-format` / `asset-load-failed` codes, `el.loadFiles()` uploads (`.glb` single + `.gltf` sidecar bundle, blob-URL format detection) |
-| `?demo=viewer` | model-viewer parity: `src` preview, `loading="lazy"` (off-screen probe), `auto-rotate` / `rotation-per-second` / `auto-rotate-delay`, `min/max-camera-orbit`, `disable-pan/zoom/tap`, `autoplay` / `animation-name` / `animation-crossfade-duration` / `pause-at-end`, transparent canvas, `camera-change` / `environment-change` / `model-visibility` |
-| `?demo=compare` | side-by-side with the official `<model-viewer>` (CDN): one toolbar drives both elements. **Not** e2e-covered — it needs network for the CDN bundle |
+`vite.config.ts` has three HTML entries (`index.html`, `perf.html`,
+`minimal.html`). SDK-level coverage lives in `packages/scene-editor/test/`;
+browser-level regression lives in `e2e/*.spec.ts` against the studio, the
+minimal page and the perf bench. The former `?demo=` scenario pages and their
+Playwright suites (`sdk-coverage.spec.ts` / `demos-adversarial.spec.ts`) have
+been removed — the SDK surfaces they exercised are covered by unit tests.
 
 ```bash
 pnpm --filter @scenio/playground dev
-# http://127.0.0.1:3000/minimal.html                  smallest host integration
-# http://127.0.0.1:3000/minimal.html?demo=hub        scenario index
-# http://127.0.0.1:3000/minimal.html?demo=host-api   one API surface
+# http://127.0.0.1:3000/                           studio (viewer-first)
+# http://127.0.0.1:3000/minimal.html               smallest host integration
+# http://127.0.0.1:3000/perf.html?objects=5000     performance bench
 ```
-
-`vite.config.ts` is down to three HTML entries (`index.html`, `perf.html`,
-`minimal.html`); each scenario's SDK code is its own on-demand chunk, so the
-bare minimal page never parses the viewer harness. Hostile input and hostile
-timing (injection through document data, undo storms, concurrent/interleaved
-`loadDocument`, resolver trust boundary, prototype pollution, malformed JSON)
-are covered by `e2e/demos-adversarial.spec.ts`.
 
 WebGPU is still supported through the SDK's `rendererFactory` seam (see
 `packages/scene-editor/README.md`); the evaluation probe page was removed once
@@ -117,13 +87,12 @@ the seam was documented and covered by the runtime contract.
 [`GLTF-Sample-Viewer`](https://github.com/KhronosGroup/GLTF-Sample-Viewer); the
 binaries come from [`glTF-Sample-Assets`](https://github.com/KhronosGroup/glTF-Sample-Assets)
 (`Models/<Name>/glTF-Binary/`). Per-asset attribution and licences live in that
-repository (`Models/<Name>/LICENSE.md`); `tri.glb` is a local test fixture, and
-`tri-draco.glb` is that same fixture compressed with
-`pnpm dlx @gltf-transform/cli draco` so `decoder-path` has a fixture that three
-cannot parse without a decoder.
+repository (`Models/<Name>/LICENSE.md`). `tri-draco.glb` is a local test fixture
+compressed with `pnpm dlx @gltf-transform/cli draco` so `decoder-path` has a
+fixture that three cannot parse without a decoder.
 
 `public/decoders/` mirrors three's payload layout (`draco/gltf` + `basis`, copied
-from `three/examples/jsm/libs`) so the `?demo=` scenarios and the e2e run offline. It is not
+from `three/examples/jsm/libs`) so `e2e/decoders.spec.ts` runs offline. It is not
 part of the SDK: a host points `decoder-path` at its own copy or at
 `decoder-cdn`.
 
@@ -196,8 +165,8 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   explicitly pins `mode="viewer"` before the element upgrades, so a loaded model
   starts read-only; the header switch writes `el.mode = "editor"` to bring back the
   gizmo, click-to-select, `G`/`R`/`S` and the undo keys, plus the panel/footer chrome
-  (`body[data-studio-mode]`). The `?demo=viewer` scenario drives the same element
-  through `src`, which derives `mode="viewer"` on its own. The effective SDK mode is mirrored
+  (`body[data-studio-mode]`). A `src`-driven element derives `mode="viewer"` on
+  its own (see `e2e/decoders.spec.ts`). The effective SDK mode is mirrored
   to `data-mode`, so a page can style the two differently.
 - **`load` waits for framing.** The `src` path dispatches `load` after `frameViewer()`,
   so a callback that reads `getDimensions()` or the camera already sees the final fit.
