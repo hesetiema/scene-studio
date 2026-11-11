@@ -1,7 +1,7 @@
 /**
- * Shared plumbing for the focused demos under `/demos/*.html`.
+ * Shared plumbing for the `minimal.html?demo=` coverage scenarios.
  *
- * Each demo page owns exactly one SDK surface (host API, document model,
+ * Each scenario owns exactly one SDK surface (host API, document model,
  * headless facade, assets, viewer parity). This module only holds the boring
  * parts: DOM lookups, a log panel, the fixture document, and transform helpers.
  */

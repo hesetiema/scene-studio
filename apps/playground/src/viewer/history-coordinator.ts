@@ -160,6 +160,8 @@ export class HistoryCoordinator {
 export function bindHistoryHotkeys(
   history: HistoryCoordinator,
   target: Window = window,
+  /** 宿主可把编辑态门禁传进来（查看态不接 Ctrl+Z / Ctrl+Y）。 */
+  canEdit: () => boolean = () => true,
 ): () => void {
   const handler = (event: KeyboardEvent): void => {
     if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
@@ -167,7 +169,7 @@ export function bindHistoryHotkeys(
     const key = event.key.toLowerCase();
     if (key !== "z" && key !== "y") return;
 
-    if (isTextEntry(event.target)) return;
+    if (isTextEntry(event.target) || !canEdit()) return;
 
     event.preventDefault();
     event.stopPropagation();

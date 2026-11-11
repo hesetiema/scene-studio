@@ -7,7 +7,9 @@
  *     controlsReady + first rendered frame
  *   - scene-load: mark around runtime.loadDocument
  *   - p95 frame time: rAF-driven render() loop, delta histogram
- *   - draw calls / triangles / geometries: renderer.info snapshots (trend)
+ *   - draw calls / triangles / geometries: renderer.info snapshots (trend);
+ *     `?instancing=0` runs the same scene without draw-call batching, which is
+ *     how the instancing win is measured
  *   - unload-zero: scene children + GPU resource counters back to baseline
  *     (hard), JS heap recorded as info-only
  *
@@ -59,13 +61,25 @@ interface PerfReport {
   timestamp: string;
   userAgent: string;
   objectCount: number;
+  instancing: boolean;
   framesRequested: number;
   firstInteractiveMs: number | null;
   sceneLoadMs: number | null;
   frameStats: FrameStats | null;
   infoBaseline: RendererInfoSnapshot | null;
   infoAfterLoad: RendererInfoSnapshot | null;
+  /**
+   * Same scene, camera right outside one grid corner behind a 15° lens. Chunked
+   * batching must still cull: one `InstancedMesh` per group reports the whole
+   * scene's triangles here.
+   */
+  infoCloseup: RendererInfoSnapshot | null;
   infoAfterUnload: RendererInfoSnapshot | null;
+  /**
+   * Placeholder geometry/material dedupe: a document of identical boxes must
+   * allocate one buffer and one base material, not one per object.
+   */
+  sharedResources: { geometries: number; materials: number; references: number } | null;
   unload: UnloadCheck | null;
   errors: string[];
 }
@@ -84,19 +98,24 @@ declare global {
 const params = new URLSearchParams(location.search);
 const OBJECT_COUNT = clampInt(params.get("objects"), 1000, 1, 20000);
 const FRAME_COUNT = clampInt(params.get("frames"), 60, 10, 600);
+/** `?instancing=0` disables primitive batching, for a before/after comparison. */
+const INSTANCING = params.get("instancing") !== "0";
 
 const report: PerfReport = {
   status: "running",
   timestamp: new Date().toISOString(),
   userAgent: navigator.userAgent,
   objectCount: OBJECT_COUNT,
+  instancing: INSTANCING,
   framesRequested: FRAME_COUNT,
   firstInteractiveMs: null,
   sceneLoadMs: null,
   frameStats: null,
   infoBaseline: null,
   infoAfterLoad: null,
+  infoCloseup: null,
   infoAfterUnload: null,
+  sharedResources: null,
   unload: null,
   errors: [],
 };
@@ -241,6 +260,7 @@ async function run(): Promise<void> {
   performance.mark("perf:bench-start");
   runtime = new ThreeRuntime({
     canvas,
+    instancing: INSTANCING,
     assetCache: new AssetCache(
       createResolverAssetLoader({
         resolver: {
@@ -269,6 +289,7 @@ async function run(): Promise<void> {
   const loadMeasure = performance.getEntriesByName("perf:scene-load").at(-1);
   report.sceneLoadMs = loadMeasure?.duration ?? null;
   report.infoAfterLoad = readInfo(runtime);
+  report.sharedResources = runtime.resourceStats;
 
   // first-interactive = document loaded + gizmo ready + frame actually on screen
   await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -276,6 +297,22 @@ async function run(): Promise<void> {
   report.firstInteractiveMs = performance.now();
 
   report.frameStats = await sampleFrames(runtime, FRAME_COUNT);
+
+  // Close-up pass: the camera stands right outside the first grid cell, looking
+  // at it through a narrow lens, so only a small patch of the scene is in
+  // frustum. Draw-call batching chunks instances precisely so this number
+  // collapses instead of reporting every instance the group owns.
+  //
+  // The patch is deliberately a *corner* seen through a narrow FOV: standing at
+  // the edge and looking back along -Z (even from close by) still sees the whole
+  // plane in perspective, which measures nothing.
+  runtime.camera.fov = 15;
+  runtime.camera.position.set(-27, 3, -15);
+  runtime.camera.lookAt(-30, 0.5, -18);
+  runtime.camera.updateProjectionMatrix();
+  runtime.render();
+  report.infoCloseup = readInfo(runtime);
+
   report.status = report.errors.length > 0 ? "failed" : "ready";
 }
 

@@ -8,14 +8,14 @@ export type CameraPreset = "iso" | "top" | "front" | "side";
 interface BoundingInfo {
   center: THREE.Vector3;
   size: THREE.Vector3;
-  /** 包围球半径。近/远裁剪面按它自适应，避免放大缩小时模型被裁掉。 */
+  /** 包围球半径。SDK 的 `#render()` 用它自适应近/远裁剪面。 */
   radius: number;
   /** 让整颗包围球落在视野内的相机距离（水平/垂直取更紧的一侧）。 */
   distance: number;
 }
 
-const TURNTABLE_SPEED = 0.45; // rad / second
-const FLY_DURATION = 320; // ms
+/** SDK `smoothViewTo` 的衰减常数（≈ 95% 位移走完的时长）。 */
+const FLY_DECAY_MS = 240;
 /** 取景留白：1 = 刚好贴边。 */
 const FIT_PADDING = 1.1;
 
@@ -26,15 +26,14 @@ const EMPTY_BOUNDS = {
   distance: 6.8,
 };
 
-const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
-
 /**
- * Camera controller: framing, presets and turntable.
+ * Camera controller: framing and presets.
  *
  * Framing is model-driven: the fit distance comes from the bounding sphere and
  * the *smaller* of the horizontal/vertical FOV, so a wide model in a narrow
- * viewport still fits. Clip planes follow the live camera distance because
- * imported assets range from millimetres to hundreds of metres.
+ * viewport still fits. Clip planes and the flight easing are the SDK's:
+ * `render()` re-derives near/far per frame, and `smoothViewTo()` owns the
+ * decay, the reduced-motion landing and the fade-vs-drag handoff.
  *
  * Perf note (D22): preview frames drive `runtime.applyViewState()`, which renders
  * without emitting `view-change`. The document is written exactly once when the
@@ -45,20 +44,13 @@ export class CameraController {
   readonly #el: SceneEditorElement;
   readonly #getRuntime: () => ThreeRuntime | null;
 
-  #flyRaf: number | null = null;
-  #turntableRaf: number | null = null;
-  #clipRaf: number | null = null;
-  #turntableActive = false;
-  #lastTurntableTime = 0;
+  /** Pending "flight settled → commit" timer (`setTimeout` id). */
+  #settleTimer: number | null = null;
   #boundsCache: BoundingInfo | null = null;
 
   constructor(el: SceneEditorElement, getRuntime: () => ThreeRuntime | null) {
     this.#el = el;
     this.#getRuntime = getRuntime;
-  }
-
-  get turntableActive(): boolean {
-    return this.#turntableActive;
   }
 
   /** Drop the cached bounds — call after a document load. */
@@ -67,97 +59,33 @@ export class CameraController {
   }
 
   /**
-   * Keep near/far in sync with the live camera distance (every frame).
-   * OrbitControls mutates the camera directly, so there is no event to hook that
-   * would cover wheel zoom without this ticker.
+   * Ease the camera to a pose. The SDK owns the fade; `getViewState()` reads
+   * the *live* camera, so the commit cannot ride along — it lands after the
+   * asymptote (the fade is ~done at 2.5× the decay constant).
    */
-  startClipSync(): void {
-    if (this.#clipRaf !== null) return;
-    const tick = (): void => {
-      this.syncClipPlanes();
-      this.#clipRaf = requestAnimationFrame(tick);
-    };
-    this.#clipRaf = requestAnimationFrame(tick);
-  }
-
-  stopClipSync(): void {
-    if (this.#clipRaf === null) return;
-    cancelAnimationFrame(this.#clipRaf);
-    this.#clipRaf = null;
-  }
-
-  /** Re-derive near/far from camera distance + model radius. Cheap when unchanged. */
-  syncClipPlanes(): void {
-    const rt = this.#getRuntime();
-    if (!rt) return;
-
-    const { radius } = this.#bounds();
-    const { position, target } = rt.getViewState().camera;
-    const distance = Math.hypot(
-      position[0] - target[0],
-      position[1] - target[1],
-      position[2] - target[2],
-    );
-
-    const near = Math.max(distance * 0.002, radius * 0.0005, 0.0005);
-    const far = Math.max(distance * 4 + radius * 8, near * 100);
-
-    const camera = rt.camera;
-    const nearDrifted = Math.abs(camera.near - near) > near * 0.05;
-    const farDrifted = Math.abs(camera.far - far) > far * 0.05;
-    if (!nearDrifted && !farDrifted) return;
-
-    camera.near = near;
-    camera.far = far;
-    camera.updateProjectionMatrix();
-    rt.render();
-  }
-
   flyTo(
     position: THREE.Vector3,
     target: THREE.Vector3,
-    duration = FLY_DURATION,
+    duration = FLY_DECAY_MS,
     commit = true,
   ): void {
     const rt = this.#getRuntime();
     if (!rt) return;
-    this.stopFly();
+    this.#cancelSettle();
 
-    const start = rt.getViewState();
-    const from = new THREE.Vector3(...start.camera.position);
-    const lookAt = new THREE.Vector3(...start.camera.target);
-    const startedAt = performance.now();
+    const view = rt.getViewState();
+    rt.smoothViewTo({
+      ...view.camera,
+      position: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+    }, duration);
 
-    const step = (now: number): void => {
-      const progress = duration <= 0 ? 1 : Math.min((now - startedAt) / duration, 1);
-      const ease = easeOutCubic(progress);
-
-      this.#preview({
-        ...start,
-        camera: {
-          ...start.camera,
-          position: [
-            THREE.MathUtils.lerp(from.x, position.x, ease),
-            THREE.MathUtils.lerp(from.y, position.y, ease),
-            THREE.MathUtils.lerp(from.z, position.z, ease),
-          ],
-          target: [
-            THREE.MathUtils.lerp(lookAt.x, target.x, ease),
-            THREE.MathUtils.lerp(lookAt.y, target.y, ease),
-            THREE.MathUtils.lerp(lookAt.z, target.z, ease),
-          ],
-        },
-      });
-
-      if (progress < 1) {
-        this.#flyRaf = requestAnimationFrame(step);
-        return;
-      }
-      this.#flyRaf = null;
-      if (commit) this.#commit();
-    };
-
-    this.#flyRaf = requestAnimationFrame(step);
+    if (commit) {
+      this.#settleTimer = window.setTimeout(
+        () => this.#commit(),
+        Math.ceil(duration * 2.5),
+      );
+    }
   }
 
   /**
@@ -188,82 +116,14 @@ export class CameraController {
     return this.#bounds();
   }
 
-  /** Returns the new active state. Commits the document once when stopping. */
-  toggleTurntable(): boolean {
-    if (this.#turntableActive) {
-      this.stopTurntable();
-      return false;
-    }
-
-    const rt = this.#getRuntime();
-    if (!rt) return false;
-
-    this.stopFly();
-    this.#turntableActive = true;
-    this.#lastTurntableTime = performance.now();
-
-    const spin = (now: number): void => {
-      if (!this.#turntableActive) return;
-      const runtime = this.#getRuntime();
-      // Cap dt so a backgrounded tab does not teleport the camera.
-      const dt = Math.min((now - this.#lastTurntableTime) / 1000, 0.1);
-      this.#lastTurntableTime = now;
-
-      if (runtime) {
-        const view = runtime.getViewState();
-        const [tx, ty, tz] = view.camera.target;
-        const [px, , pz] = view.camera.position;
-        const dx = px - tx;
-        const dz = pz - tz;
-        const angle = TURNTABLE_SPEED * dt;
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
-        this.#preview({
-          ...view,
-          camera: {
-            ...view.camera,
-            position: [tx + dx * cos - dz * sin, view.camera.position[1], tz + dx * sin + dz * cos],
-          },
-        });
-      }
-      this.#turntableRaf = requestAnimationFrame(spin);
-    };
-
-    this.#turntableRaf = requestAnimationFrame(spin);
-    return true;
-  }
-
-  stopTurntable(): void {
-    if (!this.#turntableActive) return;
-    this.#turntableActive = false;
-    if (this.#turntableRaf !== null) {
-      cancelAnimationFrame(this.#turntableRaf);
-      this.#turntableRaf = null;
-    }
-    this.#commit();
-  }
-
-  stopFly(): void {
-    if (this.#flyRaf !== null) {
-      cancelAnimationFrame(this.#flyRaf);
-      this.#flyRaf = null;
-    }
-  }
-
   destroy(): void {
-    this.stopFly();
-    this.stopClipSync();
-    this.#turntableActive = false;
-    if (this.#turntableRaf !== null) {
-      cancelAnimationFrame(this.#turntableRaf);
-      this.#turntableRaf = null;
-    }
+    this.#cancelSettle();
   }
 
   /** Place the camera at `distance` from the scene center along `direction`. */
   #frameFrom(direction: THREE.Vector3, smooth: boolean, commit: boolean): void {
     // Framing is a user-visible action, so it re-measures (an object may have
-    // been dragged far away); the per-frame clip sync reuses the cached result.
+    // been dragged far away); the SDK re-derives clip planes on every render.
     const { center, distance } = this.#bounds(true);
     const offset = direction.normalize().multiplyScalar(distance);
     this.#moveTo(center.clone().add(offset), center, smooth, commit);
@@ -276,12 +136,11 @@ export class CameraController {
     commit: boolean,
   ): void {
     if (smooth) {
-      this.flyTo(position, target, FLY_DURATION, commit);
+      this.flyTo(position, target, FLY_DECAY_MS, commit);
       return;
     }
     const rt = this.#getRuntime();
     if (!rt) return;
-    this.stopFly();
     const view = rt.getViewState();
     this.#preview({
       ...view,
@@ -292,7 +151,6 @@ export class CameraController {
       },
     });
     if (commit) this.#commit();
-    this.syncClipPlanes();
   }
 
   #preview(view: ViewState): void {
@@ -303,6 +161,13 @@ export class CameraController {
     const rt = this.#getRuntime();
     if (!rt) return;
     this.#el.setViewState(rt.getViewState());
+  }
+
+  #cancelSettle(): void {
+    if (this.#settleTimer !== null) {
+      clearTimeout(this.#settleTimer);
+      this.#settleTimer = null;
+    }
   }
 
   #bounds(refresh = false): BoundingInfo {

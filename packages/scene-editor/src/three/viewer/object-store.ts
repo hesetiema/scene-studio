@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import type { MaterialDTO, SceneDocument, SceneObjectDTO } from "../../core/document/schema";
 import type { AssetCache, LoadedAsset } from "../../assets/asset-cache";
+import { AssetError, AssetErrorCode } from "../../assets/asset-error";
 import type { Transform } from "../../runtime/runtime-contract";
 import { variantTableFor } from "../../assets/material-variants";
 import {
@@ -11,6 +12,12 @@ import {
   instantiateAsset,
   type MaterialOverrideHandle,
 } from "./object-factory";
+import {
+  createSharedResourcePool,
+  type SharedResourcePool,
+  type SharedResourceStats,
+} from "./shared-resources";
+import { mergeAssetMeshes, type AssetMergeHandle } from "./asset-merge";
 
 export interface AssetMountedInfo {
   objectId: string;
@@ -24,6 +31,36 @@ export interface ObjectStoreOptions {
   onAssetError: (error: unknown, dto: SceneObjectDTO) => void;
   /** Called after an asset root is mounted — used to register glTF clips. */
   onAssetMounted?: (info: AssetMountedInfo) => void;
+  /**
+   * Draw-call batcher (`createInstancingRig`). The store owns *eligibility*:
+   * an object with a material override, an asset subtree or a current selection
+   * keeps its own draw call, everything else may be absorbed into a shared
+   * `InstancedMesh`. `null` disables batching entirely.
+   */
+  batcher?: ObjectBatcher | null;
+  /**
+   * Shared placeholder resources (geometry / base material dedupe). Omit to let
+   * the store own one; pass the runtime's pool so teardown releases everything
+   * in one place.
+   */
+  resources?: SharedResourcePool;
+}
+
+/**
+ * The slice of `createInstancingRig` the store talks to. Structural so a host
+ * (or a test) can substitute its own batching strategy.
+ */
+export interface ObjectBatcher {
+  /** Absorb a mesh; `false` = not eligible (no harm done). */
+  admit(id: string, object: THREE.Object3D): boolean;
+  /** Hand one object its own draw call back; no-op when not batched. */
+  exclude(id: string): void;
+  /** The object is leaving the graph. */
+  detach(id: string): void;
+  /** World matrices changed and the renderer has not refreshed them yet. */
+  markDirty(object: THREE.Object3D): void;
+  /** Drop every batch (document replaced). */
+  clear(): void;
 }
 
 /** Aggregate progress across the document's meshes (0..1). */
@@ -65,10 +102,33 @@ export interface ObjectStore {
   variants(): string[];
   /** Currently applied variant (`null` = asset default). */
   readonly variantName: string | null;
+  /**
+   * Swap the batching strategy (or turn batching off with `null`).
+   *
+   * Every mounted object is re-evaluated, so this is the live half of
+   * `instancing`: the viewport flips between "one draw call per repeat" and
+   * "one draw call per object" without reloading the document. `null` and a
+   * fresh rig both work — the outgoing rig has already been cleared or is
+   * cleared here, and each object gets its default layer back before being
+   * re-admitted.
+   */
+  setBatcher(batcher: ObjectBatcher | null): void;
   get(id: string): THREE.Object3D | undefined;
   list(): THREE.Object3D[];
+  /**
+   * Record the current selection. Selected objects are never batched: the
+   * gizmo, the highlight plugin and the material panel all address them as
+   * individual meshes, and a selected object is the one that moves next.
+   */
+  setSelected(ids: readonly string[]): void;
   /** World-space bounds of everything mounted; empty when nothing is loaded. */
   bounds(): THREE.Box3;
+  /**
+   * Live shared-resource counters: distinct geometry buffers / materials and
+   * how many objects reference them. A 5 000-box document reads
+   * `{ geometries: 1, materials: 1 }` when everything is identical.
+   */
+  resources(): SharedResourceStats;
   applyTransform(id: string, transform: Transform): boolean;
   clear(): void;
   dispose(): void;
@@ -90,7 +150,38 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
   const overrides = new Map<string, MaterialOverrideHandle>();
   /** Loaded assets per object id — the variant tables live on them. */
   const assets = new Map<string, LoadedAsset>();
+  /** Current selection; mirrors the runtime's `selectedIds`. */
+  let selected: ReadonlySet<string> = new Set();
   let variantName: string | null = null;
+  /**
+   * Batching strategy. Mutable: `setBatcher` swaps it, and every eligibility
+   * decision below reads this binding rather than the constructor option.
+   */
+  let batcher: ObjectBatcher | null = options.batcher ?? null;
+  /** Geometry/material dedupe for placeholders and primitives. */
+  const resources: SharedResourcePool = options.resources ?? createSharedResourcePool();
+  /** Only a pool this store created is disposed here. */
+  const ownsResources = options.resources === undefined;
+
+  /**
+   * Decide, again, whether one object should be batched.
+   *
+   * Every path that can change the answer calls this: attaching, clearing a
+   * material override, selecting. Cheap (one map lookup per reason) and
+   * idempotent, which is what keeps the batcher authoritative without the
+   * runtime having to know the rules.
+   */
+  function refreshBatching(id: string): void {
+    if (!batcher) return;
+    const object = objects.get(id);
+    if (!object) return;
+    if (selected.has(id) || overrides.has(id) || assets.has(id)) {
+      // Any one reason is enough to need a private draw call.
+      batcher.exclude(id);
+      return;
+    }
+    batcher.admit(id, object);
+  }
 
   function restoreOverride(id: string): void {
     const handle = overrides.get(id);
@@ -169,7 +260,9 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       return;
     }
     const built =
-      dto.type === "primitive" ? createPrimitiveObject(dto) : createPlaceholderObject(dto);
+      dto.type === "primitive"
+        ? createPrimitiveObject(dto, resources)
+        : createPlaceholderObject(dto, resources);
     register(dto, built.object, () => {
       removeFromGraph(built.object);
       built.dispose();
@@ -183,20 +276,34 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
   ): Promise<void> {
     const cache = options.assetCache;
     if (!cache) {
-      mountLocal(dto);
-      return;
+      // Unreachable through `createOne`; kept for direct callers of the store.
+      throw new AssetError(
+        AssetErrorCode.NotFound,
+        `Cannot mount asset "${assetId}": no asset cache on this store`,
+        { detail: { objectId: dto.id, assetId } },
+      );
     }
     const asset = await cache.retain(
       assetId,
       onProgress
         ? {
             onProgress: ({ loaded, total }) => {
-              onProgress(total > 0 ? loaded / total : 0);
+              // Unknown length (chunked / no Content-Length): a bounded asymptote
+              // still moves the bar instead of pinning it at 0 until the end.
+              onProgress(total > 0 ? loaded / total : loaded / (loaded + 1_000_000));
             },
           }
         : undefined,
     );
     const object = instantiateAsset(asset.scene, dto);
+    // Static merge inside the instance: a glTF modelled as 200 separate meshes
+    // that share a material becomes one draw call per material. Skipped when the
+    // asset has clips (they target nodes that would no longer exist as meshes)
+    // or variants (a variant switch rewrites `mesh.material` per node).
+    const merge: AssetMergeHandle | null =
+      (asset.animations?.length ?? 0) === 0 && asset.variants === undefined
+        ? mergeAssetMeshes(object)
+        : null;
     assets.set(dto.id, asset);
     // A variant chosen before the asset finished loading still wins.
     applyVariantToObject(dto.id, object, asset.variants);
@@ -204,6 +311,8 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       // release first: removal failure must never leak a refcount (D12)
       assets.delete(dto.id);
       cache.release(assetId);
+      // Merged buffers are ours; the asset cache owns everything else.
+      merge?.restore();
       removeFromGraph(object);
     });
     options.onAssetMounted?.({ objectId: dto.id, object, asset });
@@ -217,7 +326,18 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     dto: SceneObjectDTO,
     onProgress?: (fraction: number) => void,
   ): Promise<void> {
-    if (dto.type === "mesh" && dto.assetId && options.assetCache) {
+    if (dto.type === "mesh" && dto.assetId) {
+      // An object that names an asset but has no cache to load it through used
+      // to fall back to the 1x1x1 placeholder *silently*: progress reached 1 and
+      // `load` fired over an empty viewport. Fail loudly instead — the object
+      // store reports per-object errors, so the rest of the document still loads.
+      if (!options.assetCache) {
+        throw new AssetError(
+          AssetErrorCode.NotFound,
+          `Cannot mount asset "${dto.assetId}": this runtime has no asset cache`,
+          { detail: { objectId: dto.id, assetId: dto.assetId } },
+        );
+      }
       await mountAsset(dto, dto.assetId, onProgress);
     } else {
       mountLocal(dto);
@@ -255,6 +375,8 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     } else {
       options.scene.add(object);
     }
+    options.scene.updateMatrixWorld(true);
+    refreshBatching(dto.id);
   }
 
   /**
@@ -282,6 +404,9 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     if (roots.length > 0) options.scene.add(...roots);
     // Parenting changed the world matrices autoFrame samples right after load.
     options.scene.updateMatrixWorld(true);
+    // Batching last: an object is only assigned once its parent is real, so the
+    // instance matrix written here is already the final world transform.
+    for (const dto of dtos) refreshBatching(dto.id);
   }
 
   const store: ObjectStore = {
@@ -340,6 +465,7 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       if (!detach) return;
       disposers.delete(id);
       objects.delete(id);
+      batcher?.detach(id);
       try {
         detach();
       } catch {
@@ -356,6 +482,21 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
         options.scene.add(object);
       }
       options.scene.updateMatrixWorld(true);
+      // Batched children follow their parent; the batcher recomputes the whole
+      // subtree rather than one world matrix.
+      batcher?.markDirty(object);
+    },
+    setSelected(ids: readonly string[]): void {
+      const next = new Set(ids);
+      const previous = selected;
+      if (next.size === previous.size && [...next].every((id) => previous.has(id))) return;
+      selected = next;
+      for (const id of next) {
+        if (!previous.has(id)) refreshBatching(id);
+      }
+      for (const id of previous) {
+        if (!next.has(id)) refreshBatching(id);
+      }
     },
     setMaterial(id: string, material: MaterialDTO | undefined): void {
       restoreOverride(id);
@@ -363,10 +504,13 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       if (!object) return;
       if (material) {
         overrides.set(id, applyMaterialOverride(object, material));
+        // A per-object material cannot be shared with 5 000 instances.
+        refreshBatching(id);
         return;
       }
       // Override cleared → the variant (or the asset default) is in charge again.
       applyVariantToObject(id, object, assets.get(id)?.variants);
+      refreshBatching(id);
     },
     setVariant(name: string | null): boolean {
       variantName = name;
@@ -403,6 +547,9 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       }
       return box;
     },
+    resources(): SharedResourceStats {
+      return resources.stats();
+    },
     applyTransform(id: string, transform: Transform): boolean {
       const object = objects.get(id);
       if (!object) return false;
@@ -412,9 +559,16 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
       object.position.set(px, py, pz);
       object.rotation.set(rx, ry, rz);
       object.scale.set(sx, sy, sz);
+      // The renderer has not run yet: the batcher must refresh this subtree
+      // itself, or a single-frame scene stays on stale instance matrices.
+      batcher?.markDirty(object);
       return true;
     },
     clear(): void {
+      // Batches go first: they hold their own resource clones, and a stale
+      // batch would keep drawing after its members are gone.
+      batcher?.clear();
+      selected = new Set();
       // LIFO: children leave before their parents, so no object is orphaned.
       for (const id of [...disposers.keys()].reverse()) {
         const detach = disposers.get(id);
@@ -434,6 +588,18 @@ export function createObjectStore(options: ObjectStoreOptions): ObjectStore {
     },
     dispose(): void {
       store.clear();
+      // A pool supplied by the caller outlives this store; the one created here
+      // does not, and disposing it is what keeps teardown at zero.
+      if (ownsResources) resources.dispose();
+    },
+    setBatcher(next: ObjectBatcher | null): void {
+      if (next === batcher) return;
+      // Release the outgoing strategy first: `exclude` is what restores a
+      // member's default layer, so admitting it into the new rig afterwards
+      // starts from a clean mask instead of a stale layer bit.
+      if (batcher) for (const id of objects.keys()) batcher.exclude(id);
+      batcher = next;
+      for (const id of objects.keys()) refreshBatching(id);
     },
   };
 

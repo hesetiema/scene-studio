@@ -1,4 +1,5 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
+import { assetFormatHint } from "./format";
 import type { AssetLoadContext, AssetLoadProgress, LoadedAsset } from "./asset-cache";
 
 /**
@@ -70,6 +71,32 @@ export function loadGltfScene(
   });
 }
 
+/**
+ * Turn three's terse decoder failures into something the *user* can act on.
+ *
+ * `GLTFLoader` says "THREE.GLTFLoader: No DRACOLoader instance provided." and
+ * that string used to be dropped on the floor: the element only paints the
+ * `AssetError` message, which is "Failed to load asset: <id>". A blank canvas
+ * with no explanation was the whole complaint behind `decoder-path`.
+ *
+ * Returns `null` for failures that have nothing to do with decoders, so the
+ * caller keeps its message untouched.
+ */
+export function decoderHint(cause: unknown): string | null {
+  const message =
+    cause instanceof Error ? cause.message : typeof cause === "string" ? cause : "";
+  if (/draco/i.test(message)) {
+    return "this model uses Draco-compressed geometry, which needs a decoder — set `decoder-path` to a reachable `draco/gltf/` payload (or `decoder-cdn`), or assign `element.dracoLoader`";
+  }
+  if (/ktx2|basis/i.test(message)) {
+    return "this model uses KTX2 textures, which need a transcoder — set `decoder-path` to a reachable `basis/` payload (or `decoder-cdn`), or assign `element.ktx2Loader`";
+  }
+  if (/meshopt/i.test(message)) {
+    return "this model uses Meshopt-compressed geometry, which needs a decoder — set `decoder-path` (or `decoder-cdn`), or assign `element.meshoptDecoder`";
+  }
+  return null;
+}
+
 export interface GltfAssetLoaderOptions {
   /** Base URL or map function resolving assetId → URL. */
   resolveUrl: (assetId: string) => string;
@@ -96,7 +123,8 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
     context?: AssetLoadContext,
   ): Promise<LoadedAsset> {
     const url = resolveUrl(assetId);
-    const ext = url.split("?")[0]?.split(".").pop()?.toLowerCase();
+    // Same rule as the resolver loader: URL first, asset id second.
+    const ext = assetFormatHint(url, assetId);
     if (ext !== "glb" && ext !== "gltf") {
       throw new AssetError(
         AssetErrorCode.UnsupportedFormat,
@@ -110,10 +138,15 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
       applyGltfDecoders(gltfLoader, options.decoders?.());
       sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
-      throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load glTF asset: ${assetId}`, {
-        cause,
-        detail: { assetId, url },
-      });
+      const hint = decoderHint(cause);
+      throw new AssetError(
+        AssetErrorCode.LoadFailed,
+        `Failed to load glTF asset: ${assetId}${hint ? ` — ${hint}` : ""}`,
+        {
+          cause,
+          detail: { assetId, url },
+        },
+      );
     }
     const root = sceneData.scene as { clone?: () => unknown; isObject3D?: boolean };
     const asset: LoadedAsset = {

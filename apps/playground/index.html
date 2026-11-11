@@ -17,8 +17,9 @@
     <link rel="stylesheet" href="/src/styles/controls.css" />
     <link rel="stylesheet" href="/src/styles/hud.css" />
     <link rel="stylesheet" href="/src/styles/welcome.css" />
+    <link rel="stylesheet" href="/src/styles/mode.css" />
   </head>
-  <body data-welcome="true">
+  <body data-welcome="true" data-studio-mode="viewer">
     <div class="app">
       <!-- 顶部栏：标题 + 模型来源 + 保存 -->
       <header class="app-header">
@@ -28,6 +29,35 @@
         </div>
 
         <div class="header-actions">
+          <!-- 查看 / 编辑模式切换：载入模型后默认查看，点「编辑」才展开下面的控制面板 -->
+          <div class="mode-switch" id="mode-switch" role="group" aria-label="工作模式">
+            <button
+              id="mode-viewer"
+              class="mode-option active"
+              type="button"
+              aria-pressed="true"
+              title="查看模式：只浏览模型，隐藏编辑面板与坐标轴"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M1.8 8s2.4-3.7 6.2-3.7S14.2 8 14.2 8s-2.4 3.7-6.2 3.7S1.8 8 1.8 8Z" />
+                <circle cx="8" cy="8" r="1.7" />
+              </svg>
+              查看
+            </button>
+            <button
+              id="mode-editor"
+              class="mode-option"
+              type="button"
+              aria-pressed="false"
+              title="编辑模式：显示变换工具、材质、文档与导出面板"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M10.4 2.9 13.1 5.6 6 12.7l-3.4.7.7-3.4 7.1-7.1Z" />
+                <path d="M9.2 4.1 11.9 6.8" />
+              </svg>
+              编辑
+            </button>
+          </div>
           <button id="btn-home" class="btn btn-icon" title="回到首页" aria-label="回到首页">
             <svg viewBox="0 0 16 16" aria-hidden="true">
               <path d="M2.6 7.5 8 2.9l5.4 4.6v5.1a.8.8 0 0 1-.8.8h-2.9V9.5H6.3v3.9H3.4a.8.8 0 0 1-.8-.8V7.5Z" />
@@ -86,7 +116,8 @@
       <main class="app-main">
         <!-- 3D 视口 -->
         <section class="stage">
-          <scene-editor id="viewport"></scene-editor>
+          <!-- mode 由 main.ts 在元素升级前按 ?mode= 覆盖；缺省是查看态。 -->
+          <scene-editor id="viewport" mode="viewer"></scene-editor>
 
           <div id="toast" class="toast"></div>
 

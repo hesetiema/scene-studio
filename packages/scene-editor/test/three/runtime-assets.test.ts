@@ -140,9 +140,18 @@ describe("ThreeRuntime asset loading (D11/D12/D16)", () => {
     expect(errors[0]!.code).toBe("asset-unsupported-format");
   });
 
-  it("assetId without cache falls back to placeholder box + no throw", async () => {
+  it("assetId without a cache reports an error instead of a silent placeholder", async () => {
+    // This used to mount the 1x1x1 placeholder and still report `load`: a
+    // document naming an asset was indistinguishable from an empty viewport.
     const { runtime } = makeRuntime(); // no cache
+    const errors: Array<{ code: string; message: string }> = [];
+    runtime.events.on("error", (e) => errors.push(e));
+
     await runtime.loadDocument(makeDoc([assetObj("a", "hero")]));
-    expect(runtime.getObjectById("a")).toBeDefined();
+
+    expect(runtime.getObjectById("a")).toBeUndefined();
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.code).toBe("asset-not-found");
+    expect(errors[0]!.message).toContain("hero");
   });
 });

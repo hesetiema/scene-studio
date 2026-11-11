@@ -89,4 +89,51 @@ describe("ThreeRuntime animation surface", () => {
     await runtime.loadDocument({ ...doc, objects: [] });
     expect(runtime.animations).toEqual([]);
   });
+
+  it("blends two clips of one object and reports the layers", async () => {
+    const group = new THREE.Group();
+    const walk = new THREE.AnimationClip("Walk", 1, [
+      new THREE.VectorKeyframeTrack(".position[x]", [0, 1], [0, 10]),
+    ]);
+    const wave = new THREE.AnimationClip("Wave", 1, [
+      new THREE.VectorKeyframeTrack(".position[y]", [0, 1], [0, 10]),
+    ]);
+    const runtime = new ThreeRuntime({
+      canvas: document.createElement("canvas"),
+      rendererFactory: stubRenderer,
+      enableControls: false,
+      assetCache: new AssetCache(async () => ({ scene: group, animations: [walk, wave] })),
+    });
+
+    await runtime.loadDocument({
+      schemaVersion: SCHEMA_VERSION,
+      view: createDefaultViewState(),
+      sceneId: "s-blend",
+      revision: 0,
+      objects: [
+        {
+          id: "animated",
+          type: "mesh",
+          name: "Animated",
+          assetId: "rigged",
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+      ],
+    });
+
+    expect(runtime.playAnimationBlend([{ index: 0, weight: 1 }, { index: 1, weight: 1 }], "animated")).toBe(
+      true,
+    );
+    expect(runtime.animationPlaying).toBe(true);
+    expect(runtime.animationBlend).toEqual([
+      { index: 0, weight: 0.5, timeScale: 1 },
+      { index: 1, weight: 0.5, timeScale: 1 },
+    ]);
+
+    runtime.pauseAnimations();
+    expect(runtime.animationPlaying).toBe(false);
+    runtime.flushDisposers();
+  });
 });

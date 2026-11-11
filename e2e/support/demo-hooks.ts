@@ -1,5 +1,5 @@
 /**
- * Typed handles for the `window.__*` hooks the demo pages expose.
+ * Typed handles for the `window.__*` hooks the `?demo=` scenarios expose.
  *
  * Keeping them in one module (instead of `declare global` in each spec) means
  * both the coverage and the adversarial suites describe the same contract.
@@ -76,9 +76,12 @@ export interface AssetsDemoHook {
   state: () => AssetsState;
   actions: {
     loadTri: () => Promise<{ ok: boolean; code?: string }>;
+    loadDraco: () => Promise<{ ok: boolean; code?: string }>;
     loadMissing: () => Promise<{ ok: boolean; code?: string }>;
     loadUnsupported: () => Promise<{ ok: boolean; code?: string }>;
     runCache: () => Promise<Record<string, unknown>>;
+    loadFile: () => Promise<{ ok: boolean; meshCount: number; objects: number }>;
+    exportGlb: () => Promise<{ size: number; type: string }>;
   };
   makeDoc: (assetId: string, sceneId?: string) => unknown;
 }

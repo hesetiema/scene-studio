@@ -8,8 +8,10 @@ export {
   type HotspotConfig,
   type HotspotData,
   type HotspotVector,
+  type SceneExportOptions,
   type VisibilityObserver,
   type VisibilityObserverFactory,
 } from "./element/scene-editor-element";
 export type { SceneEditorElementEventMap } from "./runtime/create-scene-editor";
 export { createSrcDocument, SRC_ASSET_ID, SRC_SCENE_ID } from "./element/src-document";
+export { downloadBlob } from "./element/download";

@@ -8,7 +8,7 @@
       左：官方 <model-viewer>，由 compare.ts 在运行时从 CDN 动态引入（unpkg → jsDelivr
       双镜像，谁通用谁）。这一页是宣传/目视对照用，需要外网，故意不参与 e2e。
     -->
-    <script type="module" src="/src/demos/compare.ts"></script>
+    <!-- Scenario module: loaded by src/scenarios/router.ts, not by this fragment. -->
     <style>
       :root {
         color-scheme: dark;

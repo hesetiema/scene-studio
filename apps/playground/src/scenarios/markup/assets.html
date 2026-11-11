@@ -22,11 +22,34 @@
           <h3>assetResolver（宿主给 URL）</h3>
           <div class="demo-row">
             <button class="demo-btn primary" id="load-tri">加载 /assets/tri.glb</button>
+            <button class="demo-btn" id="load-draco">加载 Draco 压缩版</button>
             <button class="demo-btn danger" id="load-missing">加载缺失资产</button>
             <button class="demo-btn danger" id="load-unsupported">加载 .obj（不支持格式）</button>
           </div>
           <p class="demo-note">
             <code>el.assetResolver</code> 必须在 connect 之前设置；SDK 只按 id 解析 URL，不猜约定。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>上传与导出（host 不写样板）</h3>
+          <div class="demo-row">
+            <button class="demo-btn primary" id="load-file">loadFiles() 一个 .glb</button>
+            <button class="demo-btn" id="export-glb">exportDocument()</button>
+          </div>
+          <p class="demo-note">
+            <code>el.loadFiles([file])</code> 负责选主文件、把 <code>.gltf</code> 的相对 URI 换成
+            Blob URL、合成文档、取景；<code>el.exportDocument()</code> 按**文档**里的位姿导出
+            （预览态偏移不进文件），返回 <code>Blob</code>，落盘交给 <code>downloadBlob()</code>。
+          </p>
+        </div>
+
+        <div class="demo-group">
+          <h3>压缩资产（decoder-path）</h3>
+          <p class="demo-note">
+            本页 <code>decoder-path="/decoders/"</code>：目录下放 three 自己的
+            <code>draco/gltf</code> 与 <code>basis</code>。解码器模块首次加载时才拉取，
+            draco 的 wasm 要等真正遇到压缩网格才请求。
           </p>
         </div>
 
@@ -54,6 +77,6 @@
 
     <div class="demo-status" id="status">初始化中…</div>
 
-    <script type="module" src="/src/demos/assets.ts"></script>
+    <!-- Scenario module: loaded by src/scenarios/router.ts, not by this fragment. -->
   </body>
 </html>

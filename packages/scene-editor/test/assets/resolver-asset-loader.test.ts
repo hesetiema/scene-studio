@@ -116,8 +116,7 @@ describe("createResolverAssetLoader (AssetResolver contract)", () => {
     expect(setDRACOLoader).not.toHaveBeenCalled();
   });
 
-  it("pushes with-credentials onto the loader before every fetch", async () => {
-    const setWithCredentials = vi.fn();
+  it("pushes with-credentials onto the loader before every fetch", async () => {    const setWithCredentials = vi.fn();
     const gltfLoader = stubGltf();
     Object.assign(gltfLoader, { setWithCredentials });
 
@@ -136,5 +135,48 @@ describe("createResolverAssetLoader (AssetResolver contract)", () => {
     credentials = true;
     await load("b");
     expect(setWithCredentials).toHaveBeenLastCalledWith(true);
+  });
+
+  it("turns a missing Draco decoder into an actionable message", async () => {
+    // three's own text names an API, not a fix; the element paints this string
+    // in its error slot, so it has to say what the host can actually do.
+    const load = createResolverAssetLoader({
+      resolver: { resolve: async (id) => `/a/${id}.glb` },
+      gltfLoader: {
+        loadAsync: async () => {
+          throw new Error("THREE.GLTFLoader: No DRACOLoader instance provided.");
+        },
+      },
+    });
+
+    await expect(load("compressed")).rejects.toThrow(
+      /uses Draco-compressed geometry[\s\S]*decoder-path/,
+    );
+  });
+
+  it("turns a missing KTX2 transcoder into an actionable message", async () => {
+    const load = createResolverAssetLoader({
+      resolver: { resolve: async (id) => `/a/${id}.glb` },
+      gltfLoader: {
+        loadAsync: async () => {
+          throw new Error("THREE.KTX2Loader: Missing initialization with `.detectSupport( renderer )`.");
+        },
+      },
+    });
+
+    await expect(load("basis")).rejects.toThrow(/uses KTX2 textures[\s\S]*basis\//);
+  });
+
+  it("leaves unrelated failures free of decoder advice", async () => {
+    const load = createResolverAssetLoader({
+      resolver: { resolve: async (id) => `/a/${id}.glb` },
+      gltfLoader: {
+        loadAsync: async () => {
+          throw new Error("404 Not Found");
+        },
+      },
+    });
+
+    await expect(load("gone")).rejects.toThrow(/^Failed to load asset: gone$/);
   });
 });

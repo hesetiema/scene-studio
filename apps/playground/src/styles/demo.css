@@ -1,6 +1,6 @@
-/* Shared chrome for the focused SDK demos under /demos/*.html.
-   These pages exist to exercise one API surface each — not to look like the
-   full studio, so the layout stays deliberately boring and compact. */
+/* Shared chrome for the `?demo=` coverage scenarios on minimal.html.
+   Each scenario exercises one API surface — not to look like the full studio,
+   so the layout stays deliberately boring and compact. */
 
 :root {
   color-scheme: dark;

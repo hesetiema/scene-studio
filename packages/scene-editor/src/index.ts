@@ -23,6 +23,22 @@ export {
   createDefaultViewState,
 } from "./core/document/default-view";
 export {
+  applyViewPatch,
+  createDocumentFromAsset,
+  createEmptyDocument,
+  createSceneDocument,
+  assetDisplayName,
+  type CreateDocumentFromAssetOptions,
+  type CreateSceneDocumentOptions,
+  type ViewPatch,
+} from "./core/document/create";
+export {
+  createFileBundleUrl,
+  type FileBundle,
+  type FileBundleOptions,
+} from "./assets/file-bundle";
+export { assetFormatHint } from "./assets/format";
+export {
   migrateSceneDocument,
   migrations,
   type Migration,
@@ -46,6 +62,15 @@ export {
   type AssetResolver,
   type ResolverAssetLoaderOptions,
 } from "./assets/resolver-asset-loader";
+export {
+  createLazyDecoders,
+  DEFAULT_DECODER_CDN,
+  decoderCdn,
+  DECODER_PAYLOAD_LAYOUT,
+  type DecoderModules,
+  type LazyDecoderBundle,
+  type LazyDecoderOptions,
+} from "./assets/lazy-decoders";
 export {
   createUniversalAssetLoader,
   inspectModel,
@@ -75,6 +100,7 @@ export { DisposerStack } from "./runtime/disposer-stack";
 export { SelectionManager } from "./runtime/selection-manager";
 export { TypedEventBus } from "./runtime/typed-event-bus";
 export type {
+  DisplayModeId,
   EnvironmentPreset,
   MorphTargetInfo,
   RuntimeContract,
@@ -82,3 +108,8 @@ export type {
   RuntimeEventMap,
   Transform,
 } from "./runtime/runtime-contract";
+export {
+  LIGHTING_PRESETS,
+  type LightingPreset,
+  type LightingPresetId,
+} from "./core/view/lighting-presets";

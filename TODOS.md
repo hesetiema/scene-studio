@@ -1,170 +1,162 @@
 # TODOS
 
-## 查看器能力补齐
+仓库内 `0.7.0` alpha；npm `latest` 为 `0.6.0`。架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
-0.6.0 完成了预览主链路：`<scene-editor src>` 单行预览、自动取景（`autoFrame`）、`progress`/`load` 生命周期、tone mapping / exposure，以及 `visibility-change` 与按需开启的 `view-changing` 元素事件。
+## 一、已完成（`0.7.0`）
 
-### 查看器体验（0.9.0）
+- **Playground 首页「先查看、再编辑」**：首页虽然走 `loadDocument()`（SDK 默认推导 editor），但 `main.ts` 在元素升级前把 `mode` 钉成 `viewer`，首个 runtime 直接以 `interactive: false` 创建；顶栏新增 查看 / 编辑 分段开关（`src/ui/mode-switch.ts` + `src/styles/mode.css`），写入 `el.mode` 与 `body[data-studio-mode]`。查看态隐藏控制面板 / 状态栏 / 保存 / 恢复面板按钮，画布铺满；宿主侧 `G`/`R`/`S`、Ctrl+Z/Y 与 `save-request` 同步门禁，切回 viewer 由 SDK 清空选择，全程不写文档。`?mode=editor` 供 e2e / 视觉夹具显式进编辑态；回到首页复位为 viewer。`e2e/viewer-mode.spec.ts` 新增「默认 viewer → 切 editor → 切回清选择且不弄脏」用例，其余需要编辑态的夹具 URL 统一补 `mode=editor`。
+- **demos 精简：25 个用例已迁到 `minimal.html?demo=`**：首页覆盖工作室 UI 面，宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot 等约 60 个 SDK 标识符）由 7 个独立 `/demos/*.html` 页面承载。现把它们降级为 `src/scenarios/markup/*.html` 的 `?raw` 片段，`src/scenarios/router.ts` 按 `?demo=<name>` 注入 DOM 后动态 import 原场景模块；`window.__demo` / `__docDemo` / `__coverage` / `__assets` / `__viewerDemo` 与 `body.dataset.demo` / `dataset.coverage` 就绪标志原样保留，`sdk-coverage.spec.ts`(10) + `demos-adversarial.spec.ts`(15) 共 25 个用例只改 URL、零断言丢失。`apps/playground/demos/` 与 7 个构建入口已删除，HTML 入口从 10 个降到 3 个；每个场景 SDK 代码独立按需 chunk，默认 `minimal.html` 走同步路径不受影响。CI 只跑 `critical-flows.spec.ts`，这 25 个用例必须保持可达。
+- **查看器/编辑器分离**：新增 `mode="viewer|editor"`（缺省按 `src` / 宿主文档推导，生效值镜像到 `data-mode`）。
+  viewer 不加载 TransformControls（`ThreeRuntime` 新增 `interactive` 选项 / `setInteractive()`），点选与
+  `G`/`R`/`S`、撤销快捷键全部只在 editor 生效，切到 viewer 时清空选择。实测同一页：编辑器场景 8 个 scene 子节点
+  （含 gizmo），viewer 5 个、点击不产生选择。
+- **动态 `src` 静默退化**（原 P0）：`#createSrcResolver()` 改为常驻，URL 在每次 resolve 时读取；`object-store`
+  遇到「有 `assetId` 但无 `AssetCache`」直接抛 `asset-not-found`，不再退化成 1×1×1 占位盒。实测 `ready` 后设
+  `src` 拿到 25×79×155、3 个 clip、无 error。
+- **裁剪面固定 0.1/1000**：每帧按相机距离与内容半径重算（`near = max(d·5e-4, r·1e-4)`、
+  `far = max(d·50, r·50)`），滚轮缩放（距离变化）也跟随。实测 1× 与 1e6× 模型：near 7.4e-4 → 736、
+  far 73.6 → 7.36e7。
+- **失败态无视觉出口**：新增 `slot="error"`；没有该 slot 时元素自绘提示（`[data-scene-editor-error]`，含
+  `role="status"`），`render-init-failed` / 资产失败都走这里，下一次成功加载清除。
+- **`load` 早于取景**：`src` 路径把 `load` 压到 `frameViewer()` 与显示态重放之后派发；实测在 `load` 回调里
+  `getDimensions()` 已是取景后数值。压制用的是计数而非布尔，连续两次切换 `src` 只会在最后一次取景后释放一个
+  `load`（携带最终 `url`）。
+- **进度粒度**：无 `Content-Length` 时用 `loaded/(loaded+1MB)` 渐近曲线，进度条不再全程贴 0。有长度时仍是字节比。
+- **`prefers-reduced-motion`**：自动旋转降级为静态，`smoothViewTo()` 直接落位。
+- **解码器开箱不可用**（原 P2）：新增 `decoder-path` / `decoder-cdn`，一个 base URL 按 three 自己的
+  payload 布局（`draco/gltf` + `basis`）懒装配 Draco / KTX2 / Meshopt。`decoder-cdn` 指向钉死 three 版本的
+  jsDelivr；宿主赋值 `el.dracoLoader` 等仍然优先。`lazy-decoders.ts` 的 `ready()` 幂等、单个模块失败只丢那一
+  种解码器；KTX2 需要真实 renderer（`RuntimeContract.renderer`，`detectSupport` 要探设备）否则跳过而不猜。
+  配套新增 `decoderHint()`：把 three 的 `No DRACOLoader instance provided` 翻成元素错误态里可执行的提示。
+  实测：`tri-draco.glb` 无属性 → 报错并提示；`decoder-path="/decoders/"` → 加载成功、只拉本地 wasm；
+  `decoder-cdn` → 走 jsDelivr 成功。
+- **每对象一次 draw call**（原 P2）：新增 `src/three/viewer/instancing-rig.ts`，同几何（`geometry.parameters`
+  指纹）+ 同材质（逐字段指纹，含 `defines`）的网格自动合成一个 `InstancedMesh`。对象模型不变：每个文档对象仍是
+  自己的 `Object3D`（位姿、材质、拾取、导出、撤销都不动），只是代理被移到专用 layer（`BATCH_PROXY_LAYER = 1`），
+  主相机不画、`Raycaster` 显式 `enableAll()` 后仍能命中（`picker.ts` 已开）。选中 / 有材质覆盖 / 资产实例一律
+  踢出批次，各自保留独立 draw call。实测 5k 对象：**1 881 → 2 次 draw call**、p95 28.1 → 17.1 ms（vsync 到顶）、
+  装载 571 → 300 ms、上传几何 1 881 → 2；1k 对象 1 001 → 2。`perf.html?instancing=0` 可同页对照，
+  `e2e/instancing-perf.spec.ts` 把「≤20 次 vs >900 次」钉成门禁。
+  过程中修掉两处自伤：①每次 `admit` 都重算包围球是 O(n²)（5k 对象多花 900 ms），改成置 `null` 让 three 每帧惰性重算；
+  ②`swap-remove` 先覆盖后 `splice` 会把「被移除的代理」认错，导致该恢复的图层没恢复（有单测钉住）；
+  ③`markDirty` 起初只对「本身在批次里」的对象生效，于是拖动一个 group 时它的合批子对象不跟手——现在按子树刷新。
+- **逐实例视锥剔除**（原 P3 第一条）：合批不再「一组一个包围球」。每组切成 ≤256 实例的
+  `InstancedMesh`，成员按**世界坐标网格单元**排序后填块（每块 ≈ 一个单元），three 的 per-mesh
+  剔除因此重新生效。实测 5k：全览 13 次 draw call / 36 864 三角形，近景（贴着网格角、15° 视角）
+  7 次 / 18 432，对比关闭合批的 1 881 次 / 22 560 与 369 次 / 4 416；1k 只有 4 个 chunk，近景仍全中，
+  说明收益随场景规模增长。
+  弯路记一次：第一版按**文档顺序**切块，结果 1k 场景近景三角形一点没降（12 000 不变）——每块都是横跨
+  整场的「条带」，4 个包围球全部与视锥相交。分块必须按位置，否则不但不剔除，还白付 draw call。
+  排序延到 `sync()`（每次增减一次，不是每个对象一次），拖动实例不重排（包围球跟着变大，不会错剔）。
+  门禁换成 5k + 近景三角形 ≤ 全场 40%（`e2e/instancing-perf.spec.ts`），`perf.html` 末尾新增近景一帧。
+- **`instancing` 属性**（原「元素没暴露、宿主关不掉」）：`instancing="false"` / `0` / `off` / `no`
+  关掉合批，缺省为「开」（裸属性不会反过来关）；`ObjectStore.setBatcher()` + `ThreeRuntime.setInstancing()`
+  支持运行时来回切，不重载文档、不动 `mode`。
+- **`perf.spec.ts` 首帧门禁不再 flake**：实测同一份代码 0.7–2.5 s（SwiftShader 冷启抖动），2 s 门禁卡的是
+  抖动。改为 3 s，设计目标仍记在架构文档里；`PERF_FIRST_MS` 可覆盖。
+- **SDK 接入样板收敛（A1–A3）**：宿主不该手写的四类「只有一种正确写法、写错不报错」的代码收进包。
+  ①`createSceneDocument` / `createDocumentFromAsset` / `createEmptyDocument`（`core/document/create.ts`）：六字段信封 + `ViewPatch`
+  合并 + 对象深拷贝，playground 里 4 处手写字面量全删；②`createFileBundleUrl(files)`（`assets/file-bundle.ts`）：`.gltf` 包
+  的 `buffers[].uri` / `images[].uri` 重写成 `blob:`，返回 `{ url, dispose, format }`，配套 `el.loadFiles(files)`——
+  复用 `src` 的进度 / 取景 / 错误态，资产 id 用「上传序号 + 文件名」铸币避免缓存串味，宿主 `assetResolver` 仍优先（元素内部
+  id 自己解析）；③`el.exportDocument({ format: "glb"|"gltf"|"obj" })`：**按文档位姿**导出（预览态的分解偏移 / 材质预览
+  不会泄漏进文件，live 路径仍走 `exportScene`）；OBJ 走动态 import 独立 chunk；④`downloadBlob()` + `el.toBlob()`。
+  过程中修掉一个真 bug：格式判定 `url.split(".").pop()` 对 `blob:http://…/uuid` 会得到 `1:4173/uuid`，上传被报成
+  `asset-unsupported-format`——新增 `assets/format.ts` 的 `assetFormatHint()`（先 URL 后 asset id，只认
+  `/^[a-z0-9]{1,8}$/` 的扩展名片段）。元素入口 +1.9 kB、three 入口 +1.6 kB（gzip 合计 +1.1 kB）。
+- **B 档纯减法（playground 里「包已有、宿主没跟上」的重复实现，净删 153 行）**：①裁剪面同步——
+  `camera-controller.ts` 的 `startClipSync`/`syncClipPlanes` 常驻 rAF 与 runtime 的 `#render() → #applyClipPlanes()`
+  是两套真相（拖一次相机裁剪面算两遍），删；②手写转台——`toggleTurntable` 的 rAF 旋转换成
+  `runtime.setAutoRotate({ enabled, degreesPerSecond: 26 })`（SDK 转台是 rig 级、展示性的：不打脏文档、
+  拖拽自动暂停、尊重 reduced-motion；旧实现停转时还会把相机写进文档）；③绕开契约的色调映射——
+  `#applyRenderSettings` 直接改 `renderer.toneMapping` 并全场景 `needsUpdate`，换成
+  `runtime.setToneMapping` / `setExposure`；④手写飞行缓动——`flyTo` 的 rAF lerp/cubic ease 换成
+  `runtime.smoothViewTo()`（衰减、reduced-motion、拖拽中断归 SDK 管），提交延到衰减渐近线之后（~2.5×decay），
+  因为 `getViewState()` 读的是活相机而不是目标位姿。
+- **SDK 接入样板收敛（A4–A7）**：视口覆盖层与预设数据收进包，playground 净删 ~270 行（`display-modes.ts`
+  130、`explode-controller.ts` 140 全删，`presets.ts` 数据表删 30 行）。
+  ①`display-mode="studio|xray|wireframe|normal|clay"` 属性 + `runtime.setDisplayMode()` + `createDisplayRig`：
+  一次应用共享**一份**覆盖材质（旧实现每 mesh 一份），且必须同时改 `InstancedMesh` 批次——只改代理 mesh 的材质对
+  合批对象无效（这正是宿主几乎必踩的坑）；`"studio"` 精确还原原始材质，`addObject` / `setInstancing` 后自动补覆盖；
+  ②`explode="0..1"` 属性 + `runtime.setExplode()` + `createExplodeRig`：基线读**文档**位置（每次调用重读，gizmo
+  拖动后基准不漂），写入走 `applyTransform`（带 `markDirty`，实例矩阵跟着刷新），文档装载重置为 0、属性 re-assert；
+  ③（A6）确认 three r186 的程序缓存键已含 `toneMapping`（`WebGLPrograms.js:366/490`）——宿主侧全场景
+  `needsUpdate` 遍历是纯浪费，B 档删除即正确；④（A7）`LIGHTING_PRESETS` 四套参考布光按 `view.lights` 形状从
+  core 导出，应用路径仍是宿主 `setViewState`。
+  过程中修掉一个自伤：元素装载后 re-assert `explode` 属性触发 `setExplode(0)`，rig 里 `0→0` 没有短路，直接走了
+  O(objects×bounds) 的基线全量重建，perf 页首帧 2.4 s → 4.4 s（复现两次）；现在 `next === factor` 无条件返回。
+- **顺带修掉两个真 bug**：①`error` 覆盖层的 `textContent` 写入会触发 slot 观察者的 childList 回调 →
+  `#collectSlots` → `#applyErrorVisibility` 的微任务死循环（只剩一个失败态挂着时必现），现在观察者忽略
+  自身覆盖层的变更，写文本也先比对；②`src` 预览资产失败后仍会派发 `load` 并把 `loaded` 置真、顺带清掉
+  错误提示，现在单资产失败不再宣布 `load`（宿主文档保留「部分成功」语义）。
 
-五项全部落地，都是**查看器表面**（元素属性 / 可选 RuntimeContract 方法），没有触碰 `view` schema：
+## 二、查看器剩余（原待补清单，本轮清空）
 
-- **首帧交叉淡入**：`seamless-poster` 让海报在首帧渲染完成后以 300ms 淡出，不再是 display 一帧切换的闪变。淡入期间 `pointer-events: none`，海报在淡入结束才 `display: none`，宿主自己的内联 `opacity` 会原样还给它。没有该属性时保持旧的立即隐藏行为（有测试钉住两种路径）。
-- **拖拽惯性**：`camera-damping`（数值 = OrbitControls `dampingFactor`，裸属性取 0.08）。
-  - 按需渲染下阻尼拿不到帧，所以 `CameraRig` 多了一个**收敛循环**：`end` 之后逐帧渲染，直到控件不再派发 `change`（addon 自己的 epsilon 就是停的条件）。循环本身不调用 `update()`——渲染循环里的那一次才是唯一的一步，避免每帧衰减两次。
-  - 循环与转盘循环互斥：`start` 立即取消，`setActive(false)`（离屏）同时停掉两者且保留配置。
-- ~~**交互提示**~~：已移除。查看器只负责画布，不加装饰件——`interaction-prompt` / `interaction-prompt-threshold` 连同那个自建的「拖动旋转」气泡、摆动动画与 `#interacted` 状态一起删掉了（宿主想要提示，自己往 `<scene-editor>` 上叠一层即可，slot 与 `poster-dismissed` 事件都在）。
-- **离屏 / 后台暂停渲染**：`RuntimeContract.setRenderingPaused?(paused)`。元素把两个来源（IntersectionObserver 的不可见、`document.hidden`）合成一个布尔量；`ThreeRuntime` 停掉动画与转盘循环、`#render()` 直接返回，恢复时**立刻补一帧**（drawing buffer 不保留，不补就是白屏）。显式截图（`toDataURL` / `toBlob` / 公开的 `render()`）走 `force` 通道，暂停不影响它们。
-  - 注意：`#onVisibilityChange` 即使标志未变也会应用暂停——观察者的首次报告可能是 `false`，而初始状态本来就是 `false`，早退会漏掉「一开始就在视口外」的情况。
-- **内嵌相机**：`camera-name` 属性 + `cameras` / `cameraName` / `setCameraByName()`。只借位姿与 FOV，运行时仍是自己的透视相机 + 轨道控制（所以用户能从内嵌视角拖走，不会被锁死）。轨道 `target` 由「内容中心投影到视线轴」推出——glTF 相机只有朝向没有 target，而 OrbitControls 每次 update 都用 target 重算朝向，不落在视线上就会一拖就跳。加载前设的名字会记住并在挂载时套用；文档 `view` 一旦应用就清空当前相机名（持久化的位姿优先级更高）。
-- **Morph target**：`morphTargets` / `setMorphInfluence(objectId, meshIndex, targetIndex, value)`。
-  - 用 `(objectId, meshIndex)` 而不是 uuid 定位 mesh：重载后遍历顺序稳定，uuid 会变。
-  - `driven` 由「正在播放的 clip 是否写了 `<meshName>.morphTargetInfluences`」判定——这正是 mixer 的绑定方式。被驱动的通道直接拒绝写入，UI 显示禁用态，而不是写了下一帧被覆盖。
-  - GLTFLoader 会把未命名的 target 用序号当 key，所以形如 `"0"` 的 key 不算名字，回退到 `Target n`。
+> P2「每对象一次 draw call」、P3「逐实例视锥剔除 / 代理资源共享 / 资产内部合批 / 多 clip 混播 / 拾取 BVH」
+> 都已在本轮完成，逐条见上。
 
-验证资产：`apps/playground/public/assets/camera-morph.gltf`（自建，3 个节点 / 2 台相机 / 2 个 morph target），以及更早的 `variant-box.gltf`。两者都只在 playground 里，不进包。
+### 已完成（本轮新增）
 
-### 查看器表面：传输、位姿、键盘（0.9.x）
+- **代理资源共享**：新增 `src/three/viewer/shared-resources.ts`——按**内容签名**（`primitiveSignature`，默认值在
+  这里显式解析，所以 `{kind:"box"}` 与写全字段的 box 是同一个 key）建池，引用计数释放；`createPrimitiveObject` /
+  `createPlaceholderObject` 都从池里取几何与基础材质，`dispose()` 变成「释放一个引用」。`ObjectStore.resources()` /
+  `ThreeRuntime.resourceStats` 暴露 `{geometries, materials, references}`，`ThreeRuntime` 新增 `resources` 选项
+  （多运行时共享一份池，由宿主负责销毁）。实测 5 000 个盒子：**26.5 MB → 11.0 MB** JS 堆；`perf.html` 的 1 000 盒子
+  场景现在断言 `geometries === 1`。
+- **资产内部合批**：新增 `src/three/viewer/asset-merge.ts`——把同一个资产实例里**共享同一材质**的叶子 mesh 的位姿
+  烘进顶点、`mergeGeometries` 拼成一个网格。触发条件收在资产层：无 `animations`、无 `KHR_materials_variants`；
+  逐 mesh 排除蒙皮、morph、带子节点、半透明/多材质。200 个同材质盒子 → 1 个 mesh，约 25 ms；`restore()` 在
+  `remove()` 时把原节点放回并释放合并 buffer（源 buffer 属于资产缓存，不碰）。拾取不受影响：资产子节点本来就都标着
+  文档对象 id。
+- **多 clip 混播**：`AnimationRig.playBlend(objectId, layers)` + `blend` 读回，权重按调用内归一化（`[1,1]` = 50/50），
+  每层可带 `timeScale`；`pause` / `resume` / `setTime` / `activeTrackNames` 都覆盖整组层，transport 事件与 `time`
+  跟随权重最大的那层。单层等价于 `play()`。运行时 `playAnimationBlend()` / `animationBlend`，契约里是可选成员。
+- **拾取 BVH**：新增依赖 `three-mesh-bvh`（^0.9.18）。`createPicker` 对 >2 000 三角形的网格把**该 mesh 的**
+  `raycast` 换成 `acceleratedRaycast`（不 patch `THREE.Mesh.prototype`），树按几何缓存并引用计数（资产实例共享
+  buffer，树也共享；`dispose()` 不会拆掉别的 picker 的树）。BVH 是**动态 import**，且只在内容里真的存在重网格才发
+  请求；`raycaster.firstHitOnly` 让每个网格一命中即停。实测 130 560 三角形：**12.0 ms → 0.10 ms**/次，建树约
+  63 ms；`Picker.ready()` 可提前建好。蒙皮 / morph / InstancedMesh 不参与。
+- **更细的剔除**：仍未做。现在是块级（256 实例一个包围球）。再往下要么把块切小（用 draw call 换），要么上 GPU 侧
+  剔除（`BatchedMesh`，要 4.8+ 的 `three` 与另一套对象模型），两者都不便宜。
 
-上一批补齐的是「看得对」，这一批补的是「宿主能控」。三项都只加在元素/RuntimeContract 的可选成员上，`view` schema 依旧未动。
+### P3 — 进度条的解析阶段
 
-- **播放传输的元素面**：`availableAnimations` / `animationName` / `paused` / `play()` / `pause()` / `currentTime` / `timeScale`。
-  - 运行时其实早有 `playAnimation` / `pauseAnimations` / `resumeAnimations` / `setAnimationTime` / `setAnimationSpeed`，只是没写进 `RuntimeContract`——这一批是纯接线，能力早就在。
-  - `play()` 先试 `resumeAnimations()`：暂停后从**当前位置**续播，而不是 `reset()` 从头开始。这是 model-viewer 的语义，也是宿主最容易踩的差异。
-  - `pause()` 会置一个显式的 `#explicitPause`，之后 `#applyPlaybackSettings` 里 `autoplay` 一律传 `false`——否则「加载前先暂停」会被随后的加载覆盖。
-  - `animationName` 的 setter（而不是属性）会**选中并起播**；只写 `animation-name` 属性仍受 `autoplay` 约束，两者语义不同，测试各钉一条。
-  - `availableAnimations` 去重：一个文档里两个对象都叫 `Take 001` 时，宿主的下拉框只想要一个选项。
-- **相机声明式属性与 getter**：`camera-orbit` / `camera-target` / `field-of-view`（+ `min/max-field-of-view` 夹取）、`getCameraOrbit()` / `setCameraOrbit()` / `getCameraTarget()` / `setCameraTarget()` / `getFieldOfView()` / `setFieldOfView()`。
-  - 角度约定与既有的 `min/max-camera-orbit` 完全一致：`theta` 从 +Z 起算的方位角、`phi` 从 +Y 起的极角、`radius` 世界单位——所以宿主可以直接把 model-viewer 的属性值粘过来。
-  - `auto` 表示「保留该轴」：`camera-orbit="auto auto 2m"` 只改距离，不动角度。`camera-orbit="90deg 90deg 10"` 这类给定值则按 `radius·sin/ cos` 还原成相机位置。
-  - 只改 `camera-target` 时，眼睛跟着平移、角度与距离不变——否则 `OrbitControls` 每次 `update()` 都会用 target 重算朝向，一拖就跳。
-  - 位姿走的是 `runtime.applyViewState()` 而不是 `editor.setViewState()`：查看器属性不该把文档标脏，持久化的位姿仍然只有 `view.camera`。
-  - 两个应用时机刻意分开：**属性变更**永远应用（`force`），**加载后重断言**只应用一次然后挂起。否则改个 `tone-mapping` 都会把用户刚拖好的视角弹回属性值。
-  - `camera-name` 存在时整体让位：内嵌相机是完整位姿，属性只负责补位。
-- **键盘导航与 `alt`**：方向键 orbit（5°，Shift 1°）、`+`/`-` 推拉 ±10%，只处理编辑器没认领的键（`preventDefault` 已置位就跳过），焦点在输入类元素内不响应。`alt` 落到 canvas 的 `role="img"` + `aria-label`，缺省回退成 `3D model: <文件名>`——一个没有标签的 canvas 对读屏用户等于零信息。
+网络字节曲线已经可用，但解析（GLB → 场景图）仍是「最后一跳」。要更平滑只能上报假进度或分帧解析，收益不抵复杂度，暂不做。
 
-三项都有单测（`test/element/viewer-surface.test.ts`，23 条），并在 `/demos/viewer.html` 上加了传输控件、`camera-orbit` 预设、`field-of-view` 输入与「读取 orbit」按钮。
+### 不做
 
-### 查看器表面：交互、环境、位姿过渡（0.9.x）
+- **AR / XR**：`ar` / `ar-modes` / `quick-look` / `xr-environment` 明确不做。
+- **`interaction-prompt`**：已移除且不打算恢复——查看器只画 canvas，装饰件归宿主。
 
-同一批思路的第三轮：仍然只加元素属性与 `RuntimeContract` 的可选方法，`view` schema 未动。
+## 三、与 model-viewer 的对照
 
-- **交互手感**：`orbit-sensitivity`（乘法系数，直接映射 `OrbitControls.rotateSpeed`）+ `touch-action`（`none` / `pan-x` / `pan-y`，默认 `pan-y`）。
-  - 两个值都刻意允许边界语义：`orbit-sensitivity="0"` 冻结轨道但仍可平移缩放，负值反向——看 `radius="0"` 的洞穴内部就靠它。所以下发给 addon 时判的是「有没有」而不是「真不真」。
-  - `touch-action="auto"` 不接受：`auto` 正是「把拖拽交给浏览器」的那个值，也就等于不拦截滚动，而这条属性的目的恰好相反。iOS 上 canvas 的 CSS `touch-action` 无效，所以走属性而不是样式表。
-  - **`touch-action` 是抢来的**（本轮唯一一次踩坑）：`OrbitControls` 与 `TransformControls` 都在 `connect()` 里硬写 `this.domElement.style.touchAction = 'none'`（three 自己的注释是 "Disable touch scroll"），而这两次 connect 都来自各自的动态 import，顺序不由调用方决定。第一版实现「mount 之后重申一次」，真机上约一半的加载仍然是 `none`。定位过程：元素与 rig 两侧都插桩记录写入顺序 → 发现我们的 `pan-y` 明明是最后一次写；再用 MutationObserver 盯 `style` 属性，看到在我们之后还有一次 `none`，而它不来自 OrbitControls 的日志 → grep 构建产物，`TransformControls` 里也有同样的赋值。修法是新增 `viewer/touch-action-owner.ts`：值由查看器持有，画布上挂一个 `style` 观察者，谁写偏了就写回去（同值不重写，所以不会自激）。
-- **环境贴图**：`environment-image` 现在一个属性两种形态——预设 `neutral` / `room` / `legacy`，或 HDR/EXR/LDR 的 URL；`skybox-image` 单独管背景。
-  - 语义按 model-viewer：URL 形态只换反射，**不动背景**；背景要换只能给 `skybox-image`。
-  - 反过来，只给 `skybox-image` 而没给 URL 形态的 `environment-image` 时，同一张图兼作光照探针——一次下载既照亮又当背景，这是 model-viewer 的行为，也是「只想换张环境图」的宿主最常见的写法。
-  - `legacy` 是 `room` 的别名（model-viewer 保留了旧预设名）。
-  - 换图用 token 做 last-call-wins：异步解码回来的旧图自己 dispose，不覆盖后发的那张，也不泄漏 GPU 资源。three r186 里 `RGBELoader` 已废弃，改用 `HDRLoader`。
-- **位姿过渡**：`interpolation-decay`（ms，默认 50；官方选项是「大于 0 的值」，所以非正值回退默认值，要立刻到位用 `jumpCameraToGoal()`）+ `jumpCameraToGoal()` / `resetTurntableRotation(theta?)`。
-  - 衰减是**渐近**的：`p = 1 - e^(-3t/decay)`。第一版把 `t/decay` 截断到 1，结果 `p` 永远到不了 0.999，缓动永远不结束——现在不截断，靠 epsilon 收尾。
-  - 位姿之间走**球面插值**：offset 方向 `slerp`、radius 线性、target 线性。直接线性插值相机位置会在 180° 换边时穿模而过。
-  - 缓动与转盘循环互斥（两者都要独占相机）：起缓动先停转盘，落地、被 `jumpCameraToGoal()` 收掉、或被用户拖拽打断后都交还。
-  - `resetTurntableRotation(theta)` 是**绝对**语义：调用后转盘读数就是 `theta`（默认 0），所以内部做的是「差值回滚」，而不是无条件归零；用户自己拖出来的方位角不受影响。
-  - 加载完成后的重断言走 **snap**（不缓动），只有属性变更与 API 写入才淡入——否则每次加载都会看到相机自己飘一段。这条用「意图参数」表达，而不是靠「首帧特判」，后者会把 `setFieldOfView` 的第一次调用也变成缓动，还会把文档标脏。
-- **加载凭据**：`with-credentials` → `Loader.setWithCredentials`，在**每次 load 前**下发，所以模型本体与它引用的外部 buffer / 贴图都能带上 cookie（私有 CDN 的常见要求）。
+对照场景 `minimal.html?demo=compare`（模板片段 `apps/playground/src/scenarios/markup/compare.html`；同一 GLB、同一动画时间、同一视口；指标：平均/p95 亮度、包围盒像素尺寸、相机距离；左侧仍需外网 CDN）。
 
-未实现（经核对，不是差距）：`interaction-policy` / `allow-when-focused` / `generate-intrinsic-size` 在 model-viewer 的官方属性表与其 `features/controls.ts` 里都不存在，前者是此前凭记忆写下的误记；AR/XR 相关（`ar` / `ar-modes` / `quick-look` / `xr-environment`）维持不做。
+已对齐：色调映射默认值（预览 `neutral`）、`neutral` 环境预设、接触阴影算法、取景（`updateFraming()`）、`shadow-intensity` / `shadow-softness` 语义，以及「viewer 无编辑交互」这一条本身（model-viewer 也没有 gizmo 与点选）。
 
-验证：`test/element/viewer-interaction.test.ts`、`viewer-environment.test.ts`、`viewer-loading.test.ts`、`viewer-camera-transition.test.ts`，以及 `test/three/touch-action-owner.test.ts`（含「第三方后写仍被纠正」）、`camera-rig.test.ts` 的 `rotateSpeed` / 转盘回滚 / 位姿缓动 / `touch-action` 组。真机脚本 `e2e/manual-viewer-check.mjs`（对生产构建跑，用法写在文件头）18/18（含 `touch-action` 默认值、HDR 换图、skybox 兼作光照、淡入是否落地、`jumpCameraToGoal`、`resetTurntableRotation`、「查看器属性不写脏文档」）。
+残留差距（均为取样/版本问题，非算法差异）：
 
-### 标注视口：`data-normal` + `queryHotspot()`（0.9.x）
+1. 两栏各自从加载完成起播，动画相位漂移 → 接触阴影形状不同。逐帧对比需共享时钟与 clip 相位。
+2. three r183（model-viewer 内）与 r186 的预滤波/色调映射实现不同 → 环境照明整幅平均亮度残留约 5%。
 
-标注（annotations）原先把 `slot="hotspot-*"` + `data-position` 做到「能钉在模型上」就停了，其余四个 API 里先补了最便宜的两个：
+## 四、编辑能力缺口
 
-- **`data-normal`**：表面法线，默认 `0 1 0`（官方 `Hotspot` 的默认值）。判定照抄官方 `updateHotspotsVisibility`——`(camera − anchor) · normal < 0` 即背面，且**不归一化**（长度不影响符号；零长法线因此算「朝向」，不会让标注莫名消失）。
-  - 背面时写 `opacity: var(--min-hotspot-opacity, 0.25)`；正面时把内联值**删掉**而不是写 `1`，宿主自己的 `opacity` 与 `--max-hotspot-opacity` 才仍有发言权。官方是在自己的 shadow 样式表里给包裹层加 `.hide`，我们是 light DOM，只能落到节点上。
-  - `data-visibility-attribute="visible"` 时镜像成 `data-visible`（官方同样只在显式声明时才写，不擅自加属性），并在**状态变化**时派 `hotspot-visibility`。投影每帧都跑，所以事件必须只在翻转时发，否则就是噪声。
-- **`queryHotspot(name)`**：返回 `{ position, normal, canvasPosition, facingCamera }`，`canvasPosition` 是 canvas 本地 CSS 像素 + 投影的 NDC `z`（官方 `HotspotData` 就是这种 `{x,y,z}` 对象——这里刻意不跟随本仓库的 tuple 惯例，否则从 model-viewer 迁过来的代码要全改）。找不到锚点、runtime 未就绪、投影非有限值都返回 `null`。
-- **运行时契约**：新增可选 `projectHotspot(point, normal)`，`projectPoint` 顺带多返回一个 `z`。`ThreeRuntime` 里两者共用一个私有 `#projectToCanvas`，避免重复算包围盒。
-
-顺带修掉一个真 bug：slot 观察者只 observe 了 `this` 而没有 `subtree: true`，所以锚点自己改 `data-position` / `data-normal` 根本不会被重新收集（`attributeFilter` 里写着 `data-position` 但永远不会触发）。模型这侧反而比官方宽松——官方文档明确 `data-position`/`data-normal` 不被观察，必须调 `updateHotspot()`；我们现在改属性即可，`updateHotspot()` 因此不必急着补。
-
-未做：`data-surface` / `surfaceFromPoint()`（跟随蒙皮动画的标注，要做三角形 + 重心坐标 + 每帧 `animateSurfaceHotspots`，需单独立项）、`materialFromPoint()`。
-
-验证：`test/element/viewer-hotspot.test.ts`（16 条：queryHotspot 三态、默认法线、背面改写 opacity、事件只在变化时发、`data-visibility-attribute` 镜像、改 `data-normal` 重新收集、出深度范围隐藏、`updateHotspot()` 的五条）、`test/three/hotspot-projection.test.ts`（6 条：投影一致、正/背、签名点积、零长法线、相机换边、锚点自身在相机后）。演示页新增「标注（hotspot）」分组：在模型上取一点放两个法线相反的锚点，转视角即可看到淡出，另有按钮演示 `updateHotspot()` 上下移动。
-
-### 查看器表面：状态、传输事件、指针灵敏度（0.9.x）
-
-这一轮补的是宿主最常依赖、但我们一直缺的三块「读数 + 事件」，仍然只动元素/RuntimeContract 的可选面。
-
-- **`loaded` / `modelIsVisible`**：`loaded` 就是 `#contentLoaded`（`load` 事件之后为真，换源与销毁归零）；`modelIsVisible = loaded × 视口内 × 海报已消失`，与官方 `$getModelIsVisible() && $modelIsRevealed` 同构。
-  - 顺带修了一处语义债：`model-visibility` 以前是 `visibility-change` 的别名（只反映交叉），现在按官方的**复合判定**发——海报重新出现也算一次翻转。`visibility-change` 保持纯交叉语义不动，需要原始信号的人不受影响。旧测试里「没加载过内容也发 `model-visibility`」的那条已按新口径改写。
-  - 没有 `IntersectionObserver` 时（SSR、部分测试 DOM、显式关掉工厂）按「在视口内」处理——官方在没有 IO 时也是这个默认值。
-- **传输事件 `play` / `pause` / `loop` / `finished`**：rig 在起播、暂停、绕回、one-shot 结束时通知，`ThreeRuntime` 转到事件总线，元素再转成 `CustomEvent`。
-  - `pause` 只在「由播放转暂停」时发——官方明确模型初始就是 paused，加载时发一次纯属噪声。`loop.count` 从 1 起，且每次起播归零（跟 three 的 `action._loopCount` 一致，不跨 clip 累计）。
-  - `loop` 只有 repeat / ping-pong 会触发：three 的 `LoopOnce` 只发 `finished`，不做多余的模拟。
-  - 另一个副作用：`play` 事件里的 clip 名会顺手写进 `#activeClipName`，所以 `animationName` 终于反映「实际在播什么」，而不只是「属性写了什么」。
-- **`zoom-sensitivity` / `pan-sensitivity`**：与 `orbit-sensitivity` 同一套语义，映射到 `OrbitControls.zoomSpeed` / `panSpeed`。`0` 是合法值（`zoom-sensitivity="0"` 冻结滚轮但保留拖拽），所以下发时判「有没有」而不是「真不真」。
-
-未做（并列入对照表）：`appendAnimation()` 等多动画混播、`interact()` / `interact-stopped`（没有编程运镜编排）、`materialFromPoint()`、`before-render`（按需渲染下「首帧」没有统一定义，宁可缺席也不谎报）。
-
-验证：`test/three/animation-rig.test.ts` 新增 4 条传输事件用例（含「没在播时 pause 不发声」「one-shot 只发 finished」），`test/element/viewer-surface.test.ts` 2 条（事件转成 CustomEvent、`animationName` 跟随实际播放），新增 `test/element/viewer-model-visibility.test.ts` 7 条，`viewer-interaction.test.ts` 2 条灵敏度用例。
-
-
-### 资源兼容（0.8.0）
-
-- **解码器注入**：元素暴露 `dracoLoader` / `ktx2Loader` / `meshoptDecoder` 三个属性（传实例，不传路径：`KTX2Loader` 必须自己先 `detectSupport(renderer)`）。元素把三者包成 getter 交给 `createResolverAssetLoader`，装载层**每次 load 前**重读并下发，所以「连接后再赋值」也能生效；`MinimalGltfLoader` 补了 `setMeshoptDecoder`。此前元素路径的 loader 根本没有解码器，Draco 压缩的 GLB 打不开。
-- **变体切换**：`KHR_materials_variants` 已实现（元素 `variant-name` 属性 + `availableVariants` / `variantName`，运行时 `variants` / `setVariant()`）。three r186 不解析该扩展，所以直接读 `parser.json` 的 `extensions` 与各 primitive 的 `mappings`，材质经 `parser.getDependency('material', i)` 解析以复用其缓存。
-  - 定位 primitive 靠 `parser.associations`（`{meshes, primitives}`）；表挂 `LoadedAsset.variants`，用 `mesh.userData` 里的一串 key 索引——`Object3D.clone` 走 JSON 深拷贝，字符串能活下来，材质引用不行。
-  - 实例是 `clone(true)`，所以每个对象的材质槽独立；切换本身是**场景级**的（对齐 model-viewer 的 `variant-name` 语义）。文档级 `material` 覆盖优先于变体，清除覆盖后变体会重新接管。
-  - 加载完成前设的 `variant-name` 会被记住并在挂载时套用；`MaterialVariantSet` 解析失败只损失该 primitive 的变体，不影响加载。
-  - 验证用的最小资产：`apps/playground/public/assets/variant-box.gltf`（8 顶点方块，Base / Red / Blue 三个材质）。
-
-### 与 model-viewer 的对照（`/demos/compare.html`）
-
-对齐方法与量化口径：同一 GLB、同一动画时间、同一视口，取模型像素的平均 / p95 亮度、包围盒像素尺寸与相机距离作指标。
-
-已对齐：
-
-- **色调映射默认值**：预览路径默认 `neutral`（model-viewer `tone-mapping="auto"` 在 glTF 上的解析结果）。此前默认 ACES，渲染结果比参考暗约 35%、饱和度过高。
-- **环境亮度**：`neutral` 预设已直接移植 model-viewer 的 `EnvironmentScene('neutral')` 几何（房间 + 6 遮挡体 + 7 发光板 + 1 顶光，σ=0.04 预滤波），反射形状与参考一致；整幅平均亮度仍差约 5%，来自 three r183 与 r186 的预滤波/色调映射实现差异，非数据差异。
-- **接触阴影**：移植 model-viewer 的 `Shadow` 算法——正交相机贴在**地面**上朝上，`MeshDepthMaterial` 改写为把「离地高度」写成 alpha，两遍可分离模糊后贴在透明面上；`softness` 同时决定贴图分辨率与相机 `far`，动画模型按 `ANIMATION_SCALING=2` 放大阴影体积。此前是方向光 PCF 投影，且相机架在模型半高朝下——梯度反了：脚下最淡、腰腹最浓，观感是模型周围一圈光晕而不是脚下接触。
-- **属性表面积**：新增 `shadow-intensity` / `shadow-softness`，与 `tone-mapping` / `exposure` 一样属于显示态，加载后重新断言（文档的 `view` 会覆盖它们——这曾导致 compare 页的阴影在模型加载完成瞬间消失）。`shadow-intensity` 现在原样传入 `contactShadow.opacity`，由阴影组件施加 model-viewer 的 `lerp(0.3, 1, softness²)` 软化衰减；此前的 `0.35×` 系数是针对旧 PCF 阴影的经验值。
-- **取景**：`frameViewer()` 复刻了 model-viewer 的 `updateFraming()`：球半径取顶点（而非包围盒角点）到目标中心的最大距离，距离 = 半径 / sin(15°)，宽模型不改距离而是按 `idealAspect` 放宽垂直 FOV，相机落在 105% 半径处（`camera-orbit` 的 `auto`）。FOV 恒为 30°——实测 v4 在竖屏不会抬到 45°，只放宽渲染 FOV。此前按投影包围盒 + 8 方位取样，模型尺寸差 −14%~+16%。
-
-仍有差距（按可见度排序）：
-
-1. **动画相位不同步**：两栏各自从加载完成起播，姿态随时间漂移，接触阴影的形状/位置因此不同——这是对照页的取样问题，不是渲染差异。要逐帧对比需共享时钟与 clip 相位。
-2. **渲染器版本差**：three r183（model-viewer 内）与 r186 的预滤波、色调映射实现不同，环境照明的整幅平均亮度残留约 5% 差。
-
-**取舍：** 相机切换与 morph target 只加在查看器表面（`RuntimeContract` 的可选方法 + 元素属性），`view` schema 未动——它们描述「怎么看」，不是「文档里有什么」。只有真正需要持久化「默认用哪台相机 / 哪个 morph 预设」时才需要 schema 迁移。
-
-## 编辑能力缺口
-
-0.7.0（schema v3）把以下能力带进了文档模型：
-
-- `parentId` 现在是真实层级：group 会被挂载，子对象挂到父对象下而不是场景根；父对象加载失败时子对象提升为根，成环时断开而不是挂死。
-- `type: "primitive"` + `geometry`：八种程序化几何（box / sphere / cylinder / cone / torus / plane / capsule / icosahedron），参数可选、默认值在工厂内。
-- 对象级 `material` 覆盖：只写声明的字段；asset 实例会先 clone 材质，避免污染缓存与其他实例。
-- `view.lights.additional`：point / spot / directional / hemisphere 附加灯。
-
-0.7.0 的命令层（`addObject` / `removeObject` / `reparent` / `setMaterial`）补齐了写操作：
-
-- 四个命令都进撤销栈，走同一套 `CommandHistory`；`addObject` 是异步的（资产加载），其余同步。
-- 写操作复用 `SceneObjectSchema` + `MaterialSchema` + `validateHierarchy`，因此重复 id、缺失父级、自指与成环在命令层就被拒绝，而不是等到下次加载。
-- `removeObject` 级联删除整棵子树并记录原始索引，undo 能还原数组顺序。
-- `setMaterial(id, undefined)` 清除覆盖并恢复资产自带材质（材质覆盖句柄可撤销）。
-- 删除选中对象后选择会被清理，不会留下悬空 id。
-
-playground 的材质面板已切到 `setMaterial`：改动进文档、进撤销栈，且拖动滑块通过
-`Command.mergeWith` 合并成一步撤销（顺带修掉了直接改 `mesh.material` 会污染 AssetCache
-共享材质的问题）。
+已具备（schema v3）：真实 `parentId` 层级（group 会被挂载，父失败子提升为根，成环断开）、`type:"primitive"` 八种程序化几何、对象级 `material` 覆盖（按实例 clone）、`view.lights.additional` 四种附加灯；`addObject` / `removeObject` / `reparent` / `setMaterial` 全部可撤销，并复用加载时的 `validateHierarchy`。
 
 仍未排期：
 
-- 对象的复制/克隆命令。
-- 多对象变换（批量变换命令）。
-- 资产内嵌相机的命名列表与切换（与上面的相机项一起设计）。
+- 对象复制 / 克隆命令。
+- 多对象批量变换命令。
+- 把「默认相机 / morph 预设」持久化进文档（当前只在元素属性层，`view` schema 不需要改动就不该动）。
 
-## 已明确不做（YAGNI）
+## 五、明确不做（YAGNI）
 
-- **CRDT / 实时多人协作**：首发面向单用户。并发编辑走既有路径——保存时校验 `revision` → 结构化冲突（base / incoming / local）→ 宿主决定 UX。未来若做，接入点在序列化与命令历史层，`SceneDocument` 已是纯数据模型，**不需要预留代码**。
-- **插件面板槽位**：`install(context)` 已交付（命令、事件、选择器、disposer 清理），槽位是无真实需求时的猜测性 API。
-- **按产品拆包**：多个产品出现复用需求前，保持单包四入口。
+- **CRDT / 实时多人协作**：首发面向单用户。并发编辑走既有路径（保存校验 `revision` → 结构化冲突 → 宿主决定 UX）。接入点在序列化与命令历史层，`SceneDocument` 已是纯数据模型，不预留代码。
+- **插件面板槽位**：`install(context)` 已交付（命令、事件、选择器、disposer），槽位是没有真实需求时的猜测性 API。
+- **按产品拆包**：出现真实复用需求前，保持单包四入口。
 
-## 发布
+## 六、发布清单
 
-- npm scope：`@scenio` 为占位，首次发布前选定。
-- 发布状态：仓库内为 `0.7.0`（未发布），npm `latest` 仍为 `0.6.0`。发布会带 schema v3，属于文档格式的 minor 变更。发布前跑 `pnpm test:release` 与 `pnpm test:pack`。
+- npm scope `@scenio` 为占位，首次发布前选定。
+- 发布会带 schema v3（文档格式 minor 变更）。
+- 发布前必跑：`pnpm test` → `pnpm typecheck` → `pnpm build` → `pnpm test:release` → `pnpm test:pack`。

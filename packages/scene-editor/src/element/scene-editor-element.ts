@@ -1,6 +1,7 @@
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import type {
   CameraOrbitLimits,
+  DisplayModeId,
   EnvironmentPreset,
   RuntimeContract,
   ToneMappingMode,
@@ -23,6 +24,12 @@ import type {
   MinimalGltfLoader,
 } from "../assets/gltf-asset-loader";
 import { applyGltfDecoders } from "../assets/gltf-asset-loader";
+import {
+  createLazyDecoders,
+  DEFAULT_DECODER_CDN,
+  type LazyDecoderBundle,
+  type LazyDecoderOptions,
+} from "../assets/lazy-decoders";
 import type { Command } from "../core/history/command-history";
 import {
   createSceneEditor,
@@ -30,12 +37,28 @@ import {
   type SceneEditorElementEventMap,
 } from "../runtime/create-scene-editor";
 import { createSrcDocument, SRC_ASSET_ID } from "./src-document";
+import { createDocumentFromAsset } from "../core/document/create";
+import { createPreviewViewState } from "../core/document/default-view";
+import { createFileBundleUrl, type FileBundle } from "../assets/file-bundle";
+
+/** Options for {@link SceneEditorElement.exportDocument}. */
+export interface SceneExportOptions {
+  /** `glb` (default), `gltf` (JSON) or `obj`. */
+  format?: "glb" | "gltf" | "obj";
+}
 
 export interface RuntimeFactoryOptions {
   /** Host asset resolver (design §10); default factory builds an AssetCache from it. */
   assetResolver?: AssetResolver;
   /** Built-in studio IBL, derived from `environment-image` (default `"room"`). */
   environmentPreset?: EnvironmentPreset;
+  /**
+   * Authoring chrome on/off, derived from `mode` (default: viewer for `src`,
+   * editor for a host document). The default factory forwards it to the
+   * runtime's `interactive` option; a custom factory should do the same, or it
+   * will show a gizmo inside a read-only viewer.
+   */
+  interactive?: boolean;
   /**
    * Decoder bundle, read before every asset load. The default factory forwards
    * it to the glTF loader; a custom factory should do the same so the element's
@@ -48,6 +71,13 @@ export interface RuntimeFactoryOptions {
    * authorization headers. The default factory forwards it to the glTF loader.
    */
   getWithCredentials?: () => boolean;
+  /**
+   * Draw-call batching, derived from `instancing` (default on). The default
+   * factory forwards it to the runtime's `instancing` option; a custom factory
+   * may ignore it, in which case the element's follow-up `setInstancing()` call
+   * still applies it.
+   */
+  instancing?: boolean;
 }
 
 export type SceneEditorRuntimeFactory = (
@@ -120,6 +150,30 @@ function normalizeToneMapping(value: string): ToneMappingMode | null {
     : null;
 }
 
+const DISPLAY_MODE_IDS: readonly DisplayModeId[] = [
+  "studio",
+  "xray",
+  "wireframe",
+  "normal",
+  "clay",
+];
+
+/** `display-mode`; invalid spellings are ignored (not guessed into a mode). */
+function displayModeFrom(value: string | null): DisplayModeId | null {
+  if (value === null) return null;
+  const lower = value.trim().toLowerCase();
+  return (DISPLAY_MODE_IDS as readonly string[]).includes(lower)
+    ? (lower as DisplayModeId)
+    : null;
+}
+
+/** `explode` as 0..1; `null` (absent) means 0, invalid text means 0. */
+function explodeFrom(value: string | null): number {
+  if (value === null) return 0;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 0;
+}
+
 /** Attributes that only steer the orbit controls (never persisted, never dirty). */
 const CAMERA_ATTRIBUTES: ReadonlySet<string> = new Set([
   "auto-rotate",
@@ -179,11 +233,46 @@ const PLAYBACK_ATTRIBUTES: ReadonlySet<string> = new Set([
 const DISPLAY_ATTRIBUTES: ReadonlySet<string> = new Set([
   "tone-mapping",
   "exposure",
+  "display-mode",
+  "explode",
   "shadow-intensity",
   "shadow-softness",
   "variant-name",
   "camera-name",
 ]);
+
+/**
+ * Loading-pipeline knobs (`decoder-path` / `decoder-cdn`). Changing one rebuilds
+ * the decoder bundle; the effect lands on the next load, since a fetch already
+ * in flight owns its decoders.
+ */
+const DECODER_ATTRIBUTES: ReadonlySet<string> = new Set(["decoder-path", "decoder-cdn"]);
+
+/**
+ * Renderer-strategy knobs (`instancing`). Unlike the decoder pair these take
+ * effect immediately: batching is a draw-time detail, so flipping it never
+ * touches the document and never needs a reload.
+ */
+const RENDER_ATTRIBUTES: ReadonlySet<string> = new Set(["instancing"]);
+
+/**
+ * Read `instancing` as a flag, defaulting to **on**.
+ *
+ * Tri-state on purpose: absent means "batch", and a bare `<scene-editor
+ * instancing>` must not silently mean the opposite of the default — that is the
+ * kind of attribute that only shows up in a bug report. `false` / `0` / `off` /
+ * `no` are the spellings hosts actually write.
+ */
+function instancingFrom(value: string | null): boolean {
+  if (value === null) return true;
+  const normalized = value.trim().toLowerCase();
+  return !(
+    normalized === "false" ||
+    normalized === "0" ||
+    normalized === "off" ||
+    normalized === "no"
+  );
+}
 
 /**
  * Camera pose attributes — model-viewer's `camera-orbit` / `camera-target` /
@@ -213,6 +302,7 @@ const VIEW_ATTRIBUTES: ReadonlySet<string> = new Set([
  */
 const SLOT_POSTER = "poster";
 const SLOT_PROGRESS = "progress-bar";
+const SLOT_ERROR = "error";
 const HOTSPOT_PREFIX = "hotspot-";
 
 /**
@@ -225,8 +315,11 @@ const POSTER_FADE_MS = 300;
 type RevealMode = "auto" | "interaction" | "manual";
 const REVEAL_MODES: ReadonlySet<string> = new Set<RevealMode>(["auto", "interaction", "manual"]);
 
-/** The three slot families this element styles itself (no shadow root). */
-type SlotRole = "poster" | "progress" | "hotspot";
+/** The slot families this element styles itself (no shadow root). */
+type SlotRole = "poster" | "progress" | "hotspot" | "error";
+
+/** `<scene-editor mode="viewer">` vs `mode="editor"` (see `SceneEditorElement.mode`). */
+export type SceneEditorMode = "viewer" | "editor";
 
 /**
  * A `slot="hotspot-*"` anchor, plus what this element projects onto it.
@@ -454,8 +547,18 @@ export class SceneEditorElement extends HTMLElement {
       canvas,
       ...(assetCache ? { assetCache } : {}),
       ...(options?.environmentPreset ? { environmentPreset: options.environmentPreset } : {}),
+      ...(options?.interactive === undefined ? {} : { interactive: options.interactive }),
+      ...(options?.instancing === undefined ? {} : { instancing: options.instancing }),
     });
   };
+
+  /**
+   * Injectable seam for `decoder-path` / `decoder-cdn`. Defaults to the lazy
+   * three decoders; tests (and hosts that pre-stage payloads, e.g. inside a
+   * service worker cache) can swap it.
+   */
+  static decoderBundleFactory: (options: LazyDecoderOptions) => LazyDecoderBundle =
+    createLazyDecoders;
 
   /**
    * Injectable seam for `visibility-change`. Defaults to IntersectionObserver
@@ -485,6 +588,7 @@ export class SceneEditorElement extends HTMLElement {
   static get observedAttributes(): string[] {
     return [
       "live-view-events",
+      "mode",
       "src",
       "loading",
       "reveal",
@@ -492,12 +596,17 @@ export class SceneEditorElement extends HTMLElement {
       "skybox-image",
       "tone-mapping",
       "exposure",
+      "display-mode",
+      "explode",
       "shadow-intensity",
       "shadow-softness",
       "variant-name",
       "camera-name",
       "seamless-poster",
       "alt",
+      "decoder-path",
+      "decoder-cdn",
+      "instancing",
       ...VIEW_ATTRIBUTES,
       ...CAMERA_ATTRIBUTES,
       ...INTERACTION_ATTRIBUTES,
@@ -554,10 +663,88 @@ export class SceneEditorElement extends HTMLElement {
     else this.removeAttribute("src");
   }
 
+  /**
+   * What the element is: a **viewer** renders the model (orbit, zoom, hotspots,
+   * animation) and owns no authoring chrome; an **editor** adds the selection
+   * gizmo and click-to-select.
+   *
+   * `mode="viewer|editor"` forces it. Without the attribute the mode follows the
+   * document owner — a declarative `src` preview is a viewer, a host
+   * `loadDocument()` is an editor — which is what keeps `<scene-editor src>` a
+   * drop-in model viewer without asking hosts to opt out of a gizmo.
+   *
+   * The effective value is mirrored to `data-mode` for CSS, and pushed to the
+   * runtime's `setInteractive()`.
+   */
+  get mode(): SceneEditorMode {
+    const raw = (this.getAttribute("mode") ?? "").trim().toLowerCase();
+    if (raw === "viewer" || raw === "editor") return raw;
+    // Both declarative previews (`src`, `loadFiles`) are viewers: the host did
+    // not hand us a document, so there is nothing to author yet.
+    const preview = (this.src !== null || this.#fileAssetId !== null) && this.#documentOwner !== "host";
+    return preview ? "viewer" : "editor";
+  }
+
+  set mode(value: SceneEditorMode) {
+    this.setAttribute("mode", value);
+  }
+
+  /**
+   * Draw-call batching (default `true`).
+   *
+   * Repeated primitives — same geometry parameters, same material — are drawn
+   * as `InstancedMesh` chunks, so 5 000 identical boxes cost tens of draw calls
+   * instead of thousands. The document is untouched: every object keeps its id,
+   * transform, material and pick box, which is why this is a *renderer* switch
+   * and not a document one.
+   *
+   * `instancing="false"` is the escape hatch for hosts that inspect the scene
+   * graph and expect one visible mesh per object (a screenshot service, a
+   * custom exporter, a debug overlay counting `scene.traverse` hits).
+   */
+  get instancing(): boolean {
+    return instancingFrom(this.getAttribute("instancing"));
+  }
+
+  set instancing(value: boolean) {
+    this.setAttribute("instancing", value ? "true" : "false");
+  }
+
+  /**
+   * Viewport shading (`display-mode`): `studio` (default) / `xray` /
+   * `wireframe` / `normal` / `clay`. Presentation only — the document's
+   * materials are untouched, and batched instances are covered too.
+   */
+  get displayMode(): DisplayModeId {
+    return displayModeFrom(this.getAttribute("display-mode")) ?? "studio";
+  }
+
+  set displayMode(value: DisplayModeId) {
+    this.setAttribute("display-mode", value);
+  }
+
+  /**
+   * Component explode (`explode`, 0..1). A runtime-only preview: object
+   * positions in the document stay the baseline, so 0 restores exactly.
+   */
+  get explode(): number {
+    return explodeFrom(this.getAttribute("explode"));
+  }
+
+  set explode(value: number) {
+    if (!Number.isFinite(value)) return;
+    this.setAttribute("explode", String(Math.min(1, Math.max(0, value))));
+  }
+
   #editor: SceneEditor | null = null;
   #dracoLoader: unknown = null;
   #ktx2Loader: unknown = null;
   #meshoptDecoder: unknown = null;
+  /**
+   * Decoders assembled from `decoder-path` / `decoder-cdn`. `null` when neither
+   * attribute is set — the default stays "no decoders, no extra requests".
+   */
+  #decoders: LazyDecoderBundle | null = null;
   #visibilityObserver: VisibilityObserver | null = null;
   #intersectionVisible = false;
   /** Element scrolled out of view → the runtime stops drawing. */
@@ -569,8 +756,15 @@ export class SceneEditorElement extends HTMLElement {
   #liveViewEvents = false;
   /** `loading="lazy"` deferred the initial `src` load until first visibility. */
   #deferredSrcLoad = false;
+  /**
+   * The current preview produced an `error`. A `src` document is a single
+   * asset, so a failed one leaves nothing to frame or announce.
+   */
+  #srcLoadFailed = false;
   /** Who owns the document: declarative `src` or an explicit `loadDocument()`. */
   #documentOwner: "host" | "src" | null = null;
+  /** Last mode pushed to the runtime; `null` until a runtime exists. */
+  #appliedMode: SceneEditorMode | null = null;
   #ready!: Promise<void>;
   #resolveReady!: () => void;
   #rejectReady!: (err: unknown) => void;
@@ -601,6 +795,35 @@ export class SceneEditorElement extends HTMLElement {
   #loading = false;
   /** Content mounted — `reveal="auto"` then dismisses a late poster at once. */
   #contentLoaded = false;
+  /* ---------------------------------------------------------- error state ---- */
+  /** Last failure message; `null` = healthy (drives `slot="error"`). */
+  #errorMessage: string | null = null;
+  /** Host-provided `slot="error"` node, when there is one. */
+  #errorSlot: HTMLElement | null = null;
+  /** Built-in fallback overlay, used only when the host supplied no error slot. */
+  #errorOverlay: HTMLElement | null = null;
+  /* ----------------------------------------------------------- load order ---- */
+  /**
+   * The `src` path holds its `load` event back until framing finished: hosts read
+   * `getDimensions()` / the camera in that callback, and both are wrong before
+   * `frameViewer()` runs.
+   *
+   * Counted, not boolean: two rapid `src` switches overlap (the controller
+   * serializes the loads but both continuations run), and only the last one may
+   * release the event.
+   */
+  #pendingSrcLoads = 0;
+  #deferredLoadDetail: { sceneId: string; url: string | null } | null = null;
+  /**
+   * Blob URLs for the last `loadFiles()` call. The current document still points
+   * at them, so they are revoked on the *next* load or on disconnect — never
+   * right after the load resolves.
+   */
+  #fileBundle: FileBundle | null = null;
+  /** Asset id the current bundle resolves; `null` when no file was loaded. */
+  #fileAssetId: string | null = null;
+  /** Keeps two files of the same name from colliding in the asset cache. */
+  #fileBundleSeq = 0;
   /**
    * Last announced `modelIsVisible`. `model-visibility` is edge-triggered on the
    * composite verdict (loaded × in-viewport × poster dismissed), not on the raw
@@ -661,6 +884,10 @@ export class SceneEditorElement extends HTMLElement {
   }
 
   attributeChangedCallback(name: string, _old: string | null, value: string | null): void {
+    if (name === "mode") {
+      this.#applyMode();
+      return;
+    }
     if (name === "live-view-events") {
       this.#liveViewEvents = value !== null;
       this.#editor?.runtime.setLiveViewEvents?.(this.#liveViewEvents);
@@ -677,6 +904,19 @@ export class SceneEditorElement extends HTMLElement {
     }
     if (name === "alt") {
       this.#applyAlt();
+      return;
+    }
+    if (DECODER_ATTRIBUTES.has(name)) {
+      // Nothing to rebuild before connect: `#init()` reads the attributes when
+      // it builds the runtime. Afterwards a change is a fresh bundle, consumed
+      // by the next load (a fetch in flight cannot trade its decoders).
+      if (this.#editor) this.#syncDecoders();
+      return;
+    }
+    if (RENDER_ATTRIBUTES.has(name)) {
+      // Live, and cheap: the runtime re-evaluates every mounted object instead
+      // of rebuilding anything.
+      this.#editor?.runtime.setInstancing?.(instancingFrom(value));
       return;
     }
     if (VIEW_ATTRIBUTES.has(name)) {
@@ -717,6 +957,7 @@ export class SceneEditorElement extends HTMLElement {
       // Changing `src` is an explicit switch back to preview mode: the host
       // asked for this model, so it wins over a previously loaded document.
       this.#applyDisplaySettings();
+      this.#applyMode();
       // The fallback label is derived from the file name.
       this.#applyAlt();
       this.#maybeLoadSrc(true);
@@ -740,6 +981,8 @@ export class SceneEditorElement extends HTMLElement {
     this.#wasDisconnected = true;
     this.#abort?.abort();
     this.#abort = null;
+    // The next connect builds a new runtime: the mode has to be pushed again.
+    this.#appliedMode = null;
     this.#resizeObserver?.disconnect();
     this.#resizeObserver = null;
     this.#visibilityObserver?.disconnect();
@@ -751,6 +994,14 @@ export class SceneEditorElement extends HTMLElement {
     this.#deferredSrcLoad = false;
     this.#pendingPlugins.length = 0;
     this.#resetSlots();
+    // Draco/KTX2 each keep a worker alive; the next connect rebuilds the bundle
+    // from the attributes anyway.
+    this.#decoders?.dispose();
+    this.#decoders = null;
+    // Uploaded Blob URLs: nothing owns them once the runtime is gone.
+    this.#fileBundle?.dispose();
+    this.#fileBundle = null;
+    this.#fileAssetId = null;
     const editor = this.#editor;
     this.#editor = null;
     try {
@@ -795,11 +1046,17 @@ export class SceneEditorElement extends HTMLElement {
     this.#contentLoaded = false;
     // New content, new clip list: the old name would point at nothing.
     this.#activeClipName = null;
+    // A host document makes this an editor unless `mode="viewer"` says otherwise.
+    this.#applyMode();
+    this.#clearError();
     // Editor mode again: back to the warm room unless the host chose otherwise.
     this.#applyEnvironmentPreset();
     this.#setLoading(true);
     performance.mark("scene-editor:load:start");
     try {
+      // A host document may reference compressed assets too (the studio's own
+      // import path does), so the same bundle is resolved here.
+      await this.#prepareDecoders();
       await this.#requireEditor().loadDocument(doc);
       // Same reason as the `src` path: the document's `view` lands after the
       // `load` event, so display-only attributes are re-asserted afterwards.
@@ -813,6 +1070,56 @@ export class SceneEditorElement extends HTMLElement {
         // older engines without measure window — marks alone are enough
       }
     }
+  }
+
+  /**
+   * Load a dropped/picked file set (`.glb`, `.gltf` + its `.bin`/textures,
+   * `.obj`, `.stl`).
+   *
+   * Everything a host would otherwise hand-roll lives here: pick the primary
+   * file, inline a `.gltf` bundle's relative URIs as Blob URLs
+   * (`createFileBundleUrl`), synthesize the one-mesh document, then run the same
+   * path `src` uses — decoders, framing, held `load` event, error overlay.
+   *
+   * The previous bundle is revoked on the next call (and on disconnect); the
+   * document keeps pointing at it in between, so it cannot be revoked earlier.
+   */
+  async loadFiles(files: readonly File[] | FileList): Promise<void> {
+    const bundle = await createFileBundleUrl(files, {
+      assetIdPrefix: `upload-${++this.#fileBundleSeq}`,
+    });
+    const previous = this.#fileBundle;
+    this.#fileBundle = bundle;
+    this.#fileAssetId = bundle.assetId;
+    previous?.dispose();
+
+    await this.#loadPreview(
+      createDocumentFromAsset({
+        assetId: bundle.assetId,
+        name: bundle.name,
+        baseView: createPreviewViewState(),
+      }),
+    );
+  }
+
+  /**
+   * Export the **document** (not what is on screen) as a Blob — `glb` (default),
+   * `gltf` or `obj`.
+   *
+   * The difference from {@link exportScene} is what gets serialized: that one
+   * walks the live roots (preview offsets, display-mode materials and a gizmo
+   * mid-drag all included), this one re-applies the stored transforms first.
+   * Clips stay with the asset: the document does not own them.
+   */
+  async exportDocument(options: SceneExportOptions = {}): Promise<Blob> {
+    const runtime = this.#requireEditor().runtime;
+    if (!runtime.exportDocument) {
+      throw new SceneEditorError(
+        SceneErrorCode.Lifecycle,
+        "Runtime does not support document export (exportDocument)",
+      );
+    }
+    return runtime.exportDocument(this.getDocument(), { format: options.format ?? "glb" });
   }
 
   /** Live runtime (e.g. ThreeRuntime) for host-side GPU / scene access. */
@@ -1075,7 +1382,13 @@ export class SceneEditorElement extends HTMLElement {
   /** Watch light-DOM children for slot nodes added, removed or re-slotted. */
   #observeSlots(): void {
     if (typeof MutationObserver === "undefined") return;
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+      // The built-in failure overlay is ours, not a slot: writing its message
+      // replaces a text node, which lands here as a childList mutation on a
+      // descendant. Without this filter the message re-entering `#collectSlots`
+      // → `#applyErrorVisibility` → `textContent` spins the microtask queue.
+      const overlay = this.#errorOverlay;
+      if (overlay && records.every((record) => overlay.contains(record.target))) return;
       this.#collectSlots();
     });
     // `subtree` matters: the anchors are *children*, so without it an anchor
@@ -1092,10 +1405,11 @@ export class SceneEditorElement extends HTMLElement {
     this.#slotsObserver = observer;
   }
 
-  /** Re-home `slot="poster" | "progress-bar" | "hotspot-*"` children, then paint. */
+  /** Re-home `slot="poster" | "progress-bar" | "error" | "hotspot-*"` children. */
   #collectSlots(): void {
     let poster: HTMLElement | null = null;
     let progress: HTMLElement | null = null;
+    let error: HTMLElement | null = null;
     const hotspots: HotspotAnchor[] = [];
     const owned: Array<{ el: HTMLElement; role: SlotRole }> = [];
 
@@ -1111,6 +1425,11 @@ export class SceneEditorElement extends HTMLElement {
       if (slot === SLOT_PROGRESS) {
         progress = child;
         owned.push({ el: child, role: "progress" });
+        continue;
+      }
+      if (slot === SLOT_ERROR) {
+        error = child;
+        owned.push({ el: child, role: "error" });
         continue;
       }
       if (!slot.startsWith(HOTSPOT_PREFIX)) continue;
@@ -1134,12 +1453,14 @@ export class SceneEditorElement extends HTMLElement {
     if (poster !== this.#poster) this.#revealed = poster === null;
     this.#poster = poster;
     this.#progressBar = progress;
+    this.#errorSlot = error;
     this.#hotspots = hotspots;
 
     if (owned.length > 0) this.#ensurePositionedHost();
     this.#syncSlotted(owned);
     this.#applyPosterVisibility();
     this.#applyProgressVisibility();
+    this.#applyErrorVisibility();
     this.#updateHotspots();
     // Adding a poster to a loaded element hides the model again (the reference
     // shows a replacement poster for a new reveal cycle), so the verdict moves.
@@ -1187,6 +1508,15 @@ export class SceneEditorElement extends HTMLElement {
       style.right = "0";
       style.bottom = "0";
       style.zIndex = "2";
+      return;
+    }
+    if (role === "error") {
+      // Covers the canvas: on a failure there is nothing else worth showing.
+      style.top = "0";
+      style.right = "0";
+      style.bottom = "0";
+      style.left = "0";
+      style.zIndex = "4";
       return;
     }
     // Hotspot anchors are placed by `translate(-50%, -50%) translate(x, y)`.
@@ -1271,6 +1601,70 @@ export class SceneEditorElement extends HTMLElement {
 
   #applyProgressVisibility(): void {
     this.#setVisible(this.#progressBar, this.#loading);
+  }
+
+  /**
+   * Failure surface. Without it a dead WebGL context or a 404 asset left the
+   * host with one `error` event and the user with a blank rectangle.
+   */
+  #showError(message: string): void {
+    this.#errorMessage = message;
+    this.#applyErrorVisibility();
+  }
+
+  #clearError(): void {
+    if (this.#errorMessage === null) return;
+    this.#errorMessage = null;
+    this.#applyErrorVisibility();
+  }
+
+  #applyErrorVisibility(): void {
+    const visible = this.#errorMessage !== null;
+    const slot = this.#errorSlot;
+    if (slot) this.#setVisible(slot, visible);
+    const overlay = visible && !slot ? this.#ensureErrorOverlay() : this.#errorOverlay;
+    if (overlay) {
+      if (visible && !slot) {
+        const message = this.#errorMessage ?? "";
+        // Only when it changed: a redundant write still replaces the text node,
+        // and the mutation observer sees every one of them.
+        if (overlay.textContent !== message) overlay.textContent = message;
+      }
+      this.#setVisible(overlay, visible && !slot);
+    }
+  }
+
+  /**
+   * Built-in fallback text, so "no WebGL" is readable instead of empty. A host
+   * that wants its own surface adds a `slot="error"` child; this node is then
+   * hidden and never touches the host's DOM.
+   */
+  #ensureErrorOverlay(): HTMLElement {
+    if (this.#errorOverlay) return this.#errorOverlay;
+    const node = document.createElement("div");
+    node.setAttribute("data-scene-editor-error", "");
+    // Announced, not just painted: a screen reader user gets the reason too.
+    node.setAttribute("role", "status");
+    node.setAttribute("aria-live", "polite");
+    Object.assign(node.style, {
+      position: "absolute",
+      inset: "0",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: "16px",
+      boxSizing: "border-box",
+      font: "13px/1.5 system-ui, -apple-system, sans-serif",
+      color: "#f2f4f8",
+      background: "rgba(10, 14, 22, 0.82)",
+      textAlign: "center",
+      zIndex: "4",
+      pointerEvents: "none",
+    });
+    this.#ensurePositionedHost();
+    this.appendChild(node);
+    this.#errorOverlay = node;
+    return node;
   }
 
   #setLoading(loading: boolean): void {
@@ -1359,6 +1753,9 @@ export class SceneEditorElement extends HTMLElement {
     this.#slotted = [];
     this.#poster = null;
     this.#progressBar = null;
+    this.#errorSlot = null;
+    this.#errorMessage = null;
+    this.#setVisible(this.#errorOverlay, false);
     this.#hotspots = [];
     this.#loading = false;
     this.#revealed = true;
@@ -1375,11 +1772,43 @@ export class SceneEditorElement extends HTMLElement {
     return this.#editor;
   }
 
-  /** Identity resolver for `<scene-editor src>`; only the reserved id resolves. */
-  #createSrcResolver(): AssetResolver | null {
-    if (!this.src) return null;
+  /**
+   * Identity resolver for `<scene-editor src>`; only the reserved id resolves.
+   *
+   * Always installed, never conditionally on `src` being set at connect time:
+   * `#init()` runs once, so building it lazily from the attribute that exists at
+   * that moment meant `el.src = "..."` after `ready` produced a runtime without
+   * an `AssetCache` — a placeholder cube plus a normal-looking `load` event.
+   * The URL is read per resolve instead, which is also what makes `src` changes
+   * reuse the same runtime.
+   */
+  /**
+   * The host's resolver, with the element's own reserved ids in front.
+   *
+   * `src` and `loadFiles()` mint asset ids the host cannot know (a Blob URL has
+   * no stable name), so they must win over the host table. Everything else is
+   * the host's call — including rejecting it.
+   */
+  #createAssetResolver(): AssetResolver {
+    const host = this.assetResolver;
+    if (!host) return this.#createSrcResolver();
+    const reserved = this.#createSrcResolver();
     return {
       resolve: async (assetId) => {
+        if (assetId === SRC_ASSET_ID || assetId === this.#fileAssetId) {
+          return reserved.resolve(assetId);
+        }
+        return host.resolve(assetId);
+      },
+    };
+  }
+
+  #createSrcResolver(): AssetResolver {
+    return {
+      resolve: async (assetId) => {
+        if (assetId === this.#fileAssetId && this.#fileBundle) {
+          return this.#fileBundle.url;
+        }
         if (assetId !== SRC_ASSET_ID) {
           throw new Error(`Unknown asset: ${assetId}`);
         }
@@ -1390,24 +1819,111 @@ export class SceneEditorElement extends HTMLElement {
     };
   }
 
-  async #loadSrc(): Promise<void> {
+  /**
+   * Push the effective mode to the runtime and mirror it for CSS. Called on
+   * connect, on `mode` changes, and whenever the document owner switches
+   * (`src` ↔ host document) — the mode is derived, so it has to be re-derived.
+   */
+  #applyMode(): void {
+    const mode = this.mode;
+    if (this.getAttribute("data-mode") !== mode) this.setAttribute("data-mode", mode);
     const editor = this.#editor;
+    if (!editor) return;
+    // De-duplicated: both connect and every load re-derive the mode, and the
+    // runtime tears the gizmo down on each switch.
+    if (this.#appliedMode === mode) return;
+    this.#appliedMode = mode;
+    editor.runtime.setInteractive?.(mode === "editor");
+    // A viewer has no selection. Clearing here also removes whatever outline a
+    // previous editor pass left on the object.
+    if (mode === "viewer") editor.clearSelection();
+  }
+
+  /**
+   * Where the decoder payloads live, or `null` when the host opted out.
+   *
+   * `decoder-path` wins over `decoder-cdn` so a self-hosting page can keep the
+   * boolean attribute in its template and override the URL per environment
+   * (local CDN / air-gapped mirror) without touching the rest.
+   */
+  #decoderPath(): string | null {
+    const explicit = (this.getAttribute("decoder-path") ?? "").trim();
+    if (explicit) return explicit;
+    return this.hasAttribute("decoder-cdn") ? DEFAULT_DECODER_CDN : null;
+  }
+
+  /** Rebuild the bundle from the current attributes; cheap when disabled. */
+  #syncDecoders(): void {
+    this.#decoders?.dispose();
+    this.#decoders = null;
+    const path = this.#decoderPath();
+    if (!path) return;
+    this.#decoders = SceneEditorElement.decoderBundleFactory({
+      path,
+      // KTX2's `detectSupport()` has to probe the real device. Runtimes that do
+      // not expose a renderer simply skip KTX2 and keep Draco + Meshopt.
+      getRenderer: () => this.#editor?.runtime.renderer,
+    });
+  }
+
+  /**
+   * Resolve the decoder bundle before a load starts. `createResolverAssetLoader`
+   * reads decoders synchronously per load, so the async half has to happen here.
+   * Failures are already absorbed per decoder — nothing to handle.
+   */
+  async #prepareDecoders(): Promise<void> {
+    const bundle = this.#decoders;
+    if (!bundle) return;
+    try {
+      await bundle.ready();
+    } catch {
+      // `ready()` degrades internally; this is only belt and braces.
+    }
+  }
+
+  async #loadSrc(): Promise<void> {
     const src = this.src;
-    if (!editor || !src) return;
+    if (!this.#editor || !src) return;
+    await this.#loadPreview(createSrcDocument(src));
+  }
+
+  /**
+   * Shared body of the two "one model, host does not own the document" paths:
+   * `src` and `loadFiles()`. Holds `load` until framing finished, re-asserts the
+   * display-only attributes, and owns the failure surface.
+   */
+  async #loadPreview(doc: SceneDocument): Promise<void> {
+    const editor = this.#editor;
+    if (!editor) return;
     this.#deferredSrcLoad = false;
     this.#documentOwner = "src";
     this.#contentLoaded = false;
     // New content, new clip list: the old name would point at nothing.
     this.#activeClipName = null;
+    // A `src` change can flip the derived mode back to viewer (see `mode`).
+    this.#applyMode();
+    // A new source is a fresh attempt: drop the previous failure surface.
+    this.#clearError();
+    this.#srcLoadFailed = false;
+    // Hold `load` until `frameViewer()` ran (see `#pendingSrcLoads`).
+    this.#pendingSrcLoads += 1;
+    this.#deferredLoadDetail = null;
     // Preview mode may have just switched the default preset to `neutral`.
     this.#applyEnvironmentPreset();
     this.#setLoading(true);
     try {
-      await editor.loadDocument(createSrcDocument(src));
+      // Decoders first: a Draco/KTX2/Meshopt asset cannot even parse without
+      // them, and the loader reads them synchronously once the load starts.
+      await this.#prepareDecoders();
+      await editor.loadDocument(doc);
       // Viewer framing (model-viewer parity); a plain fit is the fallback.
+      // Nothing mounted means nothing to frame — framing an empty scene would
+      // park the camera at the origin for the next successful load.
       const runtime = editor.runtime;
-      if (runtime.frameViewer) runtime.frameViewer();
-      else runtime.autoFrame?.();
+      if (!this.#srcLoadFailed) {
+        if (runtime.frameViewer) runtime.frameViewer();
+        else runtime.autoFrame?.();
+      }
       // A loaded document applies its own `view` *after* the `load` event, so
       // display-only attributes (tone mapping / exposure / contact shadow) are
       // re-asserted here, once the host's document is the current one. Framing
@@ -1417,8 +1933,21 @@ export class SceneEditorElement extends HTMLElement {
       // The facade already emitted `error`; swallowing keeps the
       // fire-and-forget call site free of unhandled rejections.
     } finally {
+      // Release the held `load` once the last overlapping load is framed.
+      this.#pendingSrcLoads = Math.max(0, this.#pendingSrcLoads - 1);
+      if (this.#pendingSrcLoads === 0) this.#flushDeferredLoad();
       this.#setLoading(false);
     }
+  }
+
+  /** Dispatch the `load` held back by the `src` path, then dismiss the poster. */
+  #flushDeferredLoad(): void {
+    const detail = this.#deferredLoadDetail;
+    this.#deferredLoadDetail = null;
+    if (!detail) return;
+    this.dispatchEvent(new CustomEvent("load", { detail }));
+    // `reveal="auto"` (the default): the framed model is on screen — drop the poster.
+    this.#dismissPoster("load");
   }
 
   /**
@@ -1515,6 +2044,12 @@ export class SceneEditorElement extends HTMLElement {
       const exposure = Number(rawExposure);
       if (Number.isFinite(exposure)) runtime.setExposure?.(exposure);
     }
+
+    // Shading overlay + component explode: both presentation-only, both
+    // re-asserted after a load (the runtime resets explode on document swap).
+    const rawMode = this.getAttribute("display-mode");
+    runtime.setDisplayMode?.(displayModeFrom(rawMode) ?? "studio");
+    runtime.setExplode?.(explodeFrom(this.getAttribute("explode")));
 
     this.#applyShadowSettings();
     this.#applyVariantName();
@@ -2089,26 +2624,44 @@ export class SceneEditorElement extends HTMLElement {
       // DOM-only, so it lands before the runtime exists. Also the reason an
       // attribute set before upgrade still takes effect: nothing to re-assert.
       this.#applyTouchAction();
-      const assetResolver = this.assetResolver ?? this.#createSrcResolver();
+      const assetResolver = this.#createAssetResolver();
       const environmentPreset = this.#environmentPreset;
+      const interactive = this.mode === "editor";
+      const instancing = this.instancing;
       const runtime = SceneEditorElement.runtimeFactory(canvas, {
-        ...(assetResolver ? { assetResolver } : {}),
+        assetResolver,
         environmentPreset,
-        getDecoders: () => ({
-          dracoLoader: this.#dracoLoader,
-          ktx2Loader: this.#ktx2Loader,
-          meshoptDecoder: this.#meshoptDecoder,
-        }),
+        interactive,
+        instancing,
+        getDecoders: () => {
+          // Host-assigned instances win over the bundle: a host that built its
+          // own KTX2Loader (or pointed Draco somewhere specific) meant it.
+          const lazy = this.#decoders?.current() ?? {};
+          return {
+            // `?? null`, not `?? undefined`: "not set" has always been reported
+            // as `null` here, and a host clearing `el.ktx2Loader = null` must
+            // see that back.
+            dracoLoader: this.#dracoLoader ?? lazy.dracoLoader ?? null,
+            ktx2Loader: this.#ktx2Loader ?? lazy.ktx2Loader ?? null,
+            meshoptDecoder: this.#meshoptDecoder ?? lazy.meshoptDecoder ?? null,
+          };
+        },
         // Read at load time, so setting it before the fetch is enough — the
         // model and its external buffers both pick it up.
         getWithCredentials: () => this.hasAttribute("with-credentials"),
       });
       const editor = createSceneEditor({ runtime });
       this.#editor = editor;
+      // After the editor so the KTX2 renderer accessor has something to read;
+      // the bundle itself imports nothing until the first load asks for it.
+      this.#syncDecoders();
       // Attributes set before upgrade land here: observedAttributes fires during
       // upgrade, but the runtime only exists now.
       runtime.setLiveViewEvents?.(this.#liveViewEvents);
       runtime.setEnvironmentPreset?.(environmentPreset);
+      // The default factory already got this; repeating it covers a custom
+      // factory that dropped the option (and is a no-op when it did not).
+      runtime.setInstancing?.(instancing);
       this.#applyDisplaySettings();
       // Attributes set before upgrade land here (observedAttributes already ran).
       this.#applyCameraSettings();
@@ -2119,11 +2672,16 @@ export class SceneEditorElement extends HTMLElement {
       // Again now that a runtime exists: the canvas alone is not enough, the
       // orbit addon overwrites `touch-action` when it mounts.
       this.#applyTouchAction();
+      // Now that a runtime exists, the mode can be pushed to it (the factory
+      // already received `interactive`, this also covers `src` arriving later).
+      this.#applyMode();
 
       // Click-to-select (P2-T7): pick on canvas click, empty → clear.
       // Shift / Ctrl / Cmd makes the click additive (toggle), matching the
       // facade's multi-select surface (`add` / `remove` / `toggle`).
       const onClick = (event: MouseEvent): void => {
+        // A viewer has no selection at all — orbit is its only pointer verb.
+        if (this.mode === "viewer") return;
         // `disable-tap` keeps orbit/zoom but never turns a click into a selection.
         if (this.hasAttribute("disable-tap")) return;
         const picked = runtime.pick(event.clientX, event.clientY);
@@ -2231,11 +2789,33 @@ export class SceneEditorElement extends HTMLElement {
         this.dispatchEvent(new CustomEvent("finished", { detail: {} }));
       });
       editor.on("load", (payload) => {
+        // A preview is *one* asset, so the store's "partial success" rule (skip
+        // the broken object, keep the rest) leaves nothing to show. Announcing
+        // `load` here would be a lie host code acts on — and the `#clearError()`
+        // below would erase the only explanation on screen.
+        if (this.#documentOwner === "src" && this.#srcLoadFailed) {
+          this.#setLoading(false);
+          this.#syncModelVisibility();
+          this.#updateHotspots();
+          return;
+        }
         // Only the `src` path knows a URL; headless/host documents report null.
         const url = this.#documentOwner === "src" ? this.src : null;
         this.#contentLoaded = true;
         this.#setLoading(false);
-        this.dispatchEvent(new CustomEvent("load", { detail: { ...payload, url } }));
+        this.#clearError();
+        const detail = { ...payload, url };
+        if (this.#pendingSrcLoads > 0) {
+          // Hold the event back: `frameViewer()` has not run yet, so a host
+          // reading `getDimensions()` or the camera here would see pre-fit state.
+          // The counter (not a flag) survives two overlapping `src` switches:
+          // only the load that drains it to zero releases the event.
+          this.#deferredLoadDetail = detail;
+          this.#syncModelVisibility();
+          this.#updateHotspots();
+          return;
+        }
+        this.dispatchEvent(new CustomEvent("load", { detail }));
         this.#syncModelVisibility();
         this.#updateHotspots();
         // `reveal="auto"` (the default): the model is on screen — drop the poster.
@@ -2243,6 +2823,12 @@ export class SceneEditorElement extends HTMLElement {
       });
       editor.on("error", (payload) => {
         this.#setLoading(false);
+        // The event alone left hosts with a blank canvas; the message is now
+        // also a visual state (`slot="error"`, or the built-in overlay).
+        this.#showError(payload.message);
+        // A preview owns exactly one asset: remember that this load produced
+        // nothing, so the `load` that follows cannot announce success.
+        if (this.#documentOwner === "src") this.#srcLoadFailed = true;
         this.dispatchEvent(new CustomEvent("error", { detail: payload }));
       });
 
@@ -2331,9 +2917,9 @@ export class SceneEditorElement extends HTMLElement {
     // Focus domain (D20): ignore keys unless focus is inside this element.
     const active = document.activeElement;
     if (active !== this && !this.contains(active)) return;
-    // Key semantics (undo/redo + reserved G/R/S) are shared with the headless
-    // facade; this only decides whether the element owns the keystroke.
-    editor.handleKeyDown(event as KeyboardEvent);
+    // Editor keys (undo/redo + reserved G/R/S) are authoring commands; a viewer
+    // must not swallow them, so the browser keeps the whole key space.
+    if (this.mode === "editor") editor.handleKeyDown(event as KeyboardEvent);
     // Viewer navigation is the fallback for keys the editor did not claim, so a
     // host with edit shortcuts never loses them to camera keys.
     const key = event as KeyboardEvent;
@@ -2391,6 +2977,8 @@ export class SceneEditorElement extends HTMLElement {
   #emitError(code: string, message: string, cause?: unknown): void {
     const detail: { code: string; message: string; cause?: unknown } = { code, message };
     if (cause !== undefined) detail.cause = cause;
+    // Same visual contract as the facade's `error` event: never a bare event.
+    this.#showError(message);
     this.dispatchEvent(new CustomEvent("error", { detail }));
   }
 

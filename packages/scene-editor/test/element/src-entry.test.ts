@@ -139,14 +139,17 @@ describe("<scene-editor src> preview entry", () => {
     await expect(assetResolver!.resolve("something-else")).rejects.toThrow(/Unknown asset/);
   });
 
-  it("keeps a host-provided resolver", async () => {
+  it("keeps a host-provided resolver for host ids", async () => {
     const { el, resolver } = makeElement();
     const hostResolver: AssetResolver = { resolve: async (id) => `/assets/${id}.glb` };
     el.assetResolver = hostResolver;
     el.setAttribute("src", "ignored.glb");
     await connected(el);
 
-    expect(resolver()).toBe(hostResolver);
+    // The element wraps the host table (it has to reserve its own ids), but
+    // every id the host owns still goes to the host.
+    await expect(resolver()!.resolve("robot")).resolves.toBe("/assets/robot.glb");
+    await expect(resolver()!.resolve(SRC_ASSET_ID)).resolves.toBe("ignored.glb");
   });
 
   it("reloads when src changes and the element owns the document", async () => {

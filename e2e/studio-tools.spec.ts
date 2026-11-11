@@ -28,7 +28,7 @@ type EditorHook = {
 };
 
 async function boot(page: Page): Promise<void> {
-  await page.goto("/?scene=default");
+  await page.goto("/?scene=default&mode=editor");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
 }
 
@@ -80,6 +80,25 @@ test("explode slider is a preview: object moves, document does not", async ({ pa
 
   await page.locator("#explode-slider").fill("0");
   await expect.poll(async () => (await readPositions()).live).toEqual(before.live);
+});
+
+test("display tabs restyle the scene and never dirty the document", async ({ page }) => {
+  await boot(page);
+  await openGroup(page, "group-display");
+
+  const shading = () =>
+    page.evaluate(() => {
+      const runtime = (window as unknown as {
+        __runtime: RuntimeHook & { displayMode: string };
+      }).__runtime;
+      return runtime.displayMode;
+    });
+
+  await page.click('.mode-tab[data-mode="clay"]');
+  await expect.poll(shading).toBe("clay");
+
+  await page.click('.mode-tab[data-mode="studio"]');
+  await expect.poll(shading).toBe("studio");
 });
 
 test("animation panel lists clips, auto-plays, and toggles transport", async ({ page }) => {

@@ -30,8 +30,9 @@ declare global {
 
 async function bootEditor(page: Page): Promise<void> {
   // `?scene=default` pins the deterministic fixture (box-1 / box-2 / gem-1);
-  // the bare playground URL opens the home screen instead.
-  await page.goto("/?scene=default");
+  // the bare playground URL opens the home screen instead. Loaded models are
+  // viewers by default, so editor-flow fixtures opt in explicitly.
+  await page.goto("/?scene=default&mode=editor");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
   await expect(page.locator("scene-editor canvas")).toBeVisible();
 }

@@ -1,102 +1,90 @@
 # scene-studio
 
-Embeddable 3D scene editor SDK for the web. Published as [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder. This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
+Embeddable 3D scene editor and model viewer for the web. Published as
+[`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder.
+This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
 
-**Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
+**Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Architecture & benchmarks](docs/ARCHITECTURE.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
 
 ## What this is
 
-`<scene-editor>` is a web component that gives any page an editable 3D viewport: load a JSON scene document, orbit and zoom, click-select, transform with gizmos, undo/redo, and save through a host-owned transport with structured conflicts. glTF/GLB assets and animation clips are supported.
+One document model, one runtime contract, three ways to use it:
 
-Prefer your own UI? `createSceneEditor()` exposes the same editing logic — document state, history, selection, plugins, typed events — with zero DOM. Rendering sits behind a small `RuntimeContract`, so unit tests can use `FakeRuntime` and hosts can use `ThreeRuntime` or a custom runtime. WebGL2 is the default; WebGPU is available through the documented `rendererFactory` seam.
+| Shape | Entry | Use when |
+|---|---|---|
+| **Viewer** | `<scene-editor src="model.glb">` | You only need the model on screen, orbitable, model-viewer style |
+| **Editor** | `<scene-editor>` + `loadDocument(doc)` | The scene is editable: select, gizmo, add/remove, undo/redo, host save |
+| **Headless** | `createSceneEditor({ runtime })` | You bring your own UI and inputs — zero DOM |
 
-**Current editing scope:** transforms, view state, object create/delete/reparent, procedural geometry (`primitive`) and material overrides — all undoable. Object duplication, multi-object transform, morph targets and HDR environments are not part of the document API yet. See [Status and roadmap](#status-and-roadmap).
+A preview is not a second code path: the element synthesizes a one-object document and drives
+the same load/select/history pipeline, so a viewer can be upgraded to an editor without a rewrite.
 
-## Quick start
+The two shapes are **visually distinct by construction**: a `src` preview is `mode="viewer"` and
+owns no authoring chrome — no transform gizmo, no click-to-select, no editor keystrokes — while a
+host document is `mode="editor"`. `mode="viewer"` forces a read-only viewport for a saved scene;
+the effective value is mirrored to `data-mode` for CSS.
 
 ```html
+<!-- Viewer: one line, auto-framed; lifecycle via progress → load → error -->
+<scene-editor src="/models/robot.glb" style="height: 480px"></scene-editor>
+
 <script type="module">
   import { defineSceneEditor } from "@scenio/scene-editor/element";
   import "@scenio/scene-editor/style.css";
 
-  defineSceneEditor(); // idempotent and SSR-safe
+  defineSceneEditor(); // idempotent, SSR-safe
 
   const el = document.querySelector("scene-editor");
-  await el.ready;
-
-  await el.loadDocument({
-    schemaVersion: 3,
-    sceneId: "demo",
-    revision: 0,
-    objects: [
-      {
-        id: "box-1",
-        type: "mesh",
-        name: "Box",
-        position: [0, 0.5, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-    ],
-    view: {
-      camera: { position: [6, 5, 10], target: [0, 0, 0], fov: 60 },
-      lights: {
-        ambient: { color: "#ffffff", intensity: 0.55 },
-        directional: { color: "#ffffff", intensity: 1, position: [5, 10, 7] },
-      },
-      environment: { background: null, gridVisible: true, iblIntensity: 1 },
-    },
-  });
+  el.addEventListener("load", ({ detail }) => console.log("ready", detail.url));
+  el.addEventListener("error", ({ detail }) => console.log(detail.code));
 </script>
-
-<scene-editor style="width: 640px; height: 400px"></scene-editor>
 ```
 
-Drag to orbit, scroll to zoom, click to select (`Shift`/`Ctrl`/`Cmd`+click toggles multi-select), drag the gizmo to transform, and use `Ctrl+Z` / `Ctrl+Shift+Z` while focus is inside the element.
+Declarative viewer chrome (all attribute-only, never written to the document):
 
-### Headless
-
-```ts
-import { createSceneEditor, FakeRuntime } from "@scenio/scene-editor";
-
-const editor = createSceneEditor({ runtime: new FakeRuntime() });
-
-await editor.loadDocument(doc);
-editor.select(["box-1"]);
-editor.applyTransform("box-1", from, to); // one undoable command
-editor.undo();
-
-editor.on("save-request", ({ document }) => {
-  // the SDK never talks to your backend
-  fetch("/api/scene", { method: "PUT", body: JSON.stringify(document) });
-});
-
-editor.requestSave();
+```html
+<scene-editor
+  src="/models/robot.glb"
+  loading="lazy"
+  auto-rotate
+  camera-orbit="0deg 75deg 2m"
+  field-of-view="auto"
+  environment-image="neutral"
+  shadow-intensity="0.8"
+  autoplay
+  animation-name="Idle"
+  reveal="interaction"
+>
+  <img slot="poster" src="/poster.jpg" alt="" />
+  <div slot="progress-bar">Loading…</div>
+  <div slot="error">Could not load the model</div>
+  <button slot="hotspot-lens" data-position="0 1.2 0.4" data-normal="0 0 1">Lens</button>
+</scene-editor>
 ```
+
+`load` fires after the camera is framed, and a failure shows `slot="error"` (or a built-in message)
+instead of leaving an empty canvas. Compressed glTF (Draco / KTX2 / Meshopt) needs one more attribute —
+`decoder-path="/decoders/"` for a self-hosted payload directory or `decoder-cdn` for the pinned CDN;
+without it a Draco model still fails, but now names the missing decoder instead of showing a blank
+canvas.
+
+Editing is document-driven (`loadDocument` with a schema-v3 JSON), headless-first, and host-owned
+for persistence. Document shape, element API, assets, plugins and the save/conflict flow live in
+[`packages/scene-editor/README.md`](packages/scene-editor/README.md); every symbol is in
+[`API.md`](packages/scene-editor/API.md).
 
 ## Layout
 
 ```
 packages/scene-editor/   the npm package (headless core + element + three adapter)
-apps/playground/         reference host, SDK demos, perf bench, visual fixtures
+apps/playground/         reference host, ?demo= SDK scenarios, perf bench, visual fixtures
 e2e/                     Playwright specs (critical, SDK, studio, visual, perf)
-scripts/                 release metadata guard and npm pack smoke test
+docs/                    architecture, highlights, measured benchmarks
+scripts/                 release-metadata guard and npm pack smoke test
 ```
 
-## Playground
-
-`apps/playground` is the reference host and the place where integration problems show up first. It loads GLB/GLTF/OBJ/STL (including multi-file `.gltf` bundles), offers shading modes (studio / X-Ray / wireframe / normal / clay), skeleton overlay, explode preview, analytic lights plus built-in IBL, backdrop presets, exposure and tone mapping, camera presets, turntable, animation transport, gizmo tools, snapshots and GLB/OBJ export.
-
-The viewer architecture is intentionally boring: one `ViewerStore` fans out to `ViewerController.update*()`, and HUD panels only patch state.
-
-Focused SDK demos live under `/demos/` (host editing API, document model, headless facade, assets, viewer parity with `<model-viewer>`) and are asserted by `e2e/sdk-coverage.spec.ts`; `minimal.html` is the smallest end-to-end integration. `demos/compare.html` puts the official `<model-viewer>` (CDN) next to this SDK and is intentionally outside the test suite — it needs network.
-
-- `?scene=default` loads the deterministic `box-1 / box-2 / gem-1` fixture used by the e2e suites.
-- `?model=<id>` jumps straight to a Khronos sample.
-- `?select=<id>` selects an object and optionally applies `&move=x,y,z&rot=x,y,z&scale=x,y,z` for reproducible screenshots.
-- The bare URL opens a minimal home screen with drag-and-drop and sample links.
-
-Host wiring lives in `src/main.ts`; view state lives in `src/viewer/`; HUD chrome is composed from `src/ui/panels/` by `src/ui/studio-shell.ts`.
+`three` is a peer dependency and only imported under `packages/scene-editor/src/three/`;
+the core and element entries never touch a renderer.
 
 ## Develop
 
@@ -104,71 +92,69 @@ Requires Node 24+ and pnpm 11+.
 
 ```bash
 pnpm install
-pnpm typecheck           # tsc across packages that define the script
-pnpm test                # vitest unit tests
-pnpm build               # vite build + .d.ts for every package
+pnpm typecheck    # tsc across packages that define the script
+pnpm test         # 748 vitest unit tests
+pnpm build        # vite build + .d.ts for every package
 ```
 
-### E2E and quality gates
+| Gate | Command | Covers |
+|---|---|---|
+| Unit | `pnpm test` | 81 test files, `three` version matrix in CI (`0.186.0` + `latest`) |
+| E2E | `pnpm test:e2e` | critical flows + SDK scenarios on `minimal.html?demo=` + studio tools |
+| Visual | `pnpm test:e2e:visual` | canvas-only baselines, SwiftShader, 1% tolerance |
+| Perf | `pnpm test:perf` | first-interactive, p95 frame time, unload-zero |
+| Release | `pnpm test:release` | package/README/LICENSE/repository consistency |
+| Packaging | `pnpm test:pack` | `npm pack` → fresh consumer install/typecheck/build |
 
-```bash
-pnpm test:e2e            # full suite: critical + visual + perf
-pnpm test:e2e:visual     # visual regression only (SwiftShader, canvas-only)
-pnpm test:perf           # first-interactive + p95 frame-time gate
-pnpm test:release        # package/README/LICENSE/repository consistency
-pnpm test:pack           # npm pack -> fresh consumer install/typecheck/build
-```
-
-CI (`.github/workflows/ci.yml`) runs unit tests on a `three` version matrix (`0.186.0` pinned plus `latest`), critical e2e flows, the visual regression gate, the perf gate with relaxed thresholds, the release-metadata check, and the pack smoke. A red `latest` leg on a new three minor is the intended early warning for the peer range.
-
-### Playwright notes
-
-- Config: `e2e/playwright.config.ts`. Projects: `chromium` (critical), `visual` (software-rendered screenshots, CI-gated), and `perf` (runs alone to avoid frame-time contention).
-- Local runs reuse an already-serving dev server on port 4173; CI starts its own.
-- Visual baselines live under `e2e/visual/__screenshots__/visual/`. They are canvas-only captures rendered with SwiftShader, so they do not depend on the host GPU or fonts. Refresh with `pnpm test:e2e:visual --update-snapshots` and commit the PNGs.
-
-## Versioning and release
-
-- Every completed phase bumps the minor (`0.x.0`) and tags it; the first stable release is `1.0.0` once the public API is locked.
-- `.github/workflows/publish.yml` publishes when a `0.*` tag matching the package version is pushed (`next` for prereleases, `latest` for stable).
-- `pnpm test:release` keeps package metadata, README version and status, LICENSE, and the repository URL in sync. It runs in CI and before publishing.
-- `npm pack` must stay green (`pnpm test:pack`) — it is the release gate for consumer-facing package contents.
+A red `latest` leg on a new `three` minor is the intended early warning for the peer range.
+Playground: `pnpm --filter @scenio/playground dev` → <http://127.0.0.1:3000>
+(see [apps/playground/README.md](apps/playground/README.md)). A loaded model opens in
+**viewer** mode there; the header's 编辑 switch reveals the authoring chrome
+(`?mode=editor` boots straight into it). The host-shaped API regression surface
+now lives on `minimal.html?demo=<name>` — seven scenarios, the same 25 Playwright
+cases and the same `window.__*` hooks as before. The standalone `demos/` pages
+are gone; the coverage is not.
 
 ## Status and roadmap
 
-`0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still shift before `1.0.0`; after that, semver applies.
+`0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still shift before `1.0.0`;
+after that, semver applies.
 
-`0.7.0` raised the document to schema v3: `parentId` now builds real three.js parenting (groups are mounted instead of dropped), `type: "primitive"` renders eight procedural geometry kinds, per-object `material` overrides are persisted, and `view.lights.additional` accepts point/spot/directional/hemisphere lights. v2 documents migrate automatically; the payload stays byte-identical because every new field is optional.
+- **`0.7.0`** — schema v3: real `parentId` hierarchy, `type: "primitive"` (8 procedural kinds),
+  per-object `material` overrides, `view.lights.additional`; undoable `addObject` / `removeObject` /
+  `reparent` / `setMaterial`, validated by the same `validateHierarchy` used on load.
+- **`0.6.0`** — one-line glTF preview (`src`), auto-framing, `progress`/`load` lifecycle,
+  tone mapping / exposure, `visibility-change` and opt-in `view-changing`.
+- **Unreleased viewer surface** (element attributes + optional runtime methods, `view` schema
+  untouched): `camera-orbit` / `field-of-view` with easing, `environment-image` presets and HDR URLs,
+  contact shadows, embedded glTF cameras, morph targets, playback transport with `play` / `pause` /
+  `loop` / `finished`, hotspots with normals, pointer sensitivities, `loaded` / `modelIsVisible`.
+- **Unreleased viewer performance** — refcounted placeholder resources (5 000 objects: 11 MB of heap
+  instead of 26 MB), per-asset static merge (200 same-material meshes → 1), BVH-accelerated picking
+  above 2 000 triangles (12.0 ms → 0.10 ms, loaded on demand in its own chunk), and multi-clip
+  blending on a single mixer.
+- **Unreleased integration ergonomics** — the host-side "upload → edit → export" boilerplate moved
+  into the SDK: `createSceneDocument` / `createDocumentFromAsset`, `createFileBundleUrl` +
+  `el.loadFiles()` (with `assetFormatHint` so `blob:` URLs parse correctly), `el.exportDocument()`
+  exporting document transforms rather than preview state, `downloadBlob()` and `el.toBlob()`.
+  Viewport overlays are pure attributes now: `display-mode` (shading — batching-aware) and
+  `explode` (component explode, document-preserving), plus `LIGHTING_PRESETS` as exportable data.
 
-The same release added the write side: `addObject` / `removeObject` / `reparent` / `setMaterial` are undoable commands, validated through the same `validateHierarchy` a loaded document obeys, so duplicate ids, missing parents, self-parenting and cycles are rejected at edit time.
-
-`0.6.0` added a one-line glTF preview path (`<scene-editor src>`) with auto-framing, `progress`/`load` lifecycle events, and display settings (tone mapping / exposure), plus the `visibility-change` and opt-in `view-changing` element events.
-
-Planned next steps ([TODOS.md](TODOS.md)):
-
-- HDR environment maps and environment presets.
-- Switching to cameras embedded in a glTF asset.
-- Morph-target controls.
-
-Known gaps before this is a general-purpose scene editor:
-
-- Object duplication and multi-object transform.
-- The playground material panel still edits the runtime directly instead of going through `setMaterial`.
-
-Explicitly not planned: CRDT/real-time collaboration, plugin panel slots, and splitting the package per product.
+Next: see [TODOS.md](TODOS.md) for the prioritised viewer gaps, editing gaps and explicit non-goals
+(no CRDT collaboration, no plugin panel slots, no per-product package split).
 
 ## Documentation
 
 | Document | Language | Covers |
 |---|---|---|
-| [README.md](README.md) | English | Project overview, development, release |
-| [README.zh-CN.md](README.zh-CN.md) | 简体中文 | Project overview, development, release |
-| [packages/scene-editor/README.md](packages/scene-editor/README.md) | English | Install, usage, document model, assets, plugins |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 简体中文 | Layers, design decisions, highlights, measured benchmarks |
+| [README.md](README.md) / [README.zh-CN.md](README.zh-CN.md) | EN / 中文 | Project overview, development, gates, release |
+| [packages/scene-editor/README.md](packages/scene-editor/README.md) | English | Install, viewer + editor usage, document model, assets, plugins |
 | [packages/scene-editor/README.zh-CN.md](packages/scene-editor/README.zh-CN.md) | 简体中文 | Quick start and core concepts |
 | [packages/scene-editor/API.md](packages/scene-editor/API.md) | English | Full API reference |
 | [apps/playground/README.md](apps/playground/README.md) | English | Reference host and module map |
 | [e2e/visual/README.md](e2e/visual/README.md) | 简体中文 | Visual regression workflow |
-| [TODOS.md](TODOS.md) | 简体中文 | Roadmap and explicit non-goals |
+| [TODOS.md](TODOS.md) | 简体中文 | Prioritised gaps and explicit non-goals |
 
 ## License
 

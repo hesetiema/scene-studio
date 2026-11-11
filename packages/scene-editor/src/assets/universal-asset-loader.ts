@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { AssetError, AssetErrorCode } from "./asset-error";
+import { assetFormatHint } from "./format";
 import type { LoadedAsset } from "./asset-cache";
 
 export const UNIVERSAL_SUPPORTED_FORMATS = ["glb", "gltf", "obj", "stl"] as const;
@@ -58,17 +59,11 @@ export function detectFormatFromUrl(url: string, assetId?: string): Supported3DF
   if (url.startsWith("data:model/gltf-binary") || url.startsWith("data:model/gltf+json")) {
     return "glb";
   }
-  const clean = url.split("?")[0]?.split("#")[0] ?? "";
-  const ext = clean.split(".").pop()?.toLowerCase();
-  if (ext === "glb" || ext === "gltf" || ext === "obj" || ext === "stl") {
-    return ext;
-  }
-  if (assetId) {
-    const idClean = assetId.split("?")[0]?.split("#")[0] ?? "";
-    const idExt = idClean.split(".").pop()?.toLowerCase();
-    if (idExt === "glb" || idExt === "gltf" || idExt === "obj" || idExt === "stl") {
-      return idExt;
-    }
+  // URL first, asset id second — Blob URLs (`loadFiles`) carry no extension,
+  // and a dotted path segment is not an extension.
+  const hint = assetFormatHint(url, assetId);
+  if (hint === "glb" || hint === "gltf" || hint === "obj" || hint === "stl") {
+    return hint;
   }
   return "glb";
 }

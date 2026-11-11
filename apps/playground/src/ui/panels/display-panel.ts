@@ -1,10 +1,8 @@
-import type { ExplodeController } from "../explode-controller";
 import type { DisplayMode, ViewerState, ViewerStore } from "../../viewer/viewer-state";
 import { BasePanel } from "../panel";
 
 export interface DisplayPanelOptions {
   store: ViewerStore;
-  explode: ExplodeController;
 }
 
 /**
@@ -13,13 +11,11 @@ export interface DisplayPanelOptions {
  */
 export class DisplayPanel extends BasePanel {
   readonly #store: ViewerStore;
-  readonly #explode: ExplodeController;
   #unsubscribe: (() => void) | null = null;
 
   constructor(options: DisplayPanelOptions) {
     super();
     this.#store = options.store;
-    this.#explode = options.explode;
   }
 
   mount(): void {
@@ -42,10 +38,10 @@ export class DisplayPanel extends BasePanel {
 
     const slider = document.querySelector<HTMLInputElement>("#explode-slider");
     if (slider) {
-      this.listen(slider, "input", () => this.#explode.setFactor(Number(slider.value) / 100));
+      this.listen(slider, "input", () =>
+        this.#store.patch({ explode: Number(slider.value) / 100 }),
+      );
     }
-
-
 
     this.#unsubscribe = this.#store.subscribe((next) => this.sync(next));
     this.sync(this.#store.state);
@@ -61,6 +57,11 @@ export class DisplayPanel extends BasePanel {
 
     const skeleton = document.querySelector<HTMLInputElement>("#toggle-skeleton");
     if (skeleton) skeleton.checked = state.skeleton;
+
+    const slider = document.querySelector<HTMLInputElement>("#explode-slider");
+    if (slider && document.activeElement !== slider) slider.value = String(Math.round(state.explode * 100));
+    const label = document.querySelector<HTMLElement>("#explode-val");
+    if (label) label.textContent = `${Math.round(state.explode * 100)}%`;
   }
 
   destroy(): void {

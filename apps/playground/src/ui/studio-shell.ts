@@ -7,7 +7,7 @@ import type { DisplayMode, ViewerStore } from "../viewer/viewer-state";
 import { bindHotkeys } from "../interaction/hotkeys";
 import { DropZone } from "./drop-zone";
 import type { HUDController } from "./hud-controller";
-import { ExplodeController } from "./explode-controller";
+import { ModeSwitch } from "./mode-switch";
 import { MaterialController } from "./material-controller";
 import { AnimationPanel } from "./panels/animation-panel";
 import { BackgroundPanel } from "./panels/background-panel";
@@ -54,7 +54,8 @@ const MODE_BY_SHORTCUT: Record<string, DisplayMode> = {
  * host concerns — runtime factory, save/conflict store, boot sequence.
  */
 export class StudioShell {
-  readonly explode: ExplodeController;
+  /** 查看 / 编辑模式开关（宿主侧唯一真相，写入 `el.mode`）。 */
+  readonly modeSwitch: ModeSwitch;
   readonly material: MaterialController;
   readonly model: ModelPanel;
   readonly transform: TransformPanel;
@@ -74,8 +75,7 @@ export class StudioShell {
 
   constructor(options: StudioShellOptions) {
     this.#options = options;
-    this.explode = new ExplodeController(options.el, options.getRuntime);
-
+    this.modeSwitch = new ModeSwitch({ el: options.el, hud: options.hud });
     this.model = new ModelPanel({
       loadPreset: options.loadPreset,
       loadCustom: options.loadCustom,
@@ -94,7 +94,7 @@ export class StudioShell {
     });
 
     this.background = new BackgroundPanel({ store: options.store });
-    this.display = new DisplayPanel({ store: options.store, explode: this.explode });
+    this.display = new DisplayPanel({ store: options.store });
     this.lighting = new LightingPanel({ store: options.store });
 
     this.material = new MaterialController(options.el, options.getRuntime);
@@ -111,7 +111,6 @@ export class StudioShell {
 
     this.document = new DocumentPanel({
       el: options.el,
-      getRuntime: options.getRuntime,
       hud: options.hud,
       history: options.history,
     });
@@ -119,6 +118,7 @@ export class StudioShell {
     this.chrome = new ChromePanel();
 
     this.#panels = [
+      this.modeSwitch,
       this.model,
       this.transform,
       this.cameraPanel,
@@ -145,15 +145,11 @@ export class StudioShell {
     this.#bindKeys();
 
     this.#options.hud.startFpsCounter();
-    // Imported assets range from millimetres to hundreds of metres — keep the
-    // clip planes tied to the live camera distance so zoom never cuts geometry.
-    this.#options.camera.startClipSync();
     this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
   }
 
-  /** Re-sync the viewer after `loadDocument()` — clips, explode baseline, presets. */
+  /** Re-sync the viewer after `loadDocument()` — clips, presets, shading/explode state. */
   onDocumentLoaded(): void {
-    this.explode.reset();
     this.material.reset();
     this.#options.camera.invalidateBounds();
     this.#options.viewer.syncFromDocument();
@@ -173,7 +169,6 @@ export class StudioShell {
   destroy(): void {
     for (const dispose of this.#disposers.splice(0)) dispose();
     this.#dropZone.destroy();
-    this.#options.camera.stopTurntable();
     this.#options.camera.destroy();
     for (const panel of this.#panels) panel.destroy();
     this.#options.hud.destroy();
@@ -189,9 +184,10 @@ export class StudioShell {
           () => store.patch({ display: mode }),
         ]),
       ),
-      g: () => this.transform.setMode("translate"),
-      r: () => this.transform.setMode("rotate"),
-      s: () => this.transform.setMode("scale"),
+      // 变换工具只在编辑态有意义；查看态下控制面板整个是隐藏的。
+      g: () => this.#whenEditing(() => this.transform.setMode("translate")),
+      r: () => this.#whenEditing(() => this.transform.setMode("rotate")),
+      s: () => this.#whenEditing(() => this.transform.setMode("scale")),
       f: () => camera.frameScene(true),
       h: () => {
         camera.resetCamera(true);
@@ -202,5 +198,9 @@ export class StudioShell {
       p: () => this.animation.togglePlay(),
     });
     this.#disposers.push(off);
+  }
+
+  #whenEditing(run: () => void): void {
+    if (this.modeSwitch.mode === "editor") run();
   }
 }

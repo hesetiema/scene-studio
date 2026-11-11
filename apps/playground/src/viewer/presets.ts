@@ -1,36 +1,18 @@
-import type { ViewState } from "@scenio/scene-editor";
 import type { SceneEditorElement } from "@scenio/scene-editor/element";
-import type { LightingPresetId } from "./viewer-state";
+import {
+  LIGHTING_PRESETS,
+  type LightingPreset,
+  type LightingPresetId,
+  type ViewState,
+} from "@scenio/scene-editor";
 
-export interface LightingPreset {
-  label: string;
-  ambient: ViewState["lights"]["ambient"];
-  directional: ViewState["lights"]["directional"];
-}
+/**
+ * Studio lighting presets come from the SDK (typed against the document's
+ * `view.lights`); this module only owns the studio's application policy.
+ */
 
-/** Studio lighting presets, kept next to the document `view.lights` shape (D22). */
-export const LIGHTING_PRESETS: Record<LightingPresetId, LightingPreset> = {
-  studio: {
-    label: "Studio",
-    ambient: { color: "#ffffff", intensity: 0.65 },
-    directional: { color: "#eef6ff", intensity: 1.35, position: [5, 10, 7] },
-  },
-  cyber: {
-    label: "Cyber",
-    ambient: { color: "#0a2233", intensity: 0.6 },
-    directional: { color: "#38e2ff", intensity: 1.8, position: [6, 8, 5] },
-  },
-  sunset: {
-    label: "Sunset",
-    ambient: { color: "#2d1a0e", intensity: 0.5 },
-    directional: { color: "#ff9d42", intensity: 1.6, position: [-8, 6, 7] },
-  },
-  contrast: {
-    label: "Noir",
-    ambient: { color: "#0c0d10", intensity: 0.25 },
-    directional: { color: "#ffffff", intensity: 2.2, position: [0, 12, 4] },
-  },
-};
+export { LIGHTING_PRESETS };
+export type { LightingPreset, LightingPresetId };
 
 export const DEFAULT_BACKDROP = "#0c0e12";
 

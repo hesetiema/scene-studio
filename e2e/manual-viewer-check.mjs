@@ -15,7 +15,7 @@
  */
 import { chromium } from "@playwright/test";
 
-const URL = "http://127.0.0.1:4180/demos/viewer.html";
+const URL = "http://127.0.0.1:4180/minimal.html?demo=viewer";
 const results = [];
 const check = (name, ok, detail = "") => {
   results.push({ name, ok, detail });

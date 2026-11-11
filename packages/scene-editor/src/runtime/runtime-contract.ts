@@ -19,6 +19,13 @@ export interface Transform {
 export type ToneMappingMode = "none" | "linear" | "aces" | "agx" | "neutral";
 
 /**
+ * Viewport shading switch. `"studio"` is the identity: the materials the
+ * document/asset declared. The rest are inspection overlays — presentation
+ * only, never persisted, and they must cover batched instances too.
+ */
+export type DisplayModeId = "studio" | "xray" | "wireframe" | "normal" | "clay";
+
+/**
  * Built-in studio IBL used when the view does not name an HDR:
  * `room` = three's warm `RoomEnvironment` (editor default),
  * `neutral` = grayscale softbox studio matching model-viewer's `neutral`.
@@ -83,6 +90,21 @@ export interface AnimationOptions {
   crossfadeSeconds?: number;
   /** One-shot playback that stops on the last frame instead of looping. */
   pauseAtEnd?: boolean;
+}
+
+/**
+ * One clip in a multi-clip blend (`playAnimationBlend`).
+ *
+ * Weights are *shares*: the runtime normalizes them across the call, so
+ * `[{ index: 0, weight: 1 }, { index: 1, weight: 1 }]` is a 50/50 blend.
+ */
+export interface AnimationBlendLayer {
+  /** Clip index on the target object (`animations[].index`). */
+  index: number;
+  /** Relative share of the result; `0` mutes the layer. */
+  weight: number;
+  /** Per-layer multiplier on top of the global speed (default 1). */
+  timeScale?: number;
 }
 
 /**
@@ -205,6 +227,24 @@ export interface RuntimeContract {
    * controls ignore it.
    */
   setCameraControls?(options: CameraControlsOptions): void;
+  /**
+   * Authoring interactions on/off: the transform gizmo (and anything else that
+   * only makes sense while editing) mounts only while this is `true`.
+   *
+   * The element drives it from its `mode` attribute — a viewer renders the model
+   * and keeps orbit/zoom, but shows no selection axes. Optional: runtimes
+   * without authoring chrome ignore it.
+   */
+  setInteractive?(interactive: boolean): void;
+  /**
+   * Merge repeated primitive meshes into shared `InstancedMesh`es (draw-call
+   * batching). Live: `false` gives every object its own draw call back without
+   * a reload, `true` re-absorbs whatever is eligible.
+   *
+   * Purely a draw-time detail — the document, picking, framing and export are
+   * unaffected either way. Optional: runtimes without batching ignore it.
+   */
+  setInstancing?(enabled: boolean): void;
   /** Auto-rotation; `null` stops it. Optional for the same reason as above. */
   setAutoRotate?(options: AutoRotateOptions | null): void;
   /**
@@ -252,6 +292,17 @@ export interface RuntimeContract {
   playAnimation?(objectId?: string | null, index?: number): boolean;
   /** Start a clip by name (case-insensitive); `false` when no clip matches. */
   playAnimationByName?(name: string): boolean;
+  /**
+   * Play several clips of one object at once with normalized weights (a walk
+   * cycle plus an upper-body gesture). A single layer behaves exactly like
+   * `playAnimation`.
+   */
+  playAnimationBlend?(
+    layers: readonly AnimationBlendLayer[],
+    objectId?: string | null,
+  ): boolean;
+  /** Layers currently playing, heaviest first; empty when nothing is active. */
+  readonly animationBlend?: readonly AnimationBlendLayer[];
   /** Hold the playhead where it is; rendering continues. */
   pauseAnimations?(): void;
   /** Continue the paused clip without rewinding; `false` when nothing is loaded. */
@@ -308,10 +359,41 @@ export interface RuntimeContract {
   toBlob?(type?: string, quality?: number): Promise<Blob | null>;
   /** Export the document objects as GLB (`binary` default) or `.gltf` JSON. */
   exportScene?(options?: { binary?: boolean }): Promise<ArrayBuffer | string>;
+  /**
+   * Export a **document** as a Blob — the counterpart of {@link exportScene}
+   * that serializes stored transforms instead of the live ones, so preview-only
+   * state (explode offsets, display-mode materials, a gizmo mid-drag) never
+   * leaks into the file. `gltf` / `glb` / `obj`; clips stay with the asset.
+   *
+   * Optional because exporting is a host concern: a custom runtime that only
+   * paints pixels simply omits it, and `SceneEditorElement#exportScene()`
+   * rejects with a clear message instead of returning something wrong.
+   */
+  exportDocument?(
+    doc: SceneDocument,
+    options?: { format?: "glb" | "gltf" | "obj" },
+  ): Promise<Blob>;
   /** Display transfer function; presentation-only, never persisted. */
   setToneMapping?(mode: ToneMappingMode): void;
   /** Exposure multiplier applied on top of the tone mapping. */
   setExposure?(value: number): void;
+  /**
+   * Viewport shading (`display-mode`). `"studio"` restores whatever the
+   * document/asset declared; the other modes swap every rendered mesh —
+   * including `InstancedMesh` batches — to a shared override material.
+   * Presentation only: the document is never touched.
+   */
+  setDisplayMode?(mode: DisplayModeId): void;
+  /** Currently applied shading mode; `"studio"` when never set. */
+  readonly displayMode?: DisplayModeId;
+  /**
+   * Component explode (`explode`, 0..1). Objects are offset from their
+   * document positions — a preview, never a document write; the runtime resets
+   * to 0 when a document loads, and batched instances follow via `markDirty`.
+   */
+  setExplode?(factor: number): void;
+  /** Current explode factor (0..1, default 0). */
+  readonly explode?: number;
   /**
    * Swap the built-in studio IBL (model-viewer's `environment-image` parity).
    * Inert while the view supplies its own HDR; environments without a
@@ -384,4 +466,14 @@ export interface RuntimeContract {
   setMaterial?(id: string, material: MaterialDTO | undefined): void;
 
   readonly events: RuntimeEventBus;
+
+  /**
+   * The GPU renderer handle (three's `WebGLRenderer` / `WebGPURenderer`).
+   *
+   * Only asset loaders need it: `KTX2Loader.detectSupport()` must probe the
+   * device before it can pick a compressed texture target, and guessing would
+   * produce unreadable textures. Optional — a runtime that omits it simply
+   * keeps KTX2 a host responsibility.
+   */
+  readonly renderer?: unknown;
 }

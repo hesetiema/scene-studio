@@ -1,8 +1,6 @@
 import * as THREE from "three";
 import type { AnimationClipInfo, ThreeRuntime } from "@scenio/scene-editor/three";
 import type { SceneEditorElement } from "@scenio/scene-editor/element";
-import type { CameraController } from "../camera/camera-controller";
-import { createDisplayModes, type DisplayModes } from "./display-modes";
 import {
   DEFAULT_BACKDROP,
   LIGHTING_PRESETS,
@@ -14,17 +12,13 @@ import {
 } from "./presets";
 import type { ToneMappingId, ViewerState, ViewerStore } from "./viewer-state";
 
-const TONE_MAPPING: Record<ToneMappingId, THREE.ToneMapping> = {
-  none: THREE.NoToneMapping,
-  linear: THREE.LinearToneMapping,
-  aces: THREE.ACESFilmicToneMapping,
-};
+/** Turntable speed, expressed the way the SDK's `setAutoRotate` wants it. */
+const TURNTABLE_DEGREES_PER_SECOND = 26;
 
 export interface ViewerControllerOptions {
   store: ViewerStore;
   el: SceneEditorElement;
   getRuntime: () => ThreeRuntime | null;
-  camera: CameraController;
 }
 
 /**
@@ -37,8 +31,6 @@ export class ViewerController {
   readonly #store: ViewerStore;
   readonly #el: SceneEditorElement;
   readonly #getRuntime: () => ThreeRuntime | null;
-  readonly #camera: CameraController;
-  readonly #display: DisplayModes;
 
   #unsubscribe: (() => void) | null = null;
   #skeleton: THREE.SkeletonHelper[] = [];
@@ -48,8 +40,6 @@ export class ViewerController {
     this.#store = options.store;
     this.#el = options.el;
     this.#getRuntime = options.getRuntime;
-    this.#camera = options.camera;
-    this.#display = createDisplayModes(options.el, options.getRuntime);
   }
 
   mount(): void {
@@ -63,7 +53,6 @@ export class ViewerController {
     this.#unsubscribe = null;
     this.#stopLightFollow();
     this.#clearSkeleton();
-    this.#display.dispose();
   }
 
   /** Refresh document-owned slices after `loadDocument()` and re-apply previews. */
@@ -76,12 +65,17 @@ export class ViewerController {
       background: view?.environment.background ?? DEFAULT_BACKDROP,
       grid: view?.environment.gridVisible ?? true,
       iblIntensity: view?.environment.iblIntensity ?? 1,
+      // Fresh content, fresh baseline: explode always restarts at 0 on load.
+      explode: 0,
       animation: first
         ? { clipId: first.id, playing: true, speed: this.#store.state.animation.speed }
         : { clipId: null, playing: false },
     });
 
-    this.#display.reset(this.#store.state.display);
+    // New meshes need the current shading overlay, and the runtime reset
+    // explode to 0 on the document swap — the store's choice re-applies.
+    this.#getRuntime()?.setDisplayMode(this.#store.state.display);
+    this.#getRuntime()?.setExplode(this.#store.state.explode);
     this.#applyRenderSettings(this.#store.state);
     // 强度的倍率与颜色覆盖是预览态，换文档后需要重新叠加到新文档的灯光上。
     this.#applyLightTuning(this.#store.state);
@@ -127,7 +121,14 @@ export class ViewerController {
   // -------------------------------------------------------------------------
 
   #handle(next: ViewerState, prev: ViewerState): void {
-    if (next.display !== prev.display) this.#display.apply(next.display);
+    // Shading + explode are SDK rigs (`setDisplayMode` / `setExplode`): the
+    // controller only routes the state slice, same as tone mapping.
+    if (next.display !== prev.display) {
+      this.#getRuntime()?.setDisplayMode(next.display);
+    }
+    if (next.explode !== prev.explode) {
+      this.#getRuntime()?.setExplode(next.explode);
+    }
     if (next.skeleton !== prev.skeleton) this.#applySkeleton(next.skeleton);
 
     if (next.background !== prev.background) applyBackdrop(this.#el, next.background);
@@ -165,26 +166,10 @@ export class ViewerController {
   }
 
   #applyRenderSettings(state: ViewerState): void {
-    const rt = this.#getRuntime();
-    if (!rt) return;
-
-    const renderer = rt.renderer as unknown as {
-      toneMapping?: THREE.ToneMapping;
-      toneMappingExposure?: number;
-    };
-    if ("toneMapping" in renderer) renderer.toneMapping = TONE_MAPPING[state.toneMapping];
-    if ("toneMappingExposure" in renderer) renderer.toneMappingExposure = state.exposure;
-
-    // Shader programs are keyed by tone mapping — force a relink.
-    rt.scene.traverse((child) => {
-      const mesh = child as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      for (const material of materials) {
-        if (material) material.needsUpdate = true;
-      }
-    });
-    rt.render();
+    // Contract path, not a renderer mutation: the SDK owns the transfer
+    // function and the relink; exposure/tone mapping stay preview state.
+    this.#getRuntime()?.setToneMapping(state.toneMapping);
+    this.#getRuntime()?.setExposure(state.exposure);
   }
 
   /**
@@ -254,8 +239,12 @@ export class ViewerController {
   }
 
   #applyTurntable(active: boolean): void {
-    if (active === this.#camera.turntableActive) return;
-    this.#camera.toggleTurntable();
+    // SDK turntable: rig-level and presentational — a spin never dirties the
+    // document, pauses under a drag, and respects reduced-motion.
+    this.#getRuntime()?.setAutoRotate({
+      enabled: active,
+      degreesPerSecond: TURNTABLE_DEGREES_PER_SECOND,
+    });
   }
 
   #applyAnimation(next: ViewerState, prev: ViewerState): void {

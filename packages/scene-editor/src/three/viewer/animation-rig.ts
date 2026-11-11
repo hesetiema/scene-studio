@@ -42,17 +42,57 @@ interface ActivePlayback {
   action: THREE.AnimationAction;
 }
 
+/**
+ * One clip in a blend. Weight is a *share*, normalized across the layers of a
+ * single call, so `[{0, 1}, {1, 1}]` is a 50/50 blend rather than a 1+1 = 2
+ * over-rotation.
+ */
+export interface AnimationBlendLayer {
+  /** Clip index on the target object (as reported by `list()`). */
+  index: number;
+  /** Relative share of the result; `0` mutes the layer. */
+  weight: number;
+  /** Per-layer multiplier on top of the global speed (default 1). */
+  timeScale?: number;
+}
+
+/** Live blend readback — what `blend` returns while playback is active. */
+export interface AnimationBlendInfo {
+  index: number;
+  name: string;
+  weight: number;
+  timeScale: number;
+}
+
+interface Layer {
+  track: Track;
+  action: THREE.AnimationAction;
+  weight: number;
+  timeScale: number;
+}
+
 export interface AnimationRig {
   readonly playing: boolean;
   readonly speed: number;
-  /** Playhead of the active clip (seconds). */
+  /** Playhead of the primary clip (seconds). */
   readonly time: number;
   readonly duration: number;
+  /**
+   * Layers of the blend in flight, primary (highest weight) first. One entry
+   * for ordinary single-clip playback; empty when nothing is active.
+   */
+  readonly blend: readonly AnimationBlendInfo[];
   /** Bind glTF clips to a mounted asset instance (one mixer per object). */
   register(objectId: string, root: THREE.Object3D, clips: readonly unknown[]): void;
   list(): AnimationClipInfo[];
   /** Play one clip (null objectId = first object that has clips). */
   play(objectId: string | null, index?: number): boolean;
+  /**
+   * Play several clips of one object at once, each with a normalized weight.
+   * Mixers are shared, so this is a real blend (a walk cycle plus an upper-body
+   * gesture), not a crossfade. A single layer is exactly `play()`.
+   */
+  playBlend(objectId: string | null, layers: readonly AnimationBlendLayer[]): boolean;
   /** Play the first clip whose name matches (case-insensitive); false when absent. */
   playByName(name: string): boolean;
   /** Continue the paused clip without rewinding (finished one-shots restart). */
@@ -66,7 +106,7 @@ export interface AnimationRig {
   /**
    * Property names the clip in flight writes (`<node>.morphTargetInfluences`,
    * `<node>.position`, …). Empty when nothing is playing — manual edits are only
-   * ignored while a clip actually drives the channel.
+   * ignored while a clip actually drives the channel. Blends report the union.
    */
   activeTrackNames(): string[];
   /** Advance mixers; returns true while playback is active. */
@@ -86,15 +126,21 @@ const END_EPSILON = 1e-4;
 /**
  * glTF animation playback (reference: `setClips` / `mixer` / `playAllClips`).
  *
- * One clip plays at a time across the runtime — a viewer wants a predictable
- * transport, not N mixers drifting apart. `crossfadeSeconds` blends the two
- * clips on the *same* object; across objects the outgoing mixers still stop
- * immediately (there is no meaningful blend between two skeletons).
+ * One *object* plays at a time across the runtime — a viewer wants a predictable
+ * transport, not N mixers drifting apart. Within that object, several clips can
+ * share the mixer with weights (`playBlend`), which is what glTF's own model
+ * supports: one skeleton, N concurrent samplers. `crossfadeSeconds` blends the
+ * outgoing playback into the new one on the *same* object; across objects the
+ * outgoing mixers still stop immediately (there is no meaningful blend between
+ * two skeletons).
  */
 export function createAnimationRig(options: AnimationRigOptions = {}): AnimationRig {
   const notify = options.onTransport ?? null;
   const tracks = new Map<string, Track>();
+  /** Primary playback — the layer `time` / `duration` / transport events follow. */
   let active: ActivePlayback | null = null;
+  /** Every action currently playing on the primary's track (1 for a single clip). */
+  let layers: Layer[] = [];
   let playing = false;
   let speed = 1;
   let crossfadeSeconds = 0;
@@ -131,16 +177,19 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
     const action = track.actions[index];
     if (!action) return false;
 
-    const previous = active;
     // Other objects never crossfade: stop their mixers outright.
     for (const other of tracks.values()) {
       if (other !== track) other.mixer.stopAllAction();
     }
 
-    const fade = crossfadeSeconds > 0 && previous !== null && previous.action !== action;
-    if (previous && previous.track === track && previous.action !== action) {
-      if (fade) previous.action.fadeOut(crossfadeSeconds);
-      else previous.action.stop();
+    const fade =
+      crossfadeSeconds > 0 &&
+      layers.length > 0 &&
+      !(layers.length === 1 && layers[0]!.action === action);
+    for (const layer of layers) {
+      if (layer.action === action) continue;
+      if (fade) layer.action.fadeOut(crossfadeSeconds);
+      else layer.action.stop();
     }
 
     action.reset();
@@ -148,11 +197,12 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
     action.enabled = true;
     action.paused = false;
     action.setEffectiveTimeScale(1);
+    action.setEffectiveWeight(1);
     if (fade) action.fadeIn(crossfadeSeconds);
-    else action.setEffectiveWeight(1);
     action.play();
 
     active = { track, action };
+    layers = [{ track, action, weight: 1, timeScale: 1 }];
     playing = true;
     loopCount = 0;
     notify?.({ type: "play", objectId: track.objectId, index, name: clipName(action, index) });
@@ -172,12 +222,24 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
     get duration(): number {
       return active?.action.getClip().duration ?? 0;
     },
+    get blend(): readonly AnimationBlendInfo[] {
+      return layers.map((layer) => {
+        const index = layer.track.actions.indexOf(layer.action);
+        return {
+          index: index < 0 ? 0 : index,
+          name: clipName(layer.action, index < 0 ? 0 : index),
+          weight: layer.weight,
+          timeScale: layer.timeScale,
+        };
+      });
+    },
     register(objectId: string, root: THREE.Object3D, clips: readonly unknown[]): void {
       const usable = clips.filter(isAnimationClip);
       if (usable.length === 0) return;
       // A re-register (asset swap) must not leave the old mixer running.
       if (active?.track.objectId === objectId) {
         active = null;
+        layers = [];
         playing = false;
       }
 
@@ -229,6 +291,82 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
       if (!track) return false;
       return start(track, index);
     },
+    playBlend(objectId: string | null, requested: readonly AnimationBlendLayer[]): boolean {
+      const track = objectId
+        ? tracks.get(objectId)
+        : [...tracks.values()].find((candidate) => candidate.clips.length > 0);
+      if (!track) return false;
+
+      const resolved = requested
+        .filter((layer) => Number.isFinite(layer.index))
+        .map((layer) => ({
+          index: Math.max(0, Math.trunc(layer.index)),
+          weight: Number.isFinite(layer.weight) ? Math.max(0, layer.weight) : 0,
+          timeScale:
+            layer.timeScale !== undefined && Number.isFinite(layer.timeScale)
+              ? Math.max(0, layer.timeScale)
+              : 1,
+        }))
+        .filter((layer) => track.actions[layer.index] !== undefined);
+      if (resolved.length === 0) return false;
+      // One layer is not a blend: keep the plain path (and its events) exact.
+      if (resolved.length === 1) return start(track, resolved[0]!.index);
+
+      // Weights are shares: three adds the effective weights, so unnormalized
+      // input would scale the pose past what either clip authored.
+      const total = resolved.reduce((sum, layer) => sum + layer.weight, 0);
+      const share = (weight: number): number =>
+        total > 0 ? weight / total : 1 / resolved.length;
+
+      for (const other of tracks.values()) {
+        if (other !== track) other.mixer.stopAllAction();
+      }
+      const fade = crossfadeSeconds > 0 && layers.length > 0;
+      const incoming = new Set(resolved.map((layer) => track.actions[layer.index]));
+
+      // Fade out whatever is not part of the new blend; a layer that survives
+      // into the next blend is reset below, so it must not be faded out first.
+      for (const layer of layers) {
+        if (incoming.has(layer.action)) continue;
+        if (fade) layer.action.fadeOut(crossfadeSeconds);
+        else layer.action.stop();
+      }
+
+      const next: Layer[] = [];
+      for (const layer of resolved) {
+        const action = track.actions[layer.index]!;
+        const wasPlaying = layers.some((existing) => existing.action === action);
+        action.reset();
+        applyLoopPolicy(action);
+        action.enabled = true;
+        action.paused = false;
+        action.setEffectiveTimeScale(layer.timeScale);
+        action.setEffectiveWeight(share(layer.weight));
+        if (fade && !wasPlaying) action.fadeIn(crossfadeSeconds);
+        action.play();
+        next.push({
+          track,
+          action,
+          weight: share(layer.weight),
+          timeScale: layer.timeScale,
+        });
+      }
+
+      layers = next;
+      // The primary is what transport events and `time` follow: the heaviest
+      // layer, first one wins a tie.
+      active = next.reduce((best, layer) => (layer.weight > best.weight ? layer : best));
+      playing = true;
+      loopCount = 0;
+      const primaryIndex = track.actions.indexOf(active.action);
+      notify?.({
+        type: "play",
+        objectId: track.objectId,
+        index: primaryIndex < 0 ? 0 : primaryIndex,
+        name: clipName(active.action, primaryIndex < 0 ? 0 : primaryIndex),
+      });
+      return true;
+    },
     playByName(name: string): boolean {
       const wanted = name.trim().toLowerCase();
       if (!wanted) return false;
@@ -245,12 +383,18 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
       const { action, track } = active;
       // A finished one-shot sits clamped on its last frame: rewind before playing.
       if (action.time >= action.getClip().duration - END_EPSILON) {
-        action.reset();
-        applyLoopPolicy(action);
+        for (const layer of layers) {
+          layer.action.reset();
+          applyLoopPolicy(layer.action);
+          layer.action.setEffectiveTimeScale(layer.timeScale);
+          layer.action.setEffectiveWeight(layer.weight);
+        }
         loopCount = 0;
       }
-      action.paused = false;
-      action.enabled = true;
+      for (const layer of layers) {
+        layer.action.paused = false;
+        layer.action.enabled = true;
+      }
       playing = true;
       track.mixer.update(0);
       const index = track.actions.indexOf(action);
@@ -261,7 +405,7 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
       // The reference stays silent when there was nothing playing: a viewer
       // always starts paused, so a `pause` event there would be noise.
       const wasPlaying = playing;
-      if (active) active.action.paused = true;
+      for (const layer of layers) layer.action.paused = true;
       playing = false;
       if (wasPlaying) notify?.({ type: "pause" });
     },
@@ -270,9 +414,13 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
     },
     setTime(seconds: number): void {
       if (!active) return;
-      const { action, track } = active;
-      const duration = action.getClip().duration;
-      action.time = Math.max(0, Math.min(seconds, duration));
+      const { track } = active;
+      // Every layer of a blend is scrubbed together, each clamped to its own
+      // duration: layers of different lengths must stay in sync, not loop.
+      for (const layer of layers) {
+        const duration = layer.action.getClip().duration;
+        layer.action.time = Math.max(0, Math.min(seconds, duration));
+      }
       track.mixer.update(0);
     },
     setOptions(options: AnimationRigOptions): void {
@@ -282,11 +430,15 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
           : 0;
       }
       if (options.pauseAtEnd !== undefined) pauseAtEnd = options.pauseAtEnd;
-      if (active) applyLoopPolicy(active.action);
+      for (const layer of layers) applyLoopPolicy(layer.action);
     },
     activeTrackNames(): string[] {
-      if (!active || !playing) return [];
-      return active.action.getClip().tracks.map((track) => track.name);
+      if (!playing) return [];
+      const names = new Set<string>();
+      for (const layer of layers) {
+        for (const track of layer.action.getClip().tracks) names.add(track.name);
+      }
+      return [...names];
     },
     update(delta: number): boolean {
       if (!playing || !active) return false;
@@ -297,6 +449,7 @@ export function createAnimationRig(options: AnimationRigOptions = {}): Animation
       for (const track of tracks.values()) releaseTrack(track);
       tracks.clear();
       active = null;
+      layers = [];
       playing = false;
     },
   };

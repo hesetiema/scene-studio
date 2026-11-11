@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { clone as cloneSkinned } from "three/examples/jsm/utils/SkeletonUtils.js";
 import type { MaterialDTO, PrimitiveGeometry, SceneObjectDTO } from "../../core/document/schema";
+import {
+  createSharedResourcePool,
+  primitiveSignature,
+  type SharedResourcePool,
+} from "./shared-resources";
 
 export interface PlaceholderObject {
   object: THREE.Mesh;
@@ -67,6 +72,26 @@ export function createGroupObject(dto: SceneObjectDTO): THREE.Group {
 
 /** Default surface for objects without an explicit material. */
 const BASE_COLOR = 0x4f8ef7;
+
+/**
+ * Every placeholder and primitive starts on the same base material, so the pool
+ * has exactly one entry for it. A document material never lands here: the store
+ * applies it through `applyMaterialOverride`, which clones per object.
+ */
+const BASE_MATERIAL_KEY = "MeshStandardMaterial|#4f8ef7";
+
+/**
+ * Pool used when a caller does not pass one. Only reached by direct users of
+ * `createPrimitiveObject`; the runtime always supplies its own, so a document
+ * teardown can release everything it allocated.
+ */
+let fallbackPool: SharedResourcePool | null = null;
+
+function poolFor(pool?: SharedResourcePool): SharedResourcePool {
+  if (pool) return pool;
+  fallbackPool ??= createSharedResourcePool();
+  return fallbackPool;
+}
 
 /** Document geometry → live BufferGeometry. Every default is documented here. */
 export function createPrimitiveGeometry(geometry: PrimitiveGeometry): THREE.BufferGeometry {
@@ -226,12 +251,23 @@ export function applyMaterialOverride(
  * The document's `material` is deliberately *not* applied here — the object
  * store routes every object (primitive, placeholder, asset) through
  * `applyMaterialOverride` so one code path owns override and restore.
+ *
+ * Geometry and base material come from `resources`, so a 5 000-box document
+ * allocates one buffer and one material instead of 5 000 of each. `dispose()`
+ * therefore releases references rather than freeing outright.
  */
-export function createPrimitiveObject(dto: SceneObjectDTO): PlaceholderObject {
-  const geometry = dto.geometry
-    ? createPrimitiveGeometry(dto.geometry)
-    : new THREE.BoxGeometry(1, 1, 1);
-  const material = new THREE.MeshStandardMaterial({ color: BASE_COLOR });
+export function createPrimitiveObject(
+  dto: SceneObjectDTO,
+  resources?: SharedResourcePool,
+): PlaceholderObject {
+  const pool = poolFor(resources);
+  const geometry = pool.geometry(`geometry:${primitiveSignature(dto.geometry)}`, () =>
+    dto.geometry ? createPrimitiveGeometry(dto.geometry) : new THREE.BoxGeometry(1, 1, 1),
+  );
+  const material = pool.material(
+    `material:${BASE_MATERIAL_KEY}`,
+    () => new THREE.MeshStandardMaterial({ color: BASE_COLOR }),
+  );
 
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = dto.name;
@@ -241,16 +277,27 @@ export function createPrimitiveObject(dto: SceneObjectDTO): PlaceholderObject {
   return {
     object: mesh,
     dispose(): void {
-      geometry.dispose();
-      material.dispose();
+      pool.release(geometry);
+      pool.release(material);
     },
   };
 }
 
 /** Deterministic box used when no assetId / asset cache is available. */
-export function createPlaceholderObject(dto: SceneObjectDTO): PlaceholderObject {
-  const geometry = new THREE.BoxGeometry(1, 1, 1);
-  const material = new THREE.MeshStandardMaterial({ color: BASE_COLOR });
+export function createPlaceholderObject(
+  dto: SceneObjectDTO,
+  resources?: SharedResourcePool,
+): PlaceholderObject {
+  const pool = poolFor(resources);
+  // Same signature as a default `box` primitive: both build `BoxGeometry(1,1,1)`,
+  // so the placeholder and a `{ kind: "box" }` object share one buffer.
+  const geometry = pool.geometry(`geometry:${primitiveSignature(undefined)}`, () =>
+    new THREE.BoxGeometry(1, 1, 1),
+  );
+  const material = pool.material(
+    `material:${BASE_MATERIAL_KEY}`,
+    () => new THREE.MeshStandardMaterial({ color: BASE_COLOR }),
+  );
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = dto.name;
   applyDtoTransform(mesh, dto);
@@ -259,8 +306,8 @@ export function createPlaceholderObject(dto: SceneObjectDTO): PlaceholderObject 
   return {
     object: mesh,
     dispose(): void {
-      geometry.dispose();
-      material.dispose();
+      pool.release(geometry);
+      pool.release(material);
     },
   };
 }

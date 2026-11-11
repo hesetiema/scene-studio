@@ -10,7 +10,7 @@ import { openAdvanced } from "./support/ui";
  */
 
 async function boot(page: Page): Promise<void> {
-  await page.goto("/?scene=default");
+  await page.goto("/?scene=default&mode=editor");
   await page.waitForFunction(() => document.body.dataset.boot === "ready");
   // 曝光 / 环境光强度位于「灯光 → 更多设置」，本文件所有用例都要改它们。
   await openAdvanced(page, "group-lighting");

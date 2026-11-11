@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Adversarial regression for the /demos pages.
+ * Adversarial regression for the `?demo=` scenarios on `minimal.html`.
  *
  * These are the hostile-input / hostile-timing cases the happy-path coverage
  * suite does not exercise:
@@ -30,9 +30,9 @@ type EditorHandle = {
 const editorHandle = (): EditorHandle =>
   document.querySelector("scene-editor") as unknown as EditorHandle;
 
-test.describe("host API demo — hostile input and timing", () => {
+test.describe("host API scenario — hostile input and timing", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/demos/host-api.html");
+    await page.goto("/minimal.html?demo=host-api");
     await page.waitForFunction(() => document.body.dataset.demo === "ready");
   });
 
@@ -138,9 +138,9 @@ test.describe("host API demo — hostile input and timing", () => {
   });
 });
 
-test.describe("document demo — untrusted input", () => {
+test.describe("document scenario — untrusted input", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/demos/document.html");
+    await page.goto("/minimal.html?demo=document");
     await page.waitForFunction(() => document.body.dataset.demo === "ready");
   });
 
@@ -257,9 +257,9 @@ test.describe("document demo — untrusted input", () => {
   });
 });
 
-test.describe("assets demo — resolver boundary and load races", () => {
+test.describe("assets scenario — resolver boundary and load races", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/demos/assets.html");
+    await page.goto("/minimal.html?demo=assets");
     await page.waitForFunction(() => document.body.dataset.demo === "ready");
   });
 
@@ -341,10 +341,10 @@ test.describe("assets demo — resolver boundary and load races", () => {
   });
 });
 
-test("headless demo is idempotent across reloads", async ({ page }) => {
+test("headless scenario is idempotent across reloads", async ({ page }) => {
   const errors = watchErrors(page);
   for (let run = 0; run < 3; run++) {
-    await page.goto("/demos/headless.html");
+    await page.goto("/minimal.html?demo=headless");
     await page.waitForFunction(() => document.body.dataset.coverage !== undefined);
     const report = await page.evaluate(() => window.__coverage.report());
     expect(report.failed).toBe(0);

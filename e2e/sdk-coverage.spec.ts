@@ -2,15 +2,20 @@ import { test, expect, type Page } from "@playwright/test";
 import type { HostApiState, ViewerState } from "./support/demo-hooks";
 
 /**
- * SDK full-coverage regression: one test per focused demo page under /demos.
+ * SDK full-coverage regression: one test per `?demo=` scenario on minimal.html.
  *
- * The playground (studio UI) covers the viewer-shaped surface; these pages exist
- * for the API surfaces a host integration hits that the studio does not:
+ * The playground (studio UI) covers the viewer-shaped surface; these scenarios
+ * cover the API surfaces a host integration hits that the studio does not:
  * multi-select, host commands, inbound updates + conflicts, document migration,
  * the headless facade, and asset resolution/caching.
+ *
+ * The scenarios used to be standalone `/demos/*.html` pages. They now live on a
+ * single HTML entry: `/minimal.html?demo=<name>` injects the same markup and
+ * loads the same scenario module, so every `window.__*` hook and every
+ * `body.dataset.demo` readiness flag is unchanged. Only the URL moved.
  */
 
-/** Collects uncaught page errors so a demo cannot regress silently. */
+/** Collects uncaught page errors so a scenario cannot regress silently. */
 function watchErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -20,29 +25,24 @@ function watchErrors(page: Page): string[] {
   return errors;
 }
 
-test("demo hub lists every focused page", async ({ page }) => {
+const scenario = (name: string): string => `/minimal.html?demo=${name}`;
+
+test("scenario hub links every focused surface", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/demos/");
+  await page.goto(scenario("hub"));
   const links = page.locator(".demo-card");
   await expect(links).toHaveCount(6);
-  // `compare.html` is listed but never visited: it pulls model-viewer from a CDN
+  // `compare` is listed but never visited: it pulls model-viewer from a CDN
   // and exists for eyeball/promo comparison only.
-  for (const href of [
-    "/demos/host-api.html",
-    "/demos/document.html",
-    "/demos/headless.html",
-    "/demos/assets.html",
-    "/demos/viewer.html",
-    "/demos/compare.html",
-  ]) {
-    await expect(page.locator(`a[href="${href}"]`)).toHaveCount(1);
+  for (const name of ["host-api", "document", "headless", "assets", "viewer", "compare"]) {
+    await expect(page.locator(`a[href="${scenario(name)}"]`)).toHaveCount(1);
   }
   expect(errors).toEqual([]);
 });
 
-test.describe("host API demo — multi-select, executeCommand, applyRemote", () => {
+test.describe("host API scenario — multi-select, executeCommand, applyRemote", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/demos/host-api.html");
+    await page.goto(scenario("host-api"));
     await page.waitForFunction(() => document.body.dataset.demo === "ready");
     await expect(page.locator("scene-editor canvas")).toBeVisible();
   });
@@ -96,9 +96,9 @@ test.describe("host API demo — multi-select, executeCommand, applyRemote", () 
   });
 });
 
-test("document demo — migrate, validate, reject, import", async ({ page }) => {
+test("document scenario — migrate, validate, reject, import", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/demos/document.html");
+  await page.goto(scenario("document"));
   await page.waitForFunction(() => document.body.dataset.demo === "ready");
 
   const migrate = await page.evaluate(() => window.__docDemo.run.migrate());
@@ -132,9 +132,9 @@ test("document demo — migrate, validate, reject, import", async ({ page }) => 
   expect(errors).toEqual([]);
 });
 
-test("headless demo — createSceneEditor + FakeRuntime passes every check", async ({ page }) => {
+test("headless scenario — createSceneEditor + FakeRuntime passes every check", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/demos/headless.html");
+  await page.goto(scenario("headless"));
   await page.waitForFunction(() => document.body.dataset.coverage !== undefined);
 
   const report = await page.evaluate(() => window.__coverage.report());
@@ -147,9 +147,9 @@ test("headless demo — createSceneEditor + FakeRuntime passes every check", asy
   expect(errors).toEqual([]);
 });
 
-test("viewer demo — model-viewer attribute parity end to end", async ({ page }) => {
+test("viewer scenario — model-viewer attribute parity end to end", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/demos/viewer.html");
+  await page.goto(scenario("viewer"));
   await page.waitForFunction(() => document.body.dataset.demo === "ready");
 
   const state = (): Promise<ViewerState> => page.evaluate(() => window.__viewerDemo.state());
@@ -187,9 +187,9 @@ test("viewer demo — model-viewer attribute parity end to end", async ({ page }
   expect(errors).toEqual([]);
 });
 
-test("assets demo — resolver, GLB instantiation, cache refcounts", async ({ page }) => {
+test("assets scenario — resolver, GLB instantiation, cache refcounts", async ({ page }) => {
   const errors = watchErrors(page);
-  await page.goto("/demos/assets.html");
+  await page.goto(scenario("assets"));
   await page.waitForFunction(() => document.body.dataset.demo === "ready");
 
   expect(await page.evaluate(() => window.__assets.actions.loadTri())).toMatchObject({ ok: true });
@@ -212,5 +212,31 @@ test("assets demo — resolver, GLB instantiation, cache refcounts", async ({ pa
     totalLoads: 2,
     totalDisposes: 1,
   });
+  expect(errors).toEqual([]);
+});
+
+test("assets scenario — loadFiles() uploads and exportDocument() serializes the document", async ({
+  page,
+}) => {
+  const errors = watchErrors(page);
+  await page.goto(scenario("assets"));
+  await page.waitForFunction(() => document.body.dataset.demo === "ready");
+
+  // The element picks the primary file, mints the Blob URLs and synthesizes the
+  // document; the host never touches `URL.createObjectURL`.
+  const upload = await page.evaluate(() => window.__assets.actions.loadFile());
+  expect(upload).toMatchObject({ ok: true, objects: 1 });
+  expect(upload.meshCount).toBeGreaterThan(0);
+
+  // The reserved asset id is not in the host resolver — the element's own
+  // resolver has to win for it, otherwise the upload cannot load at all.
+  const state = await page.evaluate(() => window.__assets.state());
+  expect(state.errors).toEqual([]);
+  expect(state.resolved).not.toContain("tri-upload.glb");
+
+  const exported = await page.evaluate(() => window.__assets.actions.exportGlb());
+  expect(exported.type).toBe("model/gltf-binary");
+  expect(exported.size).toBeGreaterThan(20);
+
   expect(errors).toEqual([]);
 });

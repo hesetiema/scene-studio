@@ -34,9 +34,14 @@ interface AssetsHook {
   };
   actions: {
     loadTri: () => Promise<{ ok: boolean; code?: string }>;
+    loadDraco: () => Promise<{ ok: boolean; code?: string }>;
     loadMissing: () => Promise<{ ok: boolean; code?: string }>;
     loadUnsupported: () => Promise<{ ok: boolean; code?: string }>;
     runCache: () => Promise<Record<string, unknown>>;
+    /** `el.loadFiles()`: the element builds the document and the Blob URLs. */
+    loadFile: () => Promise<{ ok: boolean; meshCount: number; objects: number }>;
+    /** `el.exportDocument()`: document transforms, returned as a Blob. */
+    exportGlb: () => Promise<{ size: number; type: string }>;
   };
   /** Fixture builder for adversarial/race tests (no button drives this). */
   makeDoc: (assetId: string, sceneId?: string) => SceneDocument;
@@ -62,6 +67,9 @@ q("#formats").textContent = SUPPORTED_ASSET_FORMATS.join(" / ");
 /** Known ids → URLs. Unknown ids are rejected, including path-traversal ones. */
 const KNOWN_ASSETS: Record<string, string> = {
   tri: "/assets/tri.glb",
+  // Same triangle, Draco-compressed (`gltf-transform draco`): without a
+  // decoder three refuses to parse it, which is what `decoder-path` fixes.
+  draco: "/assets/tri-draco.glb",
   legacy: "/assets/legacy.obj", // deliberately unsupported → asset-unsupported-format
 };
 
@@ -217,6 +225,38 @@ async function runCacheDemo(): Promise<Record<string, unknown>> {
   return result;
 }
 
+/**
+ * `el.loadFiles()` — the whole upload path in one call. The file is fetched
+ * here only because a browser test cannot drop one; the element does the rest:
+ * primary-file pick, `.gltf` bundle inlining, document synthesis, framing, and
+ * holding the `load` event until the camera is right.
+ */
+async function loadUploadedFile(): Promise<{ ok: boolean; meshCount: number; objects: number }> {
+  if (!editor) return { ok: false, meshCount: 0, objects: 0 };
+  const buffer = await fetch("/assets/tri.glb").then((response) => response.arrayBuffer());
+  const file = new File([buffer], "tri-upload.glb", { type: "model/gltf-binary" });
+  await editor.loadFiles([file]);
+  loaded = true;
+  renderStatus();
+  const result = {
+    ok: true,
+    meshCount: countMeshes(),
+    objects: currentDoc()?.objects.length ?? 0,
+  };
+  log.ok(`loadFiles() → ${result.objects} 个对象 / ${result.meshCount} 个网格节点`);
+  return result;
+}
+
+/** `el.exportDocument()` — document transforms, serialized to a Blob. */
+async function exportGlb(): Promise<{ size: number; type: string }> {
+  if (!editor) throw new Error("editor not ready");
+  const blob = await editor.exportDocument({ format: "glb" });
+  const result = { size: blob.size, type: blob.type };
+  outputEl.textContent = JSON.stringify(result, null, 2);
+  log.ok(`exportDocument() → ${result.size} B · ${result.type}`);
+  return result;
+}
+
 async function main(): Promise<void> {
   defineSceneEditor();
 
@@ -244,11 +284,15 @@ async function main(): Promise<void> {
     renderStatus();
   });
 
+  // Compressed glTF: three wants constructed decoders, not config. One base URL
+  // with three's payload layout (`draco/gltf` + `basis`) is enough; the addon
+  // modules load lazily and the draco wasm only when a Draco primitive appears.
+  el.setAttribute("decoder-path", "/decoders/");
   q("#stage").appendChild(el);
   editor = el;
   await el.ready;
 
-  const loadButtons = ["#load-tri", "#load-missing", "#load-unsupported"].map((selector) =>
+  const loadButtons = ["#load-tri", "#load-draco", "#load-missing", "#load-unsupported"].map((selector) =>
     q<HTMLButtonElement>(selector),
   );
   const uiLoad = async (assetId: string): Promise<void> => {
@@ -263,9 +307,12 @@ async function main(): Promise<void> {
   };
 
   q("#load-tri").addEventListener("click", () => void uiLoad("tri"));
+  q("#load-draco").addEventListener("click", () => void uiLoad("draco"));
   q("#load-missing").addEventListener("click", () => void uiLoad("missing"));
   q("#load-unsupported").addEventListener("click", () => void uiLoad("legacy"));
   q("#run-cache").addEventListener("click", () => void runCacheDemo());
+  q("#load-file").addEventListener("click", () => void loadUploadedFile());
+  q("#export-glb").addEventListener("click", () => void exportGlb());
 
   document.body.dataset.demo = "ready";
   window.__assets = {
@@ -282,9 +329,12 @@ async function main(): Promise<void> {
     },
     actions: {
       loadTri: () => load("tri"),
+      loadDraco: () => load("draco"),
       loadMissing: () => load("missing"),
       loadUnsupported: () => load("legacy"),
       runCache: runCacheDemo,
+      loadFile: loadUploadedFile,
+      exportGlb,
     },
     makeDoc: (assetId: string, sceneId?: string) => assetDoc(assetId, sceneId),
   };

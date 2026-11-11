@@ -8,7 +8,7 @@ type RuntimeHook = {
 type SavedDoc = { view?: { camera: { position: number[]; fov: number } } } & Record<string, unknown>;
 
 test("camera view survives save and reload", async ({ page }) => {
-  await page.goto("/?scene=default");
+  await page.goto("/?scene=default&mode=editor");
   // Wait for the boot document: `ready` only means the runtime mounted, and a
   // view-change/save before the first document has no document to record.
   await page.waitForFunction(() => document.body.dataset.boot === "ready");

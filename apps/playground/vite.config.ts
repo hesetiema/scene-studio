@@ -6,9 +6,8 @@ const pkg = (path: string) =>
 
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
-/** Focused SDK demos (`/demos/*.html`) — one page per API surface. */
-const demoPages = ["index", "host-api", "document", "headless", "assets", "viewer", "compare"];
-
+/** Three HTML entries: the studio, the perf bench, and the minimal host
+ *  (which also serves every `?demo=` coverage scenario). */
 export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)
@@ -24,6 +23,9 @@ export default defineConfig({
       "three",
       "three/examples/jsm/loaders/GLTFLoader.js",
       "three/examples/jsm/loaders/DRACOLoader.js",
+      // `decoder-path` imports these on demand; pre-bundling them keeps the dev
+      // server from re-optimizing (and reloading the page) mid-load.
+      "three/examples/jsm/loaders/KTX2Loader.js",
       "three/examples/jsm/loaders/OBJLoader.js",
       "three/examples/jsm/loaders/STLLoader.js",
       "three/examples/jsm/libs/meshopt_decoder.module.js",
@@ -31,6 +33,9 @@ export default defineConfig({
       "three/examples/jsm/controls/TransformControls.js",
       "three/examples/jsm/exporters/GLTFExporter.js",
       "three/examples/jsm/exporters/OBJExporter.js",
+      // The picker imports this lazily (heavy meshes only). Pre-bundling it
+      // keeps the first click from triggering a re-optimize + full reload.
+      "three-mesh-bvh",
     ],
   },
   build: {
@@ -39,9 +44,6 @@ export default defineConfig({
         main: html("index.html"),
         perf: html("perf.html"),
         minimal: html("minimal.html"),
-        ...Object.fromEntries(
-          demoPages.map((page) => [`demo-${page}`, html(`demos/${page}.html`)]),
-        ),
       },
     },
   },

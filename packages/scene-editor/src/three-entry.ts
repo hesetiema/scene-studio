@@ -5,9 +5,19 @@ export {
   type TransformMode,
   type OrbitControlsLike,
   type AnimationClipInfo,
+  type AnimationBlendInfo,
+  type AnimationBlendLayer,
+  type DisplayModeId,
 } from "./three/three-runtime";
 export { createRenderer, type CreateRendererOptions } from "./three/create-renderer";
-export type { RendererHandle } from "./three/renderer-handle";
+export {
+  createDocumentGroup,
+  exportDocumentBlob,
+  exportGroupBlob,
+  sanitizeName,
+  type DocumentExportFormat,
+  type DocumentObjectSource,
+} from "./three/document-export";export type { RendererHandle } from "./three/renderer-handle";
 export {
   createTransformControlsBinding,
   type TransformControlsBinding,
@@ -16,6 +26,27 @@ export {
   type TransformSnapshot,
 } from "./three/transform-controls-binding";
 export { createPicker, type Picker, type PickerOptions, type RaycastHit } from "./three/picker";
+export {
+  createSharedResourcePool,
+  primitiveSignature,
+  type SharedResourcePool,
+  type SharedResourceStats,
+} from "./three/viewer/shared-resources";
+export {
+  createDisplayRig,
+  type DisplayRig,
+  type DisplayRigOptions,
+} from "./three/viewer/display-rig";
+export {
+  createExplodeRig,
+  type ExplodeRig,
+  type ExplodeRigOptions,
+} from "./three/viewer/explode-rig";
+export {
+  mergeAssetMeshes,
+  type AssetMergeHandle,
+  type AssetMergeOptions,
+} from "./three/viewer/asset-merge";
 export {
   applyMaterialFields,
   applyMaterialOverride,

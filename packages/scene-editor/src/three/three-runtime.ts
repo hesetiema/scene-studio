@@ -8,9 +8,11 @@ import type {
 } from "../core/document/schema";
 import { createDefaultViewState } from "../core/document/default-view";
 import type {
+  AnimationBlendLayer,
   AnimationOptions,
   AutoRotateOptions,
   CameraControlsOptions,
+  DisplayModeId,
   EnvironmentPreset,
   MorphTargetInfo,
   RuntimeContract,
@@ -33,6 +35,12 @@ import {
 import { createLightingRig, type LightingRig } from "./viewer/lighting-rig";
 import { createEnvironmentRig, type EnvironmentRig } from "./viewer/environment-rig";
 import { createObjectStore, type ObjectStore } from "./viewer/object-store";
+import { createInstancingRig, type InstancingRig } from "./viewer/instancing-rig";
+import {
+  createSharedResourcePool,
+  type SharedResourcePool,
+  type SharedResourceStats,
+} from "./viewer/shared-resources";
 import { measureFraming } from "./viewer/framing";
 import { createContactShadowRig, type ContactShadowRig } from "./viewer/contact-shadow";
 import {
@@ -49,10 +57,15 @@ import {
 import { createRenderLoop, type RenderLoop } from "./viewer/render-loop";
 import { collectEmbeddedCameras, orbitTargetFor } from "./viewer/embedded-cameras";
 import { createMorphRig, type MorphRig } from "./viewer/morph-rig";
+import { createDisplayRig, type DisplayRig } from "./viewer/display-rig";
+import { createExplodeRig, type ExplodeRig } from "./viewer/explode-rig";
+import { exportDocumentBlob } from "./document-export";
 
 export type { OrbitControlsLike } from "./viewer/camera-rig";
 export type { TransformMode } from "./viewer/gizmo-rig";
-export type { AnimationClipInfo } from "./viewer/animation-rig";
+export type { AnimationClipInfo, AnimationBlendInfo } from "./viewer/animation-rig";
+export type { AnimationBlendLayer } from "../runtime/runtime-contract";
+export type { DisplayModeId } from "../runtime/runtime-contract";
 export type { EmbeddedCamera } from "./viewer/embedded-cameras";
 
 /** Asset-layer codes forwarded verbatim on the runtime `error` event (D6). */
@@ -81,8 +94,30 @@ export interface ThreeRuntimeOptions {
   ) => GizmoControls;
   /** Disable viewport controls (headless / unit tests). */
   enableControls?: boolean;
+  /**
+   * Mount the transform gizmo (default `true`). A viewer — `<scene-editor src>`
+   * or any read-only host — passes `false`: orbit/zoom stay, the selection axes
+   * do not exist. Can be switched later with `setInteractive()`.
+   */
+  interactive?: boolean;
   /** Optional asset cache for assetId-based mesh loading (D11/D12). */
   assetCache?: AssetCache;
+  /**
+   * Collapse repeated primitive meshes into `InstancedMesh`es (default `true`).
+   *
+   * A scene of 5 000 identical boxes is 5 000 draw calls and one instanced
+   * call; the objects keep their identity, transforms, picking and export.
+   * Pass `false` when a host inspects the scene graph and expects one visible
+   * mesh per document object.
+   */
+  instancing?: boolean;
+  /**
+   * Pool used to dedupe placeholder geometry and base materials (default: one
+   * per runtime). Pass a shared pool when several runtimes should reuse the
+   * same buffers — the caller then owns its lifetime and must dispose it after
+   * every runtime using it has.
+   */
+  resources?: SharedResourcePool;
   /**
    * assetId → URL for **environment** assets (`view.environment.hdr` /
    * `.skybox`). Mesh assets go through `assetCache`; the environment rig only
@@ -150,11 +185,21 @@ export class ThreeRuntime implements RuntimeContract {
   readonly #lighting: LightingRig;
   readonly #environment: EnvironmentRig;
   readonly #objects: ObjectStore;
+  /** Draw-call batching for repeated primitives; `null` when disabled. */
+  #batcher: InstancingRig | null;
+  /** Placeholder geometry / base-material dedupe for the whole runtime. */
+  readonly #resources: SharedResourcePool;
+  /** Only a pool this runtime created is disposed on teardown. */
+  readonly #ownsResources: boolean;
   readonly #contactShadow: ContactShadowRig;
   readonly #gizmo: GizmoRig;
   readonly #animation: AnimationRig;
   readonly #morph: MorphRig;
   readonly #picker: Picker;
+  readonly #display: DisplayRig;
+  readonly #explode: ExplodeRig;
+  /** Last loaded document — the explode baseline reads object positions from it. */
+  #document: SceneDocument | null = null;
 
   #renderLoop: RenderLoop | null = null;
   #selectedIds: string[] = [];
@@ -166,6 +211,12 @@ export class ThreeRuntime implements RuntimeContract {
   /** Last camera sample, so static re-renders do not fake a camera move. */
   #lastCameraSample: CameraView | null = null;
   #transformMode: TransformMode;
+  /** Authoring chrome on/off (gizmo). Viewers run with `false`. */
+  #interactive: boolean;
+  /** Kept so the gizmo can be re-mounted after `setInteractive(true)`. */
+  readonly #gizmoFactory: ThreeRuntimeOptions["transformControlsFactory"];
+  /** Content radius cache for clip planes; invalidated on graph edits. */
+  #contentRadius: number | null = null;
   /** Transport policy (autoplay / crossfade / pause-at-end); host-owned. */
   #animationOptions: AnimationOptions = {};
   /** Persisted contact-shadow settings; `undefined` = never declared (off). */
@@ -188,6 +239,8 @@ export class ThreeRuntime implements RuntimeContract {
   constructor(options: ThreeRuntimeOptions) {
     this.#canvas = options.canvas;
     this.#transformMode = options.transformMode ?? "translate";
+    this.#interactive = options.interactive ?? true;
+    this.#gizmoFactory = options.transformControlsFactory;
     this.#liveViewEvents = options.liveViewEvents ?? false;
     this.#toneMapping = options.toneMapping ?? "none";
     if (options.exposure !== undefined) this.#exposure = Math.max(0, options.exposure);
@@ -280,13 +333,31 @@ export class ThreeRuntime implements RuntimeContract {
       // before letting a manual weight through.
       activeTrackNames: () => this.#animation.activeTrackNames(),
     });
+    this.#batcher = options.instancing === false ? null : createInstancingRig({ scene: this.scene });
+    this.#resources = options.resources ?? createSharedResourcePool();
+    this.#ownsResources = options.resources === undefined;
     this.#objects = createObjectStore({
       scene: this.scene,
       assetCache: options.assetCache ?? null,
+      batcher: this.#batcher,
+      resources: this.#resources,
       onAssetError: (error, dto) => this.#emitAssetError(error, dto),
       onAssetMounted: ({ objectId, object, asset }) => {
         this.#animation.register(objectId, object, asset.animations ?? []);
       },
+    });
+
+    // After the object store: both rigs walk it, and the explode baseline
+    // reads document positions (never the live, possibly-offset ones).
+    this.#display = createDisplayRig({
+      store: this.#objects,
+      batchRoot: () => this.#batcher?.root() ?? null,
+      onInvalidate: () => this.#render(),
+    });
+    this.#explode = createExplodeRig({
+      store: this.#objects,
+      getObjects: () => this.#document?.objects ?? [],
+      onInvalidate: () => this.#render(),
     });
 
     // After the object store: the catch plane is fitted to the content bounds.
@@ -294,7 +365,14 @@ export class ThreeRuntime implements RuntimeContract {
     this.#contactShadow = createContactShadowRig({
       scene: this.scene,
       renderer: this.renderer,
-      contentRoots: () => this.#framingRoots(),
+      // Batched instances are hidden proxies, so the depth pass needs the
+      // `InstancedMesh` root alongside them or nothing is captured.
+      contentRoots: () => {
+        const roots = this.#framingRoots();
+        const batchRoot = this.#batcher?.root();
+        if (batchRoot) roots.push(batchRoot);
+        return roots;
+      },
       // Animated content can leave its resting bounds, so the shadow volume
       // has to cover more than the box it was fitted to.
       animated: () => this.#animation.list().length > 0,
@@ -377,11 +455,18 @@ export class ThreeRuntime implements RuntimeContract {
     // Selection is document-scoped: detach before the old objects leave the
     // graph, otherwise TransformControls keeps a stale target (and warns).
     this.#selectedIds = [];
+    this.#objects.setSelected(this.#selectedIds);
     this.#gizmo.syncSelection(null);
+    this.#document = doc;
     await this.#objects.load(doc, ({ totalProgress, reason }) => {
       this.events.emit("load-progress", { totalProgress, reason });
     });
+    // Fresh content: the explode baseline re-measures, the shading overlay
+    // re-covers meshes that did not exist when the mode was set.
+    this.#explode.reset();
+    this.#display.refresh();
     this.#picker.setTargets(this.#objects.list());
+    this.#invalidateContentBounds();
     this.#syncContactShadow();
     this.#refreshCameras();
     this.#maybeAutoplay();
@@ -391,7 +476,10 @@ export class ThreeRuntime implements RuntimeContract {
 
   applyTransform(id: string, t: Transform): void {
     if (!this.#objects.applyTransform(id, t)) return;
-    // Moving content moves the shadowed footprint as well.
+    // Moving content moves the shadowed footprint as well. The cached content
+    // radius is deliberately *not* invalidated here: a gizmo drag calls this on
+    // every pointermove, and a bounds walk per frame costs more than a slightly
+    // stale far plane buys.
     this.#syncContactShadow();
     this.#render();
   }
@@ -404,6 +492,10 @@ export class ThreeRuntime implements RuntimeContract {
     await this.#objects.add(dto);
     // New objects must be pickable immediately, and the gizmo may target them.
     this.#picker.setTargets(this.#objects.list());
+    // New meshes need the shading overlay; the explode baseline re-checks its
+    // id set on the next setFactor.
+    this.#display.refresh();
+    this.#invalidateContentBounds();
     this.#syncGizmo();
     this.#syncContactShadow();
     this.#refreshCameras();
@@ -416,10 +508,12 @@ export class ThreeRuntime implements RuntimeContract {
     // about to leave the graph.
     if (this.#selectedIds.includes(id)) {
       this.#selectedIds = this.#selectedIds.filter((selected) => selected !== id);
+      this.#objects.setSelected(this.#selectedIds);
       this.#syncGizmo();
     }
     this.#objects.remove(id);
     this.#picker.setTargets(this.#objects.list());
+    this.#invalidateContentBounds();
     this.#syncContactShadow();
     this.#refreshCameras();
     this.#render();
@@ -438,12 +532,16 @@ export class ThreeRuntime implements RuntimeContract {
 
   select(ids: string[]): void {
     this.#selectedIds = [...ids];
+    // The store decides eligibility (a selected object gets its own draw call
+    // back, which the gizmo and the highlight both need).
+    this.#objects.setSelected(this.#selectedIds);
     this.#syncGizmo();
     this.#render();
   }
 
   clearSelection(): void {
     this.#selectedIds = [];
+    this.#objects.setSelected(this.#selectedIds);
     this.#syncGizmo();
     this.#render();
   }
@@ -455,10 +553,15 @@ export class ThreeRuntime implements RuntimeContract {
   flushDisposers(): void {
     this.#stopAnimationLoop();
     this.#animation.dispose();
+    // Materials first, then positions: both restore document state, and the
+    // object store below releases the meshes they would walk.
+    this.#display.dispose();
+    this.#explode.dispose();
     this.#gizmo.dispose();
     this.#cameraRig.dispose();
     this.#contactShadow.dispose();
     this.#objects.dispose();
+    if (this.#ownsResources) this.#resources.dispose();
     this.#picker.dispose();
     this.#environment.dispose();
     this.#renderLoop?.dispose();
@@ -517,6 +620,12 @@ export class ThreeRuntime implements RuntimeContract {
 
   /** Turntable rotation (element: `auto-rotate` / `rotation-per-second` / `auto-rotate-delay`). */
   setAutoRotate(options: AutoRotateOptions | null): void {
+    // Accessibility: a spinning model is exactly what `prefers-reduced-motion`
+    // asks not to do. The attribute stays readable; only the motion is dropped.
+    if (options?.enabled && this.#prefersReducedMotion()) {
+      this.#cameraRig.setAutoRotate(null);
+      return;
+    }
     this.#cameraRig.setAutoRotate(options);
   }
 
@@ -526,6 +635,12 @@ export class ThreeRuntime implements RuntimeContract {
    * dirties the document or fakes a user interaction.
    */
   smoothViewTo(view: ViewState["camera"], decayMs: number): void {
+    // Reduced motion: land on the goal instead of animating to it.
+    if (this.#prefersReducedMotion()) {
+      this.#cameraRig.applyView(view);
+      this.#render();
+      return;
+    }
     this.#cameraRig.easeTo(view, decayMs);
   }
 
@@ -599,11 +714,11 @@ export class ThreeRuntime implements RuntimeContract {
     const elevation = THREE.MathUtils.degToRad(15);
     const direction = new THREE.Vector3(0, Math.sin(elevation), Math.cos(elevation));
     this.camera.position.copy(center).addScaledVector(direction, distance);
-    this.camera.near = Math.max(distance / 1000, 0.001);
-    this.camera.far = Math.max(distance * 100, 100);
-    this.camera.updateProjectionMatrix();
     this.camera.lookAt(center);
+    // Target first: the clip planes are derived from the camera→target distance.
     this.#cameraRig.setTarget([center.x, center.y, center.z]);
+    this.camera.updateProjectionMatrix();
+    this.#applyClipPlanes();
     this.#render();
   }
 
@@ -640,11 +755,10 @@ export class ThreeRuntime implements RuntimeContract {
     const elevation = THREE.MathUtils.degToRad(15);
     const direction = new THREE.Vector3(0, Math.sin(elevation), Math.cos(elevation));
     this.camera.position.copy(center).addScaledVector(direction, orbit);
-    this.camera.near = Math.max(orbit / 1000, 0.001);
-    this.camera.far = Math.max(orbit * 100, 100);
-    this.camera.updateProjectionMatrix();
     this.camera.lookAt(center);
     this.#cameraRig.setTarget([center.x, center.y, center.z]);
+    this.camera.updateProjectionMatrix();
+    this.#applyClipPlanes();
     this.#render();
   }
 
@@ -744,6 +858,9 @@ export class ThreeRuntime implements RuntimeContract {
    * Export the **document** objects (not the viewport helpers) as GLB or
    * `.gltf` JSON. Roots are passed as-is: their live transforms already mirror
    * the document, while the grid/gizmo/contact plane never lived in the store.
+   *
+   * Batched objects export as themselves: the batch only replaces *drawing*, the
+   * proxy mesh that the exporter walks is still there, visible and complete.
    */
   async exportScene(options: { binary?: boolean } = {}): Promise<ArrayBuffer | string> {
     const { GLTFExporter } = await import("three/examples/jsm/exporters/GLTFExporter.js");
@@ -758,6 +875,21 @@ export class ThreeRuntime implements RuntimeContract {
       );
     });
     return result instanceof ArrayBuffer ? result : JSON.stringify(result, null, 2);
+  }
+
+  /**
+   * Export a document (not the viewport) as a Blob.
+   *
+   * `exportScene()` above walks the live roots, which is right for "what I am
+   * looking at" and wrong for "what I saved": preview offsets and display-mode
+   * materials live on those same objects. This one re-applies the stored
+   * transforms onto clones (`createDocumentGroup`) before serializing.
+   */
+  async exportDocument(
+    doc: SceneDocument,
+    options: { format?: "glb" | "gltf" | "obj" } = {},
+  ): Promise<Blob> {
+    return exportDocumentBlob(doc, this, options.format ?? "glb");
   }
 
   /** Swap the built-in studio IBL (model-viewer `environment-image` parity). */
@@ -801,6 +933,31 @@ export class ThreeRuntime implements RuntimeContract {
     this.#render();
   }
 
+  /**
+   * Viewport shading (`display-mode`). Covers batched instances: the chunks
+   * share one override material per mode, so 5 000 objects flip in one write.
+   */
+  setDisplayMode(mode: DisplayModeId): void {
+    this.#display.setMode(mode);
+    this.#render();
+  }
+
+  get displayMode(): DisplayModeId {
+    return this.#display.mode;
+  }
+
+  /** Component explode (0..1); a preview — the document is never written. */
+  setExplode(factor: number): void {
+    this.#explode.setFactor(factor);
+    // Content moved: the contact-shadow footprint and the clip radius follow.
+    this.#syncContactShadow();
+    this.#render();
+  }
+
+  get explode(): number {
+    return this.#explode.factor;
+  }
+
   // -------------------------------------------------------------------------
   // Selection / transform tool
   // -------------------------------------------------------------------------
@@ -811,6 +968,72 @@ export class ThreeRuntime implements RuntimeContract {
 
   get transformMode(): TransformMode {
     return this.#transformMode;
+  }
+
+  /** Whether authoring chrome (the gizmo) is mounted. */
+  get interactive(): boolean {
+    return this.#interactive;
+  }
+
+  /**
+   * Mount or unmount the gizmo. A viewer turns authoring chrome off: orbit and
+   * zoom stay, selection axes and drag handles do not exist. Re-enabling
+   * re-mounts through the same factory the constructor used.
+   */
+  setInteractive(interactive: boolean): void {
+    if (interactive === this.#interactive) return;
+    this.#interactive = interactive;
+    if (!interactive) {
+      // Detach first: TransformControls must not keep a target that is about to
+      // lose its helper (it warns and keeps mutating it otherwise).
+      this.#selectedIds = [];
+      this.#gizmo.syncSelection(null);
+      this.#gizmo.dispose();
+      // A viewer must not leave `controlsReady` pending forever.
+      this.#resolveControlsReady();
+      this.#render();
+      return;
+    }
+    this.#mountGizmo();
+  }
+
+  /**
+   * Live shared-resource counters for the mounted content.
+   *
+   * Placeholders and primitives draw from one reference-counted pool, so a
+   * document of 5 000 identical boxes reports one geometry and one material.
+   * Diagnostic surface: it exposes how well a document dedupes, and gives tests
+   * a deterministic number to assert (heap size does not).
+   */
+  get resourceStats(): SharedResourceStats {
+    return this.#objects.resources();
+  }
+
+  /**
+   * Draw-call batching on/off (the element's `instancing` attribute).
+   *
+   * Unlike `instancing: false` at construction this is live: every mounted
+   * object is re-evaluated, so the scene flips between "one draw call per
+   * repeated primitive" and "one draw call per object" without a reload. Both
+   * directions are visual no-ops — same objects, same materials, same picking.
+   */
+  setInstancing(enabled: boolean): void {
+    if ((this.#batcher !== null) === enabled) return;
+    if (enabled) {
+      const rig = createInstancingRig({ scene: this.scene });
+      this.#batcher = rig;
+      this.#objects.setBatcher(rig);
+    } else {
+      // Order matters: `setBatcher(null)` releases every member (default layer
+      // back), which is what lets `dispose()` find an already-empty rig.
+      this.#objects.setBatcher(null);
+      this.#batcher?.dispose();
+      this.#batcher = null;
+    }
+    // Chunks were rebuilt from the (possibly overridden) proxy materials, but
+    // the rig owns the overlay either way — re-cover them.
+    this.#display.refresh();
+    this.#render();
   }
 
   /**
@@ -973,6 +1196,32 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   /**
+   * Play several clips of one object at once, weighted.
+   *
+   * Clips share the object's mixer, so this is a true blend (a walk cycle plus
+   * an upper-body gesture), not a crossfade. Weights are normalized across the
+   * call; `[{ index: 0, weight: 1 }, { index: 1, weight: 1 }]` is 50/50. A
+   * single layer is exactly `playAnimation`.
+   */
+  playAnimationBlend(
+    layers: readonly AnimationBlendLayer[],
+    objectId: string | null = null,
+  ): boolean {
+    const started = this.#animation.playBlend(objectId, layers);
+    if (started) this.#ensureAnimationLoop();
+    return started;
+  }
+
+  /** Layers currently playing, heaviest first; empty when nothing is active. */
+  get animationBlend(): readonly AnimationBlendLayer[] {
+    return this.#animation.blend.map(({ index, weight, timeScale }) => ({
+      index,
+      weight,
+      timeScale,
+    }));
+  }
+
+  /**
    * Play by clip name — `animation-name` / `animationName` semantics. Names are
    * matched case-insensitively across objects, first hit wins.
    */
@@ -1024,18 +1273,26 @@ export class ThreeRuntime implements RuntimeContract {
       // optional addon unavailable — a controls-less runtime still works
     }
 
-    if (options.transformControlsFactory) {
-      this.#gizmo.mount(options.transformControlsFactory(this.camera, dom));
+    // A viewer never creates the gizmo: no selection axes means no addon load.
+    if (this.#interactive) this.#mountGizmo();
+    else this.#resolveControlsReady();
+  }
+
+  /** Mount TransformControls through the injected factory, or lazily import it. */
+  #mountGizmo(): void {
+    const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? this.#canvas;
+    if (this.#gizmoFactory) {
+      this.#gizmo.mount(this.#gizmoFactory(this.camera, dom));
       this.#syncGizmo();
       this.#render();
       this.#resolveControlsReady();
-    } else {
-      void this.#gizmo.mountDefault().then(() => {
-        this.#syncGizmo();
-        this.#render();
-        this.#resolveControlsReady();
-      });
+      return;
     }
+    void this.#gizmo.mountDefault().then(() => {
+      this.#syncGizmo();
+      this.#render();
+      this.#resolveControlsReady();
+    });
   }
 
   #selectedObject(): THREE.Object3D | null {
@@ -1044,7 +1301,59 @@ export class ThreeRuntime implements RuntimeContract {
   }
 
   #syncGizmo(): void {
+    // A viewer has no gizmo: attaching would re-create the helper after dispose.
+    if (!this.#interactive) return;
     this.#gizmo.syncSelection(this.#selectedObject());
+  }
+
+  /**
+   * Re-derive the camera clip planes from the live camera distance and the
+   * content radius.
+   *
+   * A fixed `near/far` pair cannot serve both ends of the scale this runtime
+   * sees: a millimetre CAD assembly (radius ~10³) is clipped by `far = 1000`,
+   * and a kilometre terrain (radius ~10⁵) sits far outside it. Scaling with the
+   * camera distance keeps the ratio (and so the depth precision) bounded while
+   * every zoom level stays visible.
+   */
+  #applyClipPlanes(): void {
+    const distance = Math.max(this.camera.position.distanceTo(this.#cameraRig.target), 1e-6);
+    const radius = this.#contentRadiusValue();
+    const near = Math.max(distance * 5e-4, radius * 1e-4, 1e-6);
+    // 50x the camera distance covers content behind the target; the radius term
+    // keeps large models whole when the camera is inside their bounds.
+    const far = Math.max(distance * 50, radius * 50, near * 10);
+    if (near === this.camera.near && far === this.camera.far) return;
+    this.camera.near = near;
+    this.camera.far = far;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** Cached half-diagonal of the content box; `0` when nothing is mounted. */
+  #contentRadiusValue(): number {
+    if (this.#contentRadius === null) {
+      const box = this.#objects.bounds();
+      this.#contentRadius = box.isEmpty() ? 0 : box.getSize(new THREE.Vector3()).length() / 2;
+    }
+    return this.#contentRadius;
+  }
+
+  /** Graph edits and transforms invalidate the cached radius. */
+  #invalidateContentBounds(): void {
+    this.#contentRadius = null;
+  }
+
+  /**
+   * `prefers-reduced-motion: reduce`. Read per call rather than cached: the OS
+   * setting changes without a reload, and the check is a media-query hit.
+   */
+  #prefersReducedMotion(): boolean {
+    if (typeof matchMedia !== "function") return false;
+    try {
+      return matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return false;
+    }
   }
 
   /** Re-fit the catch plane to the current content (mount / transform / view). */
@@ -1156,6 +1465,12 @@ export class ThreeRuntime implements RuntimeContract {
     // Off-screen viewers (IntersectionObserver / hidden tab) keep their state
     // but must not draw; a capture or a resume passes `force`.
     if (this.#renderingPaused && !force) return;
+    // Dolly/orbit moves the camera without going through `autoFrame`, so the
+    // clip planes follow it here — one comparison per frame, no allocations.
+    this.#applyClipPlanes();
+    // Instance matrices are sampled before anything reads the scene: a gizmo
+    // drag moves the proxy, and the depth + colour passes must both see it.
+    this.#batcher?.sync();
     // The shadow is a texture, not a shadow map: it has to be re-rendered when
     // the content moves, and it must happen outside the main scene render.
     this.#contactShadow.update();

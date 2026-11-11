@@ -74,35 +74,35 @@ test.describe("visual regression", () => {
   });
 
   test("initial scene: grid + boxes + asset gem", async ({ page }) => {
-    await page.goto("/?scene=default");
+    await page.goto("/?scene=default&mode=editor");
     await waitForBoot(page);
     await isolateViewport(page);
     await expect(page.locator("#viewport")).toHaveScreenshot("initial-scene.png", SHOT_OPTIONS);
   });
 
   test("box-1 selected: transform gizmo visible", async ({ page }) => {
-    await page.goto("/?select=box-1");
+    await page.goto("/?select=box-1&mode=editor");
     await waitForBoot(page);
     await isolateViewport(page);
     await expect(page.locator("#viewport")).toHaveScreenshot("box1-selected.png", SHOT_OPTIONS);
   });
 
   test("box-1 transformed: moved + rotated + scaled", async ({ page }) => {
-    await page.goto("/?select=box-1&move=1,0.5,0&rot=0,0.8,0&scale=1.2,1.2,1.2");
+    await page.goto("/?select=box-1&mode=editor&move=1,0.5,0&rot=0,0.8,0&scale=1.2,1.2,1.2");
     await waitForBoot(page);
     await isolateViewport(page);
     await expect(page.locator("#viewport")).toHaveScreenshot("box1-transformed.png", SHOT_OPTIONS);
   });
 
   test("box-2 selected only (multi-object scene sanity)", async ({ page }) => {
-    await page.goto("/?select=box-2");
+    await page.goto("/?select=box-2&mode=editor");
     await waitForBoot(page);
     await isolateViewport(page);
     await expect(page.locator("#viewport")).toHaveScreenshot("box2-selected.png", SHOT_OPTIONS);
   });
 
   test("canvas non-blank smoke: composited frame has scene content", async ({ page }) => {
-    await page.goto("/?scene=default");
+    await page.goto("/?scene=default&mode=editor");
     await waitForBoot(page);
     await isolateViewport(page);
     // Capture the composited canvas (WebGL buffer itself is cleared after present).

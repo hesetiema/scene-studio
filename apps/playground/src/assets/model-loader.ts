@@ -1,5 +1,13 @@
-﻿import { DEFAULT_VIEW_STATE, SCHEMA_VERSION, type SceneDocument, type AssetLoader, createUniversalAssetLoader, inspectModel } from "@scenio/scene-editor";
-import { AssetCache } from "@scenio/scene-editor";
+﻿import {
+  AssetCache,
+  createDocumentFromAsset,
+  createFileBundleUrl,
+  createUniversalAssetLoader,
+  inspectModel,
+  type FileBundle,
+  type SceneDocument,
+  type Supported3DFormat,
+} from "@scenio/scene-editor";
 import * as THREE from "three";
 import { createSingleModelDoc, showcaseDoc } from "../bootstrap";
 
@@ -9,10 +17,15 @@ type AssetFactoryResult =
 
 type AssetFactory = () => AssetFactoryResult;
 
+/** Studio framing for a freshly opened model: 3/4 view, grid on, dark backdrop. */
+const STUDIO_VIEW = {
+  camera: { position: [4.4, 2.8, 5.2] as [number, number, number], target: [0, 1.25, 0] as [number, number, number], fov: 48 },
+  environment: { background: "#0c0e12", gridVisible: true },
+};
+
 /**
- * ModelLoader: owns asset registry, lazy GLTF loading, AssetCache,
- * and SceneDocument creation for preset / custom models.
- * Extracted from main.ts so main.ts only handles host + UI wiring.
+ * ModelLoader: owns the asset registry, lazy GLTF loading and the shared
+ * `AssetCache` used by the stdio runtime.
  *
  * Built-in samples are the Khronos glTF sample assets served by
  * `KhronosGroup/GLTF-Sample-Viewer` (the models themselves live in
@@ -42,8 +55,11 @@ export class ModelLoader {
   ]);
 
   private readonly universalFallbackLoader;
-  private readonly demoAssetLoader: AssetLoader;
+  private readonly demoAssetLoader;
   private readonly assetCache: AssetCache;
+  /** Blob URLs of the last upload; revoked when the next one replaces them. */
+  private bundle: FileBundle | null = null;
+  private uploadSeq = 0;
 
   constructor() {
     this.universalFallbackLoader = createUniversalAssetLoader({
@@ -57,7 +73,7 @@ export class ModelLoader {
       targetSize: 2.5,
     });
 
-    this.demoAssetLoader = async (assetId) => {
+    this.demoAssetLoader = async (assetId: string) => {
       const customFactory = this.registry.get(assetId);
       if (typeof customFactory === "function") {
         const built = customFactory();
@@ -100,62 +116,40 @@ export class ModelLoader {
   async createCustomModelDoc(
     urlOrFile: string | File,
     customName?: string,
-  ): Promise<{ doc: SceneDocument; filename: string; format: string }> {
+  ): Promise<{ doc: SceneDocument; filename: string; format: Supported3DFormat }> {
     if (typeof urlOrFile === "string") {
       const filename = customName || urlOrFile.split("/").pop()?.split("?")[0] || "Custom Model";
       return this.#createDoc(urlOrFile, filename);
     }
-    return this.#createDoc(URL.createObjectURL(urlOrFile), customName || urlOrFile.name);
+    const loaded = await this.createFilesModelDoc([urlOrFile]);
+    if (customName) {
+      // The label is the user's, the file name is the asset's.
+      const object = loaded.doc.objects[0];
+      if (object) object.name = customName;
+    }
+    return loaded;
   }
 
   /**
    * Create a document from a dropped/picked bundle. A `.gltf` arrives with its
-   * `.bin` and textures; those relative URIs are rewritten to blob URLs so the
-   * loader resolves everything in place (reference: `assetMap` URL modifier).
+   * `.bin` and textures; `createFileBundleUrl()` rewrites those relative URIs to
+   * Blob URLs and hands back the asset id (which keeps the format extension).
    */
   async createFilesModelDoc(
     files: File[],
-  ): Promise<{ doc: SceneDocument; filename: string; format: string }> {
-    const primary = pickPrimaryFile(files);
-    if (!primary) {
-      throw new Error("未找到支持的 3D 文件（.glb / .gltf / .obj / .stl）");
-    }
-    const url = await bundleUrl(primary, files);
-    return this.#createDoc(url, primary.name);
-  }
+  ): Promise<{ doc: SceneDocument; filename: string; format: Supported3DFormat }> {
+    const bundle = await createFileBundleUrl(files, {
+      assetIdPrefix: `upload-${++this.uploadSeq}`,
+    });
+    this.bundle?.dispose();
+    this.bundle = bundle;
+    this.registry.set(bundle.assetId, bundle.url);
 
-  #createDoc(
-    url: string,
-    filename: string,
-  ): { doc: SceneDocument; filename: string; format: string } {
-    const assetId = `custom-${Date.now()}`;
-    this.registry.set(assetId, url);
-
-    const cleanExt = filename.split(".").pop()?.toLowerCase() || "glb";
-
-    const newDoc: SceneDocument = {
-      schemaVersion: SCHEMA_VERSION,
-      sceneId: `scene-${Date.now()}`,
-      revision: 0,
-      view: {
-        ...DEFAULT_VIEW_STATE,
-        camera: { position: [4.4, 2.8, 5.2], target: [0, 1.25, 0], fov: 48 },
-        environment: { background: "#0c0e12", gridVisible: true },
-      },
-      objects: [
-        {
-          id: `obj-${Date.now()}`,
-          type: "mesh",
-          name: filename.replace(/\.[^/.]+$/, ""),
-          assetId: assetId,
-          position: [0, 0, 0],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-        },
-      ],
+    return {
+      doc: this.#documentFor(bundle.assetId, bundle.name),
+      filename: bundle.files[0]?.name ?? bundle.name,
+      format: bundle.format,
     };
-
-    return { doc: newDoc, filename, format: cleanExt };
   }
 
   /**
@@ -198,75 +192,28 @@ export class ModelLoader {
     }
     return null;
   }
+
+  #createDoc(
+    url: string,
+    filename: string,
+  ): { doc: SceneDocument; filename: string; format: Supported3DFormat } {
+    const assetId = `custom-${++this.uploadSeq}`;
+    this.registry.set(assetId, url);
+    return {
+      doc: this.#documentFor(assetId, filename.replace(/\.[^/.]+$/, "")),
+      filename,
+      format: formatOf(filename),
+    };
+  }
+
+  #documentFor(assetId: string, name: string): SceneDocument {
+    return createDocumentFromAsset({ assetId, name, view: STUDIO_VIEW });
+  }
 }
 
-const SUPPORTED_FILE_EXTENSIONS = ["gltf", "glb", "obj", "stl"] as const;
+const SUPPORTED_FILE_EXTENSIONS: readonly Supported3DFormat[] = ["gltf", "glb", "obj", "stl"];
 
-function fileExtension(name: string): string {
-  return (
-    name
-      .split("?")[0]!
-      .split(".")
-      .pop()
-      ?.toLowerCase() ?? ""
-  );
-}
-
-/** Prefer a .gltf bundle (it owns external resources), then self-contained .glb. */
-function pickPrimaryFile(files: File[]): File | null {
-  for (const ext of SUPPORTED_FILE_EXTENSIONS) {
-    const match = files.find((file) => fileExtension(file.name) === ext);
-    if (match) return match;
-  }
-  return null;
-}
-
-/**
- * Inline a .gltf bundle: map every relative buffer/image URI to a Blob URL from
- * the dropped file set, then hand the loader a single JSON blob. This is the
- * playground equivalent of three-gltf-viewer's `assetMap` URL modifier.
- */
-async function bundleUrl(primary: File, files: File[]): Promise<string> {
-  if (fileExtension(primary.name) !== "gltf") return URL.createObjectURL(primary);
-
-  let json: Record<string, unknown>;
-  try {
-    json = JSON.parse(await primary.text()) as Record<string, unknown>;
-  } catch {
-    return URL.createObjectURL(primary);
-  }
-
-  const byName = new Map<string, File>();
-  for (const file of files) {
-    if (file === primary) continue;
-    byName.set(file.name.toLowerCase(), file);
-    const base = file.name.split("/").pop()?.toLowerCase();
-    if (base) byName.set(base, file);
-  }
-
-  const resolve = (uri: string): string | null => {
-    if (!uri || uri.startsWith("data:") || /^(blob:|https?:|file:)/i.test(uri)) return null;
-    let clean = uri.replace(/^\.\//, "");
-    try {
-      clean = decodeURIComponent(clean);
-    } catch {
-      // keep the raw URI when it is not valid percent-encoding
-    }
-    const base = clean.split("/").pop()?.toLowerCase();
-    const file = byName.get(clean.toLowerCase()) ?? (base ? byName.get(base) : undefined);
-    return file ? URL.createObjectURL(file) : null;
-  };
-
-  for (const key of ["buffers", "images"]) {
-    const list = json[key];
-    if (!Array.isArray(list)) continue;
-    for (const item of list as Array<{ uri?: unknown }>) {
-      if (typeof item?.uri !== "string") continue;
-      const blobUrl = resolve(item.uri);
-      if (blobUrl) item.uri = blobUrl;
-    }
-  }
-
-  const blob = new Blob([JSON.stringify(json)], { type: "model/gltf+json" });
-  return URL.createObjectURL(blob);
+function formatOf(name: string): Supported3DFormat {
+  const ext = name.split("?")[0]?.split(".").pop()?.toLowerCase();
+  return SUPPORTED_FILE_EXTENSIONS.find((format) => format === ext) ?? "glb";
 }

@@ -83,6 +83,42 @@ Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping f
 | `createDefaultViewState` | `() => ViewState` | Engine-default `view` |
 | `validateHierarchy` | `(doc: SceneDocument) => void` | Parent references must resolve; throws `SceneEditorError("validation")` |
 
+### Building a document
+
+Writing the six-field envelope by hand (and re-deriving camera/lights/environment every time) is the most repeated host boilerplate; these four helpers remove it. Everything is plain data — no ids are generated, nothing is registered.
+
+| Function | Signature | Description |
+|---|---|---|
+| `createSceneDocument` | `(opts?: CreateSceneDocumentOptions) => SceneDocument` | Valid document from `{ sceneId?, revision?, objects?, view? }`. `view` is a `ViewPatch` merged over `DEFAULT_VIEW_STATE`; `objects` are deep-cloned |
+| `createEmptyDocument` | `(opts?) => SceneDocument` | `createSceneDocument` with `objects: []` |
+| `createDocumentFromAsset` | `(opts: CreateDocumentFromAssetOptions) => SceneDocument` | One mesh pointing at `assetId` (or `url`, which becomes the id). Ids default to `${assetId}-mesh` / `scene-${name}`; `baseView` swaps the baseline (`createPreviewViewState()` for viewer-style framing) |
+| `applyViewPatch` | `(base: ViewState, patch?: ViewPatch) => ViewState` | Deep merge into a **copy**: `camera`, `lights.ambient`, `lights.directional`, `environment` merge one level down, `lights.additional` replaces wholesale. Never mutates or aliases `base` |
+| `assetDisplayName` | `(url: string) => string` | Last path segment, decoded, query/hash stripped — the same naming rule `<scene-editor src>` uses |
+| `LIGHTING_PRESETS` | `Record<LightingPresetId, LightingPreset>` | Reference light setups (`studio` / `cyber` / `sunset` / `contrast`), typed against `view.lights`. Data only — apply through `setViewState(applyViewPatch(view, { lights: ... }))`; hosts with their own look define their own table |
+
+```ts
+const doc = createDocumentFromAsset({
+  assetId: "fox",
+  name: "Fox",
+  view: { camera: { position: [3.4, 2.1, 3.8] }, environment: { gridVisible: false } },
+});
+// → { schemaVersion: 3, sceneId: "scene-Fox", objects: [{ id: "fox-mesh", assetId: "fox", … }] }
+```
+
+`ViewPatch` is a deep partial of `ViewState`:
+
+```ts
+interface ViewPatch {
+  camera?: Partial<ViewState["camera"]>;
+  lights?: {
+    ambient?: Partial<ViewState["lights"]["ambient"]>;
+    directional?: Partial<ViewState["lights"]["directional"]>;
+    additional?: ViewState["lights"]["additional"];
+  };
+  environment?: Partial<ViewState["environment"]>;
+}
+```
+
 ### Errors
 
 | Export | Description |
@@ -145,6 +181,12 @@ interface RuntimeContract {
   readonly animationSpeed?: number;
   playAnimation?(objectId?: string | null, index?: number): boolean;
   playAnimationByName?(name: string): boolean;
+  /** Several clips of one object at once, weights normalized across the call. */
+  playAnimationBlend?(
+    layers: readonly AnimationBlendLayer[],
+    objectId?: string | null,
+  ): boolean;
+  readonly animationBlend?: readonly AnimationBlendLayer[];
   pauseAnimations?(): void;
   resumeAnimations?(): boolean;
   setAnimationTime?(seconds: number): void;
@@ -163,6 +205,14 @@ interface RuntimeContract {
   setToneMapping?(mode: "none" | "linear" | "aces" | "agx" | "neutral"): void;
   /** Optional: exposure multiplier. */
   setExposure?(value: number): void;
+  /** Optional: viewport shading; covers batched instances. Never persisted. */
+  setDisplayMode?(mode: "studio" | "xray" | "wireframe" | "normal" | "clay"): void;
+  /** Optional: current shading mode; "studio" when never set. */
+  readonly displayMode?: "studio" | "xray" | "wireframe" | "normal" | "clay";
+  /** Optional: component explode (0..1). A preview, never a document write. */
+  setExplode?(factor: number): void;
+  /** Optional: current explode factor (default 0). */
+  readonly explode?: number;
   /** Optional: swap the built-in studio IBL (`room` / `neutral` / `legacy`). */
   setEnvironmentPreset?(preset: EnvironmentPreset): void;
   /** Optional: custom HDR/EXR/LDR as the IBL; `null` falls back to the preset. */
@@ -272,6 +322,27 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `createResolverAssetLoader(options)` | `{ resolver, gltfLoader, dracoLoader?, ktx2Loader? }` → `AssetLoader`; resolve failure → `asset-resolve-failed` |
 | `AssetResolver` | type: `{ resolve(assetId): Promise<string \| URL> }` — host owns URLs |
 | `MinimalGltfLoader` | Structural type: `loadAsync(url)`, optional `setDRACOLoader` / `setKTX2Loader` |
+| `createLazyDecoders({ path, getRenderer? })` | Draco + KTX2 + Meshopt from one base URL. `ready()` imports/configures once (idempotent, never rejects — a module that fails drops that decoder only); `current()` is what the loader reads; `dispose()` kills the decoder workers. This is what `decoder-path` builds |
+| `DEFAULT_DECODER_CDN` / `decoderCdn(version?)` | jsDelivr base pinned to three's `REVISION`; `decoderCdn("186")` for a host that pins its own three |
+| `createFileBundleUrl(files, opts?)` | `(File[] \| FileList) => Promise<FileBundle>` — see below |
+| `assetFormatHint` | `(url, assetId?) => string \| null` — the extension a loader should trust: from the URL when it has one, otherwise from the asset id (`blob:http://host/uuid` has neither, but `upload-1-fox.glb` does) |
+
+#### Uploads — `createFileBundleUrl()`
+
+Turns a dropped/picked file set into one loadable URL. `.glb` / `.obj` / `.stl` become an object URL; a `.gltf` bundle gets every relative `buffers[].uri` / `images[].uri` rewritten to a Blob URL and is itself served from a Blob (three-gltf-viewer's `assetMap` modifier). Absolute, `data:` and existing `blob:` URIs are left alone; a **missing** buffer or image throws `asset-resolve-failed` naming the files, instead of failing later on the first texture.
+
+```ts
+interface FileBundle {
+  url: string;                    // what the loader fetches
+  assetId: string;                // `upload-1-fox.glb` — keeps the extension for the format hint
+  name: string;                   // primary file name, extension stripped
+  format: "glb" | "gltf" | "obj" | "stl";
+  files: readonly File[];         // primary first
+  dispose(): void;                // revoke every Blob URL; idempotent
+}
+```
+
+`.gltf` wins when a drop contains both a `.gltf` and a `.glb` (the bundle owns its resources). `opts.assetIdPrefix` keeps two drops of the same file name apart in `AssetCache`.
 
 ### Plugins
 
@@ -294,6 +365,18 @@ Web Component wrapper. Side-effect: imports `./styles/scene-editor.css` (re-expo
 | `defineSceneEditor()` | Registers `<scene-editor>`; idempotent; call at runtime (SSR-safe) |
 | `SceneEditorElement` | The custom element class |
 | `CAPTURED_COMBOS` | `readonly ["ctrl+z", "ctrl+shift+z", "ctrl+y", "g", "r", "s"]` — keyboard capture list |
+| `downloadBlob(blob, filename?)` | Save a `Blob` via a temporary anchor. Returns the name used (sanitized, timestamped when empty), so a toast can show it |
+
+### Saving what you exported
+
+The element returns `Blob`s, never files: a host may upload the bytes, show a preview, or skip storage. The save step is one call:
+
+```ts
+import { downloadBlob } from "@scenio/scene-editor/element";
+
+downloadBlob(await el.exportDocument({ format: "glb" }), `scene.${format}`);
+downloadBlob(await el.toBlob("image/png")!, "shot.png");
+```
 
 ### Preview mode — `<scene-editor src>`
 
@@ -307,16 +390,44 @@ The shortest path from a glTF URL to a rendered model:
 - `progress` / `load` / `error` are the lifecycle surface; `load.url` carries the resolved source.
 - Previews default to `tone-mapping="neutral"` (what model-viewer's `auto` resolves to on glTF); pass `tone-mapping="aces"` for the filmic look or `none` to keep three's raw output.
 - `loadDocument()` overrides the preview. Changing `src` afterwards switches back to preview and re-frames.
-- No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` still wins.
+- No resolver is required: a built-in identity resolver maps the reserved asset id to `src`. A host-provided `assetResolver` is wrapped, not replaced — the element's own ids (`__src__`, and the one `loadFiles()` mints) resolve internally, every other id goes to the host table.
 - `createSrcDocument(url)`, `SRC_ASSET_ID`, `SRC_SCENE_ID` are exported from `./element` for the same document shape in a headless setup.
 - The canvas is **transparent by default** (`WebGLRenderer({ alpha: true })`), so `view.environment.background: null` really shows the page behind the element. Pass `alpha: false` through a custom `runtimeFactory` if you need an opaque canvas.
 - `loading="lazy"` defers the `src` load until the element first intersects the viewport (falls back to eager where `IntersectionObserver` is unavailable).
-- Viewer chrome is attribute-only and never touches the document: `auto-rotate`, `auto-rotate-delay`, `rotation-per-second`, `min-camera-orbit`, `max-camera-orbit`, `camera-orbit`, `camera-target`, `field-of-view`, `min-field-of-view`, `max-field-of-view`, `disable-pan`, `disable-zoom`, `disable-tap`, `camera-damping`, `autoplay`, `animation-name`, `animation-crossfade-duration`, `pause-at-end`, `environment-image`, `tone-mapping`, `exposure`, `shadow-intensity`, `shadow-softness`, `variant-name`, `camera-name`, `orbit-sensitivity`, `touch-action`, `interpolation-decay`, `skybox-image`, `with-credentials`, `seamless-poster`, `alt`.
+- Viewer chrome is attribute-only and never touches the document: `auto-rotate`, `auto-rotate-delay`, `rotation-per-second`, `min-camera-orbit`, `max-camera-orbit`, `camera-orbit`, `camera-target`, `field-of-view`, `min-field-of-view`, `max-field-of-view`, `disable-pan`, `disable-zoom`, `disable-tap`, `camera-damping`, `autoplay`, `animation-name`, `animation-crossfade-duration`, `pause-at-end`, `environment-image`, `tone-mapping`, `exposure`, `display-mode`, `explode`, `shadow-intensity`, `shadow-softness`, `variant-name`, `camera-name`, `orbit-sensitivity`, `touch-action`, `interpolation-decay`, `skybox-image`, `with-credentials`, `seamless-poster`, `alt`, `decoder-path`, `decoder-cdn`, `instancing`.
 
 - A preview is a **viewer**, so its synthesized view uses viewer defaults rather than editor defaults: no floor grid, `field-of-view="auto"` (30° landscape / 45° portrait), and the environment map as the only light source (analytic ambient/key at `0`). Framing matches model-viewer's default orbit (`0deg 75deg`): front view, 15° above the horizon, at a distance calibrated to the reference viewer's rendered size.
+- **Viewer vs editor:** a preview is a viewer (`mode="viewer"`), so it has no authoring chrome — no transform gizmo, no click-to-select, no editor keystrokes. A `loadDocument()` flips the same element to `mode="editor"`; `mode` forces either one and the effective value is mirrored to `data-mode` for CSS. Clearing the selection and tearing the gizmo down happen on the switch, so a viewer never shows leftover axes.
+- `load` is dispatched **after** `frameViewer()`: a host reading `getDimensions()` or the camera inside the callback already sees the framed state. Overlapping `src` switches are counted, not flagged — two rapid swaps still release exactly one `load`, carrying the final `url`.
+- A preview whose asset **failed** does not dispatch `load` at all: one `src` is one asset, so the store's "skip the broken object, keep the rest" rule leaves an empty scene, and `loaded` stays `false`. The `error` event (and the visible message) is the whole story. Host documents keep partial-success semantics — one bad asset among many still completes a load.
+- Failures are visual, not just events: a `slot="error"` child is shown on `error` (or an init failure), and without one the element paints a built-in message over the canvas. The next successful load clears it.
+- Clip planes follow the content, not a constant: `near/far` are re-derived from the camera-to-target distance and the content radius every frame, so millimetre CAD and kilometre terrain both stay visible.
 - The contact shadow is model-viewer's `Shadow`, not a projected shadow map: an orthographic camera stands on the floor looking **up**, the content renders with a depth material whose alpha is "height above the floor", the result is blurred twice, and a floor quad draws it as pure absorbance. That is why it hugs the footprint instead of stretching away from the feet. `shadow-softness` trades texture resolution (`2^9` → `2^6` texels) and the far plane, so a crisp shadow keeps only the contact band; `shadow-intensity` is the quad's ceiling opacity, eased down for hard shadows. Animated content gets a cubic shadow volume 2x its largest dimension, with the texture scaled 4x so texels stay the same size in world units.
 
 Deliberately not implemented: `interaction-prompt` / `interaction-prompt-threshold` (the "drag to rotate" hint). This viewer draws a canvas and nothing else — every other affordance is the host page's business, and a hint that steals attention from the model is the host's call, not the component's. Model-viewer's other chrome (`poster` / `progress-bar` / `reveal`) exists because it also owns the loading experience; here those are slots.
+
+#### Compressed glTF: `decoder-path` / `decoder-cdn`
+
+`GLTFLoader` throws `No DRACOLoader instance provided.` on a Draco GLB, `KTX2Loader: Missing initialization` on KTX2 textures, and `setMeshoptDecoder must be called` on Meshopt — three wants constructed instances, not configuration. One attribute removes that homework:
+
+```html
+<scene-editor src="/models/robot.glb" decoder-path="/decoders/"></scene-editor>
+```
+
+The base URL holds three's own payload layout — copying `node_modules/three/examples/jsm/libs/{draco,basis}` there **is** the self-hosting story:
+
+```
+/decoders/
+  draco/gltf/   draco_wasm_wrapper.js + draco_decoder.wasm
+  basis/        basis_transcoder.js + basis_transcoder.wasm
+```
+
+- **Fetched on the first load, once.** The three addon modules are dynamic imports (their own chunk, never in the main bundle) and are pulled the first time a load starts on a page that opted in — three needs the instances before it parses. The *payloads* are lazier than that: `DRACOLoader` is only configured, so the draco wasm and the basis transcoder are fetched by three inside the first compressed primitive/texture. A page of uncompressed models therefore downloads the small addon chunk and no payloads.
+- **`decoder-cdn`** uses `DEFAULT_DECODER_CDN`, pinned to the three version this build was compiled against (`three@0.<REVISION>.0` on jsDelivr). Decoder payloads are version-coupled: an r186 wrapper around an r180 wasm is undefined behaviour, which is why the URL follows `REVISION` instead of floating.
+- **KTX2 needs the renderer.** `KTX2Loader.detectSupport(renderer)` probes the device to choose a compressed texture target; guessing would upload unreadable textures. The default runtime exposes `RuntimeContract.renderer`, so KTX2 is wired automatically; a runtime that omits it loses KTX2 only (Draco + Meshopt still work) rather than lying about device support.
+- **A host-assigned decoder wins.** `el.dracoLoader = …` overrides the bundle for that one format; the others stay automatic.
+- **Failures name the fix.** The `error` message is `Failed to load asset: <id> — this model uses Draco-compressed geometry, which needs a decoder — set decoder-path …`, so the built-in overlay (or `slot="error"`) is actionable instead of a three stack frame.
+- Changing either attribute rebuilds the bundle; the effect lands on the **next** load, since a fetch already in flight owns its decoders. Both are presentation-only — never written to the document.
 
 ### `SceneEditorElement` properties & methods
 
@@ -325,13 +436,19 @@ Deliberately not implemented: `interaction-prompt` / `interaction-prompt-thresho
 | `runtimeFactory` | **static** | `(canvas, options?) => RuntimeContract`. Defaults to `ThreeRuntime` + lazy GLTF. Override before connect to inject assets / WebGPU / test fakes |
 | `assetResolver` | property | Host `AssetResolver`; set **before** connect/ready |
 | `src` | attribute / property | Preview source (`glb` / `gltf`). Synthesizes a one-mesh document and auto-frames it. An explicit `loadDocument()` takes precedence until `src` changes again |
-| `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `neutral` (model-viewer's `auto` on glTF); documents stay on the engine default unless set |
+| `mode` | attribute / property | `viewer` \| `editor`. Absent = derived: `src` preview → viewer, host document → editor. A viewer keeps orbit/zoom and drops authoring chrome (gizmo, click-to-select, `G`/`R`/`S`, undo keys). Effective value mirrored to `data-mode` |
+| `tone-mapping` | attribute | `none` \| `linear` \| `aces` \| `agx` \| `neutral`. Previews default to `neutral` (model-viewer's `auto` on glTF); documents stay on the engine default unless set. Shader relink is automatic: three's program cache key includes the tone mapping |
 | `exposure` | attribute | Exposure multiplier applied on top of the tone mapping |
+| `display-mode` | attribute / property | Viewport shading: `studio` (default) \| `xray` \| `wireframe` \| `normal` \| `clay`. Swaps every rendered mesh — including `InstancedMesh` batches — to one shared override material and restores the originals exactly on `studio`. Invalid spellings fall back to `studio`; presentation-only, re-applied to freshly mounted content |
+| `explode` | attribute / property | Component explode, `0..1` (clamped). Objects are offset from their **document** positions along (centre − scene centre), so the document is never written and `0` restores exactly. A document load resets to 0, then the attribute re-asserts; batched instances follow via the transform-invalidate path |
 | `shadow-intensity` / `shadow-softness` | attributes | Contact shadow, model-viewer units (`0..1`). `softness` drives both blur radius and the height range that stays dark; `intensity="0"` removes the shadow. Display-only, re-asserted after every load |
 | `variant-name` | attribute / property | `KHR_materials_variants` pick; `null` restores the asset's own materials. Names set before the asset arrives are remembered. Also `availableVariants` (getter) |
 | `camera-name` | attribute / property | Look through a camera authored in the asset (glTF `node.camera`), keeping orbit controls live. Also `cameras` (getter) and `setCameraByName(name)` |
 | `morphTargets` / `setMorphInfluence(objectId, meshIndex, targetIndex, value)` | getter / method | Manual morph weights. Channels a playing clip drives are reported `driven: true` and refuse writes (the mixer would overwrite them next frame) |
-| `dracoLoader` / `ktx2Loader` / `meshoptDecoder` | properties | Assign **instances** (a `KTX2Loader` must already have `detectSupport(renderer)` called). Read before every asset load, so they may be set before or between loads |
+| `dracoLoader` / `ktx2Loader` / `meshoptDecoder` | properties | Assign **instances** (a `KTX2Loader` must already have `detectSupport(renderer)` called). Read before every asset load, so they may be set before or between loads. A property always wins over `decoder-path`, so a host can override one decoder and keep the rest automatic |
+| `decoder-path` | attribute | Base URL of the decoder payloads. Setting it makes Draco / KTX2 / Meshopt GLBs openable without any host wiring; absent (the default) means "no decoders, no extra requests". Nothing is downloaded until the first load needs it |
+| `decoder-cdn` | attribute | Boolean: use the CDN base pinned to this build's three version (`DEFAULT_DECODER_CDN`). `decoder-path` overrides it, so a template can keep the flag and point one environment at a mirror |
+| `instancing` | attribute / property | Draw-call batching (default **on**). `instancing="false"` (also `0` / `off` / `no`) gives every object its own draw call — the escape hatch for hosts that inspect the scene graph and expect one rendered mesh per object. Live: toggling it re-evaluates the mounted content without a reload, and the document never changes |
 | `alt` | attribute | Accessible name of the canvas (`role="img"` + `aria-label`). Falls back to the file name of `src`, so the canvas is never unlabelled |
 | `getCameraOrbit()` / `setCameraOrbit({ theta, phi, radius })` | method | model-viewer orbit angles: `theta` azimuth from +Z toward +X, `phi` polar from +Y (both degrees), `radius` in world units. Missing axes keep their value ("`auto`") |
 | `getCameraTarget()` / `setCameraTarget([x, y, z])` | method | Orbit target; moving it translates the eye and keeps the angles |
@@ -356,6 +473,8 @@ Deliberately not implemented: `interaction-prompt` / `interaction-prompt-thresho
 | `updateHotspot({ name, position?, normal?, surface? })` | method | Move an anchor without touching the DOM: `name` is the full slot name (`"hotspot-tank"`), `position` / `normal` are **strings** in `data-position` / `data-normal` syntax (`"1m 2m 3m"` accepted). Omitted fields are left alone, unparseable fields are ignored, unknown names are a silent no-op. `surface` is accepted for signature compatibility and has no effect (surface tracking is not implemented) |
 | `toDataURL(type?, quality?)` / `toBlob(type?, quality?)` | method | Render, then capture the canvas (`image/png` by default). Throws a `lifecycle` error when the runtime cannot capture |
 | `exportScene({ binary? })` | method | Export the document objects as GLB (`binary: true`, the default) or `.gltf` JSON. Throws a `lifecycle` error when unsupported |
+| `exportDocument({ format? })` | method | Export the **document** as a `Blob` — `glb` (default), `gltf` or `obj`. Unlike `exportScene()` it re-applies the stored transforms onto clones, so preview-only state (explode offsets, display-mode materials, a gizmo mid-drag) never reaches the file. Clips stay with the asset. Throws `lifecycle` when the runtime has no `exportDocument` |
+| `loadFiles(files)` | method | Load a dropped/picked file set (`.glb`, `.gltf` + `.bin`/textures, `.obj`, `.stl`). Picks the primary file (`createFileBundleUrl`), mints the Blob URLs, synthesizes the one-mesh document (`createDocumentFromAsset`), then runs the `src` path: decoders, framing, held `load` event, error overlay. The bundle is revoked on the next `loadFiles()` / on disconnect. Requires the runtime to honour `RuntimeFactoryOptions.assetResolver` (the default factory does) |
 | `dismissPoster()` | method | Hide `slot="poster"` now and dispatch `poster-dismissed`; idempotent |
 | `refreshSlots()` | method | Re-scan `slot="…"` children. A `MutationObserver` (subtree) already covers `slot` / `data-position` / `data-normal` / `data-visibility-attribute` changes, so this is only an explicit flush |
 | `ready` | promise | Resolves on init, rejects on failure. Prefer the `error` event as the reliable failure channel |
@@ -402,6 +521,7 @@ Deliberately not implemented: `interaction-prompt` / `interaction-prompt-thresho
 <scene-editor src="/models/robot.glb" reveal="interaction">
   <img slot="poster" src="/poster.jpg" alt="Loading robot" />
   <div slot="progress-bar">Loading…</div>
+  <div slot="error">模型加载失败，请稍后重试</div>
   <div slot="hotspot-lens" data-position="0 1.2 0.4" data-normal="0 0 1">Lens</div>
 </scene-editor>
 ```
@@ -410,6 +530,7 @@ Deliberately not implemented: `interaction-prompt` / `interaction-prompt-thresho
 |---|---|
 | `poster` | Absolute overlay (z-index 1), shown until the reveal policy dismisses it |
 | `progress-bar` | Absolute bottom overlay (z-index 2), visible only while a load is in flight |
+| `error` | Covers the canvas (z-index 4) while the last load / init failed; hidden again on the next load. Without this slot the element paints its own message (`[data-scene-editor-error]`) |
 | `hotspot-*` | Anchor glued to the world point in `data-position="x y z"` (re-projected on `camera-change` and resize). Hidden while the point is behind the camera. `data-normal="x y z"` (default `0 1 0`) is the surface's front: once `(camera − point) · normal < 0` the anchor gets `opacity: var(--min-hotspot-opacity, 0.25)`, `data-<data-visibility-attribute>` is mirrored, and `hotspot-visibility` fires **on change only** |
 
 Hotspots can also be driven from code: `queryHotspot(name)` reports the screen position and facing so a host can draw leader lines or collision-sort labels, `updateHotspot({ name, position, normal })` moves an anchor from script (model-viewer's API, string coordinates included), and `positionAndNormalFromPoint()` produces the `data-position` / `data-normal` pair to paste in. **Not implemented** (deliberately deferred): `data-surface` / `surfaceFromPoint()` — anchors that follow a skinned mesh move. Note the asymmetry with model-viewer: it does **not** watch `data-position` / `data-normal` and requires `updateHotspot()`; this element watches both (slot observer, `subtree: true`), so either route works — the attribute wins whenever it changes again.
@@ -497,12 +618,39 @@ interface ThreeRuntimeOptions {
   orbitControlsFactory?: (camera, domElement) => { update; dispose } | null;
   transformControlsFactory?: (camera, domElement) => TransformControlsLike;
   enableControls?: boolean; // false = headless
+  interactive?: boolean; // false = viewer: no gizmo at all (default true)
+  instancing?: boolean; // false = one draw call per mesh (default true; live via setInstancing)
+  resources?: SharedResourcePool; // placeholder geometry/material dedupe (default: one per runtime)
   assetCache?: AssetCache;
   transformMode?: TransformMode; // default: "translate"
 }
 ```
 
-Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted.
+Public members: `scene`, `camera`, `renderer`, `events`, `controlsReady`, `resize(w?, h?)`, `interactive` (getter), `setInteractive(on)`, `instancing` (via `setInstancing(on)`), `resourceStats` (getter), `transformMode` (getter), `setTransformMode(mode)`. Scene/camera/lights/grid are engine state — never persisted.
+
+Export surface: `exportScene({ binary? })` writes the **live** roots (`ArrayBuffer` / `.gltf` JSON string); `exportDocument(doc, { format? })` writes a document's stored transforms as a `Blob` (`glb` default, `gltf`, `obj`). The second one exists because preview state lives on the same objects — an exploded view or a display-mode material would otherwise end up in the file. Both import their exporter on demand, and neither carries animation clips (clips belong to the asset, not the document).
+
+`setInteractive(false)` disposes the gizmo (never mounts the addon in the first place when passed as an option) and clears the selection; `setInteractive(true)` re-mounts it through the same factory. `<scene-editor mode="viewer">` drives this.
+
+**Draw-call batching** (`instancing: true`, the default) collapses repeated primitive meshes into `InstancedMesh`es grouped by `(geometry parameters, material fields)`. The object model does not change: every document object keeps its own `Object3D`, transform, material instance and pick entry, so `getObjectById()`, `exportScene()`, undo and the gizmo behave exactly as before — only the *drawing* is shared. Object identities move to layer `1` (`BATCH_PROXY_LAYER`) so the camera no longer renders them:
+
+- **Picking is unaffected inside the SDK** (`picker.ts` calls `raycaster.layers.enableAll()`), but a host that raycasts the scene itself must enable the layer too, or call `pick()`.
+- **Selected objects, material overrides and asset instances are never batched** — each needs its own draw call and gets one.
+- **Not batched at all**: glTF assets, transparent/`opacity < 1` materials, sub-tree roots, non-default-layer meshes, and materials with fields that cannot be fingerprinted exactly (`clippingPlanes`, arrays, custom records).
+- **Chunked, spatially**: a group is cut into `InstancedMesh`es of ≤256 instances, bucketed by world position (a grid cell per chunk), so three's per-mesh frustum test still culls — a narrow close-up submits about a third of a 5 000-object scene instead of all of it, and the fraction keeps falling as scenes grow. Chunks share one geometry + one material clone per group. Measured 5 000 boxes: 22 560 → 30 720 triangles for a wide view, 60 000 → 18 432 for a close-up, 1 881 → 20 draw calls.
+- **Live switch**: `setInstancing(false)` re-evaluates every mounted object (default layer back, batch root removed) without a reload; `setInstancing(true)` re-absorbs whatever is eligible. `<scene-editor instancing="false">` drives it.
+- **Cost**: rarer, longer draw calls — sorting a group by cell happens once per membership change (on the next frame), not per object, and a moved instance keeps its old chunk until the next add/remove (its chunk's bounding sphere grows with it, so nothing is culled wrongly — just less tightly). Set `instancing: false` when a host inspects the scene graph and expects one rendered mesh per object.
+
+**Placeholder resources** are shared and reference-counted. Every primitive and placeholder draws its geometry and base material from one pool keyed by content (`primitiveSignature`), so a document of 5 000 identical boxes allocates **one** `BoxGeometry` and **one** `MeshStandardMaterial` instead of 10 000 objects' worth — measured 26.5 MB → 11.0 MB of JS heap for the 5 000-box scene. Consequences for a host:
+
+- `object.geometry` / `object.material` may be shared; mutating one in place is visible everywhere it is used (the SDK never does — a document material goes through `applyMaterialOverride`, which clones).
+- The placeholder's `dispose()` releases a *reference*; the buffer is freed when the last member goes.
+- `runtime.resourceStats` reports `{ geometries, materials, references }` live; `new ThreeRuntime({ resources })` lets several runtimes share one pool (the caller then owns its lifetime).
+- In the default bench: `perf.html` asserts `geometries === 1` for its 1 000-box document.
+
+**Asset static merge.** Draw-call batching only folds *instanced* repeats; a glTF modelled as 200 separate meshes that share one material is still 200 draw calls. On mount, `mergeAssetMeshes()` concatenates those meshes (baking each node's transform into its geometry) into one mesh per material. It is applied only where identity does not matter: the asset must have **no animation clips** and **no `KHR_materials_variants`** (a variant switch rewrites `mesh.material` per node), and each merged mesh must be a leaf with one opaque material and no skin/morph. Picking is unaffected — every node of an asset already reports the document object id. Measured: 200 same-material boxes → 1 mesh in ~25 ms. The merge is undone (and its buffers freed) on `remove()`.
+
+**Clip planes** are content-relative, not constants: every render re-derives `near = max(distance·5e-4, radius·1e-4)` and `far = max(distance·50, radius·50)` from the camera→target distance and the cached content radius. That is what keeps a 10³-unit CAD assembly and a 10⁵-unit terrain both visible through `autoFrame()` / `frameViewer()` and every dolly in between.
 
 Viewer-side policy setters (all optional on `RuntimeContract`, all presentation-only — they never touch the document):
 
@@ -510,6 +658,8 @@ Viewer-side policy setters (all optional on `RuntimeContract`, all presentation-
 |---|---|
 | `setCameraControls({ pan?, zoom?, limits?, sensitivity?, zoomSensitivity?, panSensitivity? })` | Orbit limits in **degrees** (`theta` = azimuth, `phi` = polar from +Y) and world-unit `radius`; the three multipliers map onto `rotateSpeed` / `zoomSpeed` / `panSpeed` and accept `0` (freeze that verb) and negatives (invert). Applied on mount if the addon is still loading |
 | `setAutoRotate({ enabled, degreesPerSecond?, delayMs? } \| null)` | Turntable yaw stepped from rAF with a real delta; pauses during a drag, resumes `delayMs` after `end` |
+| `setDisplayMode("studio" \| "xray" \| "wireframe" \| "normal" \| "clay")` / `displayMode` | Viewport shading. One shared override material per mode is swapped onto **document meshes and instancing chunks alike** (repainting only the hidden proxies would leave a 5 000-object scene unstyled); `"studio"` restores the originals exactly. Read back through `displayMode` |
+| `setExplode(factor)` / `explode` | Component explode (0..1). Offsets are recomputed from the **document** positions every call, written through the object store's transform path so `InstancedMesh` matrices follow; a load resets to 0 |
 | `setAnimationOptions({ autoplay?, clipName?, crossfadeSeconds?, pauseAtEnd? })` | Transport policy; `autoplay` also applies to already-mounted content |
 | `smoothViewTo(view, decayMs)` / `jumpCameraToGoal()` | Pose transition instead of a snap: the camera arcs (slerp on the offset, linear on radius) and lands asymptotically. `jumpCameraToGoal()` collapses a running ease |
 | `resetTurntableRotation(theta?)` | Roll back the yaw the **turntable** added, leaving the user's orbit alone. After the call the turntable reads `theta` (default `0`) |
@@ -523,7 +673,7 @@ const runtime = new ThreeRuntime({ canvas });
 runtime.setTransformMode("rotate"); // remembered until the addon mounts
 ```
 
-**Animation.** Clips from `LoadedAsset.animations` are bound to each mounted asset instance (one mixer per object). One clip plays at a time across the runtime.
+**Animation.** Clips from `LoadedAsset.animations` are bound to each mounted asset instance (one mixer per object). One *object* plays at a time across the runtime; within it, several clips can share the mixer with weights (`playAnimationBlend`) — glTF's own model is one skeleton driven by N concurrent samplers.
 
 | Member | Description |
 |---|---|
@@ -531,8 +681,10 @@ runtime.setTransformMode("rotate"); // remembered until the addon mounts
 | `playAnimation(objectId?, index?)` | Start a clip (`null` objectId = first object with clips); starts an rAF loop |
 | `pauseAnimations()` / `resumeAnimations()` | Pause without rewind / continue from the playhead |
 | `setAnimationSpeed(speed)` | Playback rate (`0` allowed) |
-| `setAnimationTime(seconds)` | Scrub the active clip |
-| `animationPlaying` / `animationTime` / `animationDuration` | Transport read surface |
+| `setAnimationTime(seconds)` | Scrub the active clip (every layer of a blend) |
+| `playAnimationBlend(layers, objectId?)` | `AnimationBlendLayer[]` = `{ index, weight, timeScale? }`; weights are normalized, so `[1, 1]` is 50/50. A single layer is exactly `playAnimation` |
+| `animationBlend` | Live layers, heaviest first: `{ index, weight, timeScale }[]` |
+| `animationPlaying` / `animationTime` / `animationDuration` | Transport read surface (they follow the heaviest layer) |
 
 ```ts
 const runtime = new ThreeRuntime({ canvas, assetCache });
@@ -552,6 +704,8 @@ runtime.playAnimation("obj-1", 0);
 | `createObjectStore` | id → Object3D registry, asset instantiation, disposal |
 | `createGizmoRig` | TransformControls mount / mode / selection binding |
 | `createAnimationRig` | glTF clips, mixers, transport |
+| `createDisplayRig` | Viewport shading (`display-mode`): shared override material per mode, document meshes + batch chunks, exact restore on `studio` |
+| `createExplodeRig` | Component explode (`explode`): document positions as baseline, writes through `applyTransform` so batched instances follow |
 | `createRenderLoop` | Single re-entrancy-guarded render entry |
 
 **WebGPU opt-in:** construct a `WebGPURenderer`, `await renderer.init()` **before** constructing the runtime (constructor renders once), pass `rendererFactory: () => renderer`. Detect silent fallback via `renderer.backend.isWebGPUBackend === true`. This seam is the only supported WebGPU path; WebGL2 remains the default and the CI-tested renderer.
@@ -571,12 +725,25 @@ runtime.playAnimation("obj-1", 0);
 | `createTransformControlsBinding(options)` | Wraps three `TransformControls`; one drag → one `transform-commit` event |
 | `TransformControlsBinding` / `TransformControlsBindingOptions` / `TransformControlsLike` / `TransformSnapshot` | Supporting types |
 
+### Document export
+
+| Export | Description |
+|---|---|
+| `exportDocumentBlob(doc, source, format?)` | `doc` + anything with `getObjectById(id)` → `Blob`. `glb` (default), `gltf`, `obj`; exporters are imported on demand |
+| `createDocumentGroup(doc, source)` | The step that makes it correct: one detached `Group` of clones with the **stored** transforms written back, so preview offsets and preview materials cannot leak. Shares geometry/materials with the originals — throw the group away, never dispose it |
+| `exportGroupBlob(group, format)` | Serialize a group you built yourself (`Group` → `Blob`) |
+| `sanitizeName(value, fallback)` | `sceneId` → file-name-safe stem |
+| `DocumentExportFormat` / `DocumentObjectSource` | Types |
+
 ### Picking
 
 | Export | Description |
 |---|---|
-| `createPicker(options)` | Raycast helper. `setTargets(objects)`, `pick(clientX, clientY) => id \| null` |
-| `Picker` / `PickerOptions` / `RaycastHit` | Types; `PickerOptions.raycast` injects a stub for tests |
+| `createPicker(options)` | Raycast helper. `setTargets(objects)`, `pick(clientX, clientY) => id \| null`, `pickDetail()` for point+normal |
+| `Picker` / `PickerOptions` / `RaycastHit` | Types; `PickerOptions.raycast` injects a stub for tests, `bvhThreshold` sets the triangle count above which a mesh gets a BVH (default 2 000) |
+| `Picker.ready()` | Resolves after the BVH chunk and trees are in place; await it to make the *first* pick fast. `Picker.accelerated` counts accelerated meshes (diagnostics/tests) |
+
+Meshes above `bvhThreshold` triangles are raycast through a `MeshBVH` (`three-mesh-bvh`), with the mesh's own `raycast` swapped for `acceleratedRaycast` — never the `THREE.Mesh.prototype`, since an SDK must not patch a peer dependency globally. The BVH is a **dynamic import** and only requested when the mounted content actually contains a mesh above the threshold, so a viewer of primitives never downloads it (~33 kB gzip). Measured on a 130 560-triangle mesh: **12.0 ms → 0.10 ms** per pick, with a one-off ~63 ms tree build. Trees are shared per geometry (asset instances clone the same buffers) and reference-counted, so disposing one picker cannot detach another's; skinned, morphed and instanced meshes stay on three's own path.
 
 ### Object factory
 
@@ -605,7 +772,6 @@ Minimal chrome for the custom element (layout of canvas host). Import once in th
 ## Related demo code
 
 - `apps/playground/src/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
-- `apps/playground/src/viewer/viewer-controller.ts` — viewer state → engine updates (display, environment, animation)
-- `apps/playground/src/ui/studio-shell.ts` — composes HUD panels, hotkeys, explode preview
-- `apps/playground/src/viewer/display-modes.ts` — shading modes with owned/disposed material overrides
+- `apps/playground/src/viewer/viewer-controller.ts` — viewer state → engine updates (display / explode route to the SDK rigs, environment, animation)
+- `apps/playground/src/ui/studio-shell.ts` — composes HUD panels, hotkeys
 - `apps/playground/src/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot

@@ -1,4 +1,8 @@
 import { proxy, snapshot } from "valtio/vanilla";
+import type {
+  DisplayModeId,
+  LightingPresetId as SdkLightingPresetId,
+} from "@scenio/scene-editor";
 
 /**
  * Single viewer state (reference: three-gltf-viewer's `Viewer#state`).
@@ -13,8 +17,9 @@ import { proxy, snapshot } from "valtio/vanilla";
  * keeps one slider drag as one history entry.
  */
 
-export type DisplayMode = "studio" | "xray" | "wireframe" | "normal" | "clay";
-export type LightingPresetId = "studio" | "cyber" | "sunset" | "contrast";
+/** SDK's `display-mode` ids, re-exported so panels keep one spelling. */
+export type DisplayMode = DisplayModeId;
+export type LightingPresetId = SdkLightingPresetId;
 export type ToneMappingId = "none" | "linear" | "aces";
 
 export interface AnimationSelection {
@@ -26,6 +31,8 @@ export interface AnimationSelection {
 
 export interface ViewerState {
   display: DisplayMode;
+  /** Component explode factor (0..1) — a preview, applied via `setExplode`. */
+  explode: number;
   skeleton: boolean;
   grid: boolean;
   background: string;
@@ -54,6 +61,7 @@ export type ViewerStatePatch = Omit<Partial<ViewerState>, "animation"> & {
 
 export const DEFAULT_VIEWER_STATE: ViewerState = {
   display: "studio",
+  explode: 0,
   skeleton: false,
   grid: true,
   background: "#0c0e12",

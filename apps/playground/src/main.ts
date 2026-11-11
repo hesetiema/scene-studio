@@ -6,6 +6,7 @@ import { WelcomeScreen } from "./ui/welcome-screen";
 import { CameraController } from "./camera/camera-controller";
 import { HUDController } from "./ui/hud-controller";
 import { StudioShell } from "./ui/studio-shell";
+import type { ModeSwitch, StudioMode } from "./ui/mode-switch";
 import { bindHistoryHotkeys, HistoryCoordinator } from "./viewer/history-coordinator";
 import { createViewerStore, type ViewerStore } from "./viewer/viewer-state";
 import { ViewerController } from "./viewer/viewer-controller";
@@ -21,6 +22,7 @@ declare global {
     __viewer?: ViewerController;
     __store?: ViewerStore;
     __history?: HistoryCoordinator;
+    __mode?: ModeSwitch;
     loadCustomModel: (urlOrFile: string | File, name?: string) => Promise<void>;
     loadCustomFiles: (files: File[]) => Promise<void>;
   }
@@ -37,12 +39,28 @@ const assetCache = modelLoader.getAssetCache();
 let runtimeInstance: ThreeRuntime | null = null;
 
 // Must be registered BEFORE defineSceneEditor() upgrades the element.
-SceneEditorElement.runtimeFactory = (canvas) => {
-  const runtime = new ThreeRuntime({ canvas, assetCache });
+SceneEditorElement.runtimeFactory = (canvas, options) => {
+  // A custom factory has to honour `interactive` too, or the element's viewer
+  // mode would still mount a transform gizmo.
+  const runtime = new ThreeRuntime({
+    canvas,
+    assetCache,
+    ...(options?.interactive === undefined ? {} : { interactive: options.interactive }),
+  });
   runtimeInstance = runtime;
   window.__runtime = runtime;
   return runtime;
 };
+
+// Boot mode is fixed *before* the element upgrades: `#init()` reads `mode` to
+// decide whether the runtime is created with `interactive: false`, so setting it
+// later would briefly mount (and then tear down) a transform gizmo. Loaded
+// models are viewers by default; `?mode=editor` is the explicit editor entry
+// used by the e2e fixtures, and the top-bar switch can flip it at any time.
+const bootParams = new URLSearchParams(location.search);
+const initialMode: StudioMode = bootParams.get("mode") === "editor" ? "editor" : "viewer";
+document.querySelector("scene-editor")?.setAttribute("mode", initialMode);
+document.body.dataset.studioMode = initialMode;
 
 defineSceneEditor();
 
@@ -58,7 +76,7 @@ const camera = new CameraController(el, getRuntime);
 const hud = new HUDController(el, getRuntime);
 
 const store = createViewerStore();
-const viewer = new ViewerController({ store, el, getRuntime, camera });
+const viewer = new ViewerController({ store, el, getRuntime });
 viewer.mount();
 
 /** 撤销/重做覆盖面板设置（valtio 快照）与文档命令（SDK 历史）。 */
@@ -160,6 +178,8 @@ async function goHome(): Promise<void> {
     return;
   }
   await applyDocument(emptyDoc, "未载入模型", "—", false);
+  // 回到首页 = 下一次载入重新从查看态开始。
+  shell.modeSwitch.set("viewer", false);
   camera.frameScene(false, false);
   hud.showToast("已回到首页");
 }
@@ -178,8 +198,9 @@ window.loadCustomFiles = loadFilesModel;
 el.addEventListener("save-request", () => {
   const local = el.getDocument();
 
-  // 首页没有可保存的内容（保存按钮与快捷键在空场景下都不该落库）。
-  if (local.objects.length === 0) return;
+  // 查看态是只读的（保存按钮已隐藏，但 Ctrl+S 仍会派发这个事件）；
+  // 空场景同样没有可保存的内容。
+  if (shell.modeSwitch.mode === "viewer" || local.objects.length === 0) return;
 
   if (host.forceConflict) {
     const incoming: SceneDocument = { ...host.serverDoc, revision: host.serverDoc.revision + 1 };
@@ -234,7 +255,7 @@ welcome.mount();
 document.body.dataset.boot = "pending";
 
 void el.ready.then(async () => {
-  const params = new URLSearchParams(location.search);
+  const params = bootParams;
   const selectId = params.get("select");
   const requestedModel = params.get("model");
   // `?scene=default` (or any `?select=`) loads the deterministic fixture the
@@ -294,6 +315,8 @@ function applyTransformFromQuery(id: string, params: URLSearchParams): void {
 window.__viewer = viewer;
 window.__store = store;
 window.__history = history;
+window.__mode = shell.modeSwitch;
 
 // 宿主接管 Ctrl+Z / Ctrl+Y：焦点在视口内时也不会和元素内置的撤销重复执行。
-bindHistoryHotkeys(history);
+// 查看态不接编辑快捷键，与元素自身的 mode 门禁保持一致。
+bindHistoryHotkeys(history, window, () => shell.modeSwitch.mode === "editor");

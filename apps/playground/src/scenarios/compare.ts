@@ -3,7 +3,7 @@
  *
  * Deliberately *not* covered by Playwright: the left pane needs the official
  * `model-viewer` bundle from a CDN, so this page can only render online. The
- * assertions live on `demos/viewer.html`, which uses the same attribute surface
+ * assertions live on `?demo=viewer`, which uses the same attribute surface
  * against the SDK alone.
  *
  * One toolbar drives both elements at once — the point being that the attribute

@@ -14,6 +14,7 @@ import type {
   MorphTargetInfo,
   RuntimeContract,
   RuntimeEventMap,
+  DisplayModeId,
   ToneMappingMode,
   Transform,
 } from "./runtime-contract";
@@ -33,10 +34,13 @@ export class FakeRuntime implements RuntimeContract {
     autoFrame: 0,
     setToneMapping: [] as ToneMappingMode[],
     setExposure: [] as number[],
+    setDisplayMode: [] as DisplayModeId[],
+    setExplode: [] as number[],
     addObject: [] as SceneObjectDTO[],
     removeObject: [] as string[],
     reparent: [] as Array<{ id: string; parentId: string | undefined }>,
     setMaterial: [] as Array<{ id: string; material: MaterialDTO | undefined }>,
+    exportDocument: [] as Array<{ doc: SceneDocument; format: string }>,
     setCameraControls: [] as CameraControlsOptions[],
     setAutoRotate: [] as Array<AutoRotateOptions | null>,
     setAnimationOptions: [] as AnimationOptions[],
@@ -44,6 +48,8 @@ export class FakeRuntime implements RuntimeContract {
     setEnvironmentImage: [] as Array<string | null>,
     setSkyboxImage: [] as Array<{ url: string | null; asEnvironment: boolean }>,
     frameViewer: 0,
+    setInteractive: [] as boolean[],
+    setInstancing: [] as boolean[],
     setRenderingPaused: [] as boolean[],
     setCameraByName: [] as Array<string | null>,
     setTouchAction: [] as string[],
@@ -161,6 +167,16 @@ export class FakeRuntime implements RuntimeContract {
     this.autoFrame();
   }
 
+  /** Authoring chrome on/off (the element drives this from `mode`). */
+  setInteractive(interactive: boolean): void {
+    this.calls.setInteractive.push(interactive);
+  }
+
+  /** Draw-call batching on/off (the element drives this from `instancing`). */
+  setInstancing(enabled: boolean): void {
+    this.calls.setInstancing.push(enabled);
+  }
+
   setRenderingPaused(paused: boolean): void {
     this.calls.setRenderingPaused.push(paused);
   }
@@ -211,8 +227,39 @@ export class FakeRuntime implements RuntimeContract {
     this.calls.setToneMapping.push(mode);
   }
 
+  /** Records the call and returns a stand-in Blob (no serialization in doubles). */
+  async exportDocument(
+    doc: SceneDocument,
+    options: { format?: "glb" | "gltf" | "obj" } = {},
+  ): Promise<Blob> {
+    this.calls.exportDocument.push({ doc, format: options.format ?? "glb" });
+    return new Blob(["fake-export"], { type: "model/gltf-binary" });
+  }
+
   setExposure(value: number): void {
     this.calls.setExposure.push(value);
+  }
+
+  #displayMode: DisplayModeId = "studio";
+
+  setDisplayMode(mode: DisplayModeId): void {
+    this.calls.setDisplayMode.push(mode);
+    this.#displayMode = mode;
+  }
+
+  get displayMode(): DisplayModeId {
+    return this.#displayMode;
+  }
+
+  #explode = 0;
+
+  setExplode(factor: number): void {
+    this.calls.setExplode.push(factor);
+    this.#explode = Math.min(1, Math.max(0, factor));
+  }
+
+  get explode(): number {
+    return this.#explode;
   }
 
   setEnvironmentPreset(preset: EnvironmentPreset): void {

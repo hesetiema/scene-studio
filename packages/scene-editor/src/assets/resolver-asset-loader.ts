@@ -1,7 +1,9 @@
 import { AssetError, AssetErrorCode } from "./asset-error";
+import { assetFormatHint } from "./format";
 import type { AssetLoadContext, LoadedAsset } from "./asset-cache";
 import {
   applyGltfDecoders,
+  decoderHint,
   loadGltfScene,
   type GltfDecoders,
   type MinimalGltfLoader,
@@ -61,7 +63,9 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       );
     }
 
-    const ext = url.split("?")[0]?.split(".").pop()?.toLowerCase();
+    // Blob URLs (`loadFiles`) and extension-less endpoints have no format in
+    // the URL; the asset id carries it, so ask both before rejecting.
+    const ext = assetFormatHint(url, assetId);
     if (ext !== "glb" && ext !== "gltf") {
       throw new AssetError(
         AssetErrorCode.UnsupportedFormat,
@@ -81,10 +85,15 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       if (credentials !== undefined) gltfLoader.setWithCredentials?.(credentials);
       sceneData = await loadGltfScene(gltfLoader, url, context?.onProgress);
     } catch (cause) {
-      throw new AssetError(AssetErrorCode.LoadFailed, `Failed to load asset: ${assetId}`, {
-        cause,
-        detail: { assetId, url },
-      });
+      const hint = decoderHint(cause);
+      throw new AssetError(
+        AssetErrorCode.LoadFailed,
+        `Failed to load asset: ${assetId}${hint ? ` — ${hint}` : ""}`,
+        {
+          cause,
+          detail: { assetId, url },
+        },
+      );
     }
 
     const root = sceneData.scene as {
