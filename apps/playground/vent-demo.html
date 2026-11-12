@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vent-demo · 通风感知模型（真实数据）</title>
+    <style>
+      :root {
+        --bg: #d6dde5;
+        --panel: #ffffff;
+        --blue: #246fe5;
+        --gray-900: #1b2129;
+        --gray-600: #5f6b7a;
+        --gray-400: #c4c9cf;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        color: var(--gray-900);
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        display: block;
+      }
+      /* ---- 图元覆盖层（CSS2D） ---- */
+      #labels {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .lbl {
+        position: absolute;
+        transform: translate(-50%, -50%);
+        white-space: nowrap;
+        user-select: none;
+      }
+      /* 设备图标 24×24 */
+      .lbl-equip {
+        width: 24px;
+        height: 24px;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      .lbl-equip .ic {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .lbl-equip .ic svg {
+        width: 14px;
+        height: 14px;
+        fill: #fff;
+      }
+      /* 真实页设备标签默认只显示 24px 图标，名称 hover 才浮出 */
+      .lbl-equip .name {
+        display: none;
+        position: absolute;
+        left: 50%;
+        top: 100%;
+        transform: translateX(-50%);
+        margin-top: 2px;
+        font-size: 12px;
+        line-height: 17px;
+        padding: 1px 4px;
+        border-radius: 4px;
+        color: #1b2129;
+        text-shadow:
+          1px 0 0 #fff,
+          0 1px 0 #fff,
+          -1px 0 0 #fff,
+          0 -1px 0 #fff;
+      }
+      .lbl-equip:hover .name {
+        /* JS 会按碰撞结果给 .name 挂 .hidden（带 !important），这里要压过去 */
+        display: block !important;
+      }
+      .lbl-equip:hover .ic {
+        outline: 2px solid rgba(36, 111, 229, 0.45);
+        outline-offset: 1px;
+      }
+      .lbl-equip .dots {
+        position: absolute;
+        top: -6px;
+        right: -4px;
+        display: flex;
+        gap: 2px;
+      }
+      .lbl-equip .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        border: 2px solid #fff;
+      }
+      /* 聚合计数角标 */
+      .lbl-grp {
+        width: 24px;
+        height: 24px;
+        border-radius: 4px;
+        border: 1px solid #c4c9cf;
+        background: #e8ecf0;
+        box-shadow: 0 2px 10px rgba(27, 33, 41, 0.1);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 700;
+        color: #3c4652;
+        pointer-events: auto;
+        cursor: pointer;
+      }
+      /* 空间标注 */
+      .lbl-space {
+        transform: translate(-50%, -100%);
+        pointer-events: none;
+        text-align: center;
+      }
+      .lbl-space .lux {
+        font-size: 12px;
+        line-height: 17px;
+        color: #1b2129;
+        text-shadow:
+          1px 0 0 #fff,
+          0 1px 0 #fff,
+          -1px 0 0 #fff,
+          0 -1px 0 #fff;
+      }
+      .lbl-space .name {
+        font-size: 12px;
+        line-height: 17px;
+        color: #1b2129;
+        text-shadow:
+          1px 0 0 #fff,
+          0 1px 0 #fff,
+          -1px 0 0 #fff,
+          0 -1px 0 #fff;
+      }
+      .hidden {
+        display: none !important;
+      }
+      /* ---- 左侧楼层选择器（精简） ---- */
+      #nav {
+        position: absolute;
+        left: 12px;
+        top: 64px;
+        bottom: 72px;
+        width: 74px;
+        background: var(--panel);
+        border-radius: 8px;
+        padding: 8px 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 2px;
+        overflow-y: auto;
+        box-shadow: 0 2px 10px rgba(27, 33, 41, 0.08);
+      }
+      #nav button {
+        border: 0;
+        background: transparent;
+        border-radius: 4px;
+        padding: 6px 2px;
+        font-size: 13px;
+        line-height: 18px;
+        color: var(--gray-900);
+        cursor: pointer;
+        text-align: center;
+        flex-shrink: 0;
+      }
+      #nav button:hover {
+        background: rgba(196, 201, 207, 0.3);
+      }
+      #nav button.primary {
+        background: var(--blue);
+        color: #fff;
+        font-weight: 600;
+      }
+      #nav button.active {
+        background: var(--blue);
+        color: #fff;
+        font-weight: 600;
+      }
+      #nav .nav-building {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--gray-900);
+        padding: 8px 2px 4px;
+        text-align: center;
+        flex-shrink: 0;
+      }
+      #nav .nav-sep {
+        height: 1px;
+        background: #e8ecf0;
+        margin: 4px 2px;
+        flex-shrink: 0;
+      }
+      /* 面包屑 */
+      #crumb {
+        position: absolute;
+        left: 90px;
+        top: 12px;
+        display: none;
+        align-items: center;
+        gap: 8px;
+        background: transparent;
+        border: 0;
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--gray-900);
+        cursor: pointer;
+        padding: 4px 6px;
+      }
+      #crumb .back {
+        font-size: 16px;
+        font-weight: 400;
+      }
+      /* 底部图例 */
+      #legend {
+        position: absolute;
+        left: 50%;
+        bottom: 14px;
+        transform: translateX(-50%);
+        background: var(--panel);
+        border-radius: 8px;
+        padding: 8px 18px;
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        font-size: 12px;
+        color: var(--gray-600);
+        box-shadow: 0 2px 10px rgba(27, 33, 41, 0.08);
+        white-space: nowrap;
+      }
+      #legend .lg-title {
+        font-weight: 700;
+        color: var(--gray-900);
+      }
+      #legend .lg-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      #legend .sw {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        display: inline-block;
+      }
+      #legend .sw.round {
+        border-radius: 50%;
+        width: 8px;
+        height: 8px;
+      }
+      #legend .divider {
+        width: 1px;
+        height: 16px;
+        background: #e8ecf0;
+      }
+      /* 状态行（默认隐藏：纯模型视图不显示调试文本） */
+      #status {
+        display: none;
+      }
+      /* 数据缺失提示卡（快照不入库） */
+      .prepare {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        width: min(560px, calc(100% - 48px));
+        background: #fff;
+        border-radius: 10px;
+        padding: 20px 24px;
+        box-shadow: 0 8px 32px rgba(27, 33, 41, 0.12);
+        pointer-events: auto;
+        font-size: 13px;
+        line-height: 20px;
+        color: var(--gray-900);
+      }
+      .prepare h2 {
+        font-size: 16px;
+        line-height: 24px;
+        margin-bottom: 8px;
+      }
+      .prepare p {
+        margin: 8px 0;
+      }
+      .prepare ul {
+        margin: 8px 0 8px 18px;
+        color: var(--gray-600);
+      }
+      .prepare code {
+        background: #f2f5f8;
+        border-radius: 3px;
+        padding: 1px 4px;
+        font-size: 12px;
+      }
+      .prepare .err {
+        color: #b4453c;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <scene-editor
+      id="stage"
+      scene-id="scene-vent-model"
+      mode="viewer"
+      instancing="false"
+    ></scene-editor>
+    <div id="labels"></div>
+    <button id="crumb"><span class="back">‹</span><span id="crumb-text">返回</span></button>
+    <aside id="nav"></aside>
+    <div id="legend"></div>
+    <div id="status"></div>
+    <script type="module" src="/src/vent-demo.ts"></script>
+  </body>
+</html>

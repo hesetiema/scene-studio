@@ -18,3 +18,8 @@ e2e/perf-report.json
 
 # Mock data snapshot (docs/mocks) — synced locally, not committed to repo
 docs/mocks/
+
+# 真实环境数据快照与 BIM 几何（含楼栋几何与内部标识）——本地采集，不入库。
+# 采集步骤见 apps/playground/README.md「本地数据准备」；缺数据时 demo 会显示提示卡。
+apps/playground/public/data/
+apps/playground/public/bim/

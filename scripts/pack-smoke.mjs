@@ -65,6 +65,9 @@ const required = [
   "dist/three-entry.d.ts",
   "dist/element-entry.js",
   "dist/element-entry.d.ts",
+  // vite flattens the JS entry name; tsc keeps the src directory layout for d.ts.
+  "dist/bim-entry.js",
+  "dist/bim/bim-entry.d.ts",
   "package.json",
 ];
 const missing = required.filter((f) => !packedFiles.has(f));
@@ -153,11 +156,13 @@ writeFileSync(
       `import { SCHEMA_VERSION, SceneDocumentSchema, type SceneDocument, FakeRuntime } from "@scenio/scene-editor";`,
       `import { ThreeRuntime, type ThreeRuntimeOptions } from "@scenio/scene-editor/three";`,
       `import { defineSceneEditor, SceneEditorElement } from "@scenio/scene-editor/element";`,
+      `import type { RevitFloorHandle, OutlineJson } from "@scenio/scene-editor/bim";`,
       `const doc = SceneDocumentSchema.parse(${SMOKE_DOC}) satisfies SceneDocument;`,
       `const _opts: Partial<ThreeRuntimeOptions> = { enableControls: false };`,
       `const _rt: typeof ThreeRuntime = ThreeRuntime;`,
       `const _el: typeof SceneEditorElement = SceneEditorElement;`,
-      `void defineSceneEditor; void FakeRuntime; void doc; void _opts; void _rt; void _el;`,
+      `const _revit: RevitFloorHandle | null = null; const _outline: OutlineJson | null = null;`,
+      `void defineSceneEditor; void FakeRuntime; void doc; void _opts; void _rt; void _el; void _revit; void _outline;`,
       ``,
     ].join("\n"),
   );

@@ -6,13 +6,14 @@ const pkg = (path: string) =>
 
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
-/** Three HTML entries: the studio, the perf bench, and the minimal host. */
+/** Four HTML entries: the studio, the perf bench, the minimal host, and the AC demo. */
 export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)
     alias: [
       { find: "@scenio/scene-editor/element", replacement: pkg("element-entry.ts") },
       { find: "@scenio/scene-editor/three", replacement: pkg("three-entry.ts") },
+      { find: "@scenio/scene-editor/bim", replacement: pkg("bim/bim-entry.ts") },
       { find: "@scenio/scene-editor", replacement: pkg("index.ts") },
     ],
   },
@@ -43,6 +44,7 @@ export default defineConfig({
         main: html("index.html"),
         perf: html("perf.html"),
         minimal: html("minimal.html"),
+        ventDemo: html("vent-demo.html"),
       },
     },
   },
