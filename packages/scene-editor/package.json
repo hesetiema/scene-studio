@@ -42,6 +42,7 @@
   },
   "files": [
     "dist",
+    "API.md",
     "README.zh-CN.md"
   ],
   "scripts": {

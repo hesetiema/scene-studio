@@ -220,6 +220,11 @@ undoable. Full field-level signatures are in [API.md](API.md#document-schema-zod
   `asset-resolve-failed`, `asset-load-failed`, `render-init-failed`, `lifecycle`, `conflict`.
   `AssetErrorCode`: `asset-not-found`, `asset-resolve-failed`, `asset-load-failed`,
   `asset-unsupported-format`, `asset-disposed`.
+- **BIM (optional entry).** `@scenio/scene-editor/bim` loads architecture scenes and lightweight
+  storey geometry — `loadBimScene()` for an FBX scene listing with storey keys, `loadRevitFloor()`
+  for one merged per-storey asset — plus outline helpers (`parseOutline`, `extrudedOutlineGeometry`,
+  `outlinePlaneGeometry`). Structural only: no materials, units, colours or camera policy, and
+  nothing writes to the document. Details in the `BIM entry` section of [API.md](API.md).
 
 ### Entry points
 
@@ -228,6 +233,7 @@ undoable. Full field-level signatures are in [API.md](API.md#document-schema-zod
 | `@scenio/scene-editor/element` | `<scene-editor>` + `defineSceneEditor()` | Most integrations — viewer **and** editor |
 | `@scenio/scene-editor` | `createSceneEditor()`, schema, commands, errors, assets, plugin types | Headless editing, custom runtimes, server-side validation |
 | `@scenio/scene-editor/three` | `ThreeRuntime` + composable viewer rigs, picker, control bindings | Custom renderer or custom scene-graph wiring |
+| `@scenio/scene-editor/bim` | `loadBimScene()`, `loadRevitFloor()`, outline → geometry helpers | Architecture / BIM assets, floor-plan views, space outlines |
 
 ### Compatibility
 

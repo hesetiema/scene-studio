@@ -206,6 +206,10 @@ slot 名：`slot="poster"` / `slot="progress-bar"` / `slot="error"` / `slot="hot
   `asset-resolve-failed`、`asset-load-failed`、`render-init-failed`、`lifecycle`、`conflict`；
   `AssetErrorCode`：`asset-not-found`、`asset-resolve-failed`、`asset-load-failed`、
   `asset-unsupported-format`、`asset-disposed`。
+- **BIM（可选入口）**：`@scenio/scene-editor/bim` 装载建筑场景与轻量化楼层几何——
+  `loadBimScene()` 读 FBX 场景清单并按楼层归组，`loadRevitFloor()` 读单层按类别合并的资产——
+  另附 outline 工具（`parseOutline`、`extrudedOutlineGeometry`、`outlinePlaneGeometry`）。
+  只给结构：不带材质、单位、配色与相机策略，也不写场景文档。详见 [API.md](API.md) 的 `BIM entry` 一节。
 
 ### 入口
 
@@ -214,6 +218,7 @@ slot 名：`slot="poster"` / `slot="progress-bar"` / `slot="error"` / `slot="hot
 | `@scenio/scene-editor/element` | `<scene-editor>` + `defineSceneEditor()` | 大多数集成（查看器 + 编辑器） |
 | `@scenio/scene-editor` | `createSceneEditor()`、schema、命令、错误、资产、插件类型 | Headless 编辑、自定义 runtime、服务端校验 |
 | `@scenio/scene-editor/three` | `ThreeRuntime`、可组合的 viewer rigs、picker、控制器绑定 | 自定义渲染或场景图装配 |
+| `@scenio/scene-editor/bim` | `loadBimScene()`、`loadRevitFloor()`、outline → 几何工具 | 建筑 / BIM 资产、平面图视图、空间轮廓 |
 
 ### 兼容性
 
