@@ -1,6 +1,6 @@
 # API reference — @scenio/scene-editor
 
-Version: `0.7.0`. Types are the contract; runtime values match the names below. Three entry points: `.` (core), `./element`, `./three`. The package ships no stylesheet; layout is the host's job.
+Version: `0.7.1`. Types are the contract; runtime values match the names below. Three entry points: `.` (core), `./element`, `./three`. The package ships no stylesheet; layout is the host's job.
 
 Docs: [English README](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.md) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [Project overview](https://github.com/hesetiema/scene-studio/blob/main/README.md)
 

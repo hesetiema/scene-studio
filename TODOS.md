@@ -1,6 +1,7 @@
 # TODOS
 
-`0.7.0` alpha 已发布，即 npm 当前的 `latest`。架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+仓库内为 `0.7.1`；线上 `latest` 以 `npm view @scenio/scene-editor dist-tags` 为准（0.7.0 已发布并 approve）。
+架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 一、已完成（`0.7.0`）
 
@@ -174,7 +175,8 @@
 
 ## 六、发布流程（`0.7.0` 已按此走过一次）
 
-- scope `@scenio` 已在 npm 上，`latest` 指向 `0.7.0`；文档格式为 **schema v3**（0.7.0 引入的 minor 变更）。
+- scope `@scenio` 已在 npm 上；`latest` 指向哪个版本一律以 `npm view @scenio/scene-editor dist-tags`
+  为准，不要在文档里写死（会漂）。文档格式为 **schema v3**（0.7.0 引入的 minor 变更）。
 - 发布是**两段式**：granular token 只能推 staging，直接 `npm publish` 会 403。流程为
   `npm stage publish` → 等服务端 `validating` 转 `staged` → `npm stage approve <uuid> --otp`。
   `stage` 子命令需 npm >= 11（用 `npx npm@latest`），approve 必须人工 OTP，token 再强也过不去。

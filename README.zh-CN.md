@@ -1,6 +1,6 @@
 # scene-studio
 
-可嵌入网页的 3D 场景编辑器与模型查看器。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布。仓库当前版本为 `0.7.0`，即 npm 上最新发布版本。
+可嵌入网页的 3D 场景编辑器与模型查看器。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布。仓库当前版本为 `0.7.1`（线上版本以 `npm view @scenio/scene-editor dist-tags` 为准）。
 
 **文档：** 简体中文（本页） · [English](README.md) · [技术架构与基准](docs/ARCHITECTURE.md) · [包快速上手](packages/scene-editor/README.zh-CN.md) · [API 参考](packages/scene-editor/API.md)
 

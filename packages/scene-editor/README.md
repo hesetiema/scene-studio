@@ -6,9 +6,9 @@ JavaScript; give it a document with `loadDocument()` and it is an **editor** wit
 transform gizmos, undo/redo and a host-owned save flow. Both share one document model and one
 runtime contract, so a viewer can grow into an editor without a rewrite.
 
-**Status:** `0.7.0` alpha, the current npm `latest` (`npm install @scenio/scene-editor@0.7.0`). The API
-may still adjust before `1.0.0`; after that, semver applies. `three` is a peer dependency you install
-yourself.
+**Status:** `0.7.1` alpha (`npm install @scenio/scene-editor@0.7.1`); run `npm view @scenio/scene-editor
+dist-tags` for what is live. The API may still adjust before `1.0.0`; after that, semver applies.
+`three` is a peer dependency you install yourself.
 
 **Upgrading from 0.6.0.** Every exported name survives (compare `index`, `./element`, `./three`: 58/8/40
 → 87/14/76, all additive). One entry does not: `@scenio/scene-editor/style.css` is gone, because the

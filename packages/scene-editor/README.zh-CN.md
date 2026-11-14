@@ -4,7 +4,8 @@
 全部靠属性配置、页面不用写 JavaScript；用 `loadDocument()` 给它一份文档就是**编辑器**，带选择、gizmo 变换、
 撤销/重做和宿主驱动的保存流程。两种形态共用同一套文档模型与 runtime 契约，查看器要升级成编辑器不必重写。
 
-**状态：** 仓库内为 `0.7.0` alpha，已发布为 npm 当前的 `latest`（`npm install @scenio/scene-editor@0.7.0`）。
+**状态：** 仓库内为 `0.7.1` alpha（`npm install @scenio/scene-editor@0.7.1`；线上版本以
+`npm view @scenio/scene-editor dist-tags` 为准）。
 `1.0.0` 之前 API 仍可能调整，之后遵循 semver。`three` 是需要你自己安装的 peer dependency。
 
 **从 0.6.0 升级。** 导出的名字一个都没少（对照 `index`、`./element`、`./three`：58/8/40 →
