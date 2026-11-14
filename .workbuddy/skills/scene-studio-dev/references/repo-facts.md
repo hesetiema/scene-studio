@@ -92,8 +92,11 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 - `three/viewer/instancing-rig.ts` 717 → **422 行**，三个部件外置到 `three/viewer/instancing/`：
   `fingerprint.ts`（内容指纹 + 合批资格）、`chunks.ts`（`InstancedMesh` 槽位/扩容/销毁）、
   `layout.ts`（纯函数空间排序）。有 28 条特征测试兜底（`test/three/instancing-rig.test.ts`）。
-- `three/viewer/object-store.ts` **607 行**（文档树索引 + 代理生命周期 + 变体/覆盖）是下一个
-  候选，但**零单测**：拆之前先照 instancing 的做法补特征测试，否则等于盲拆。
+- `three/viewer/object-store.ts` **607 行**（文档树索引 + 代理生命周期 + 变体/覆盖），
+  2026-11-14 已补 **40 条特征测试**（`test/three/object-store.test.ts`，含变异验证能红）。
+  **结论：不拆。** 它不在每帧路径上（`sync` 在 instancing 里，store 只在装载/命令时被调用），
+  而每个可外置的簇只有 12–100 行（最大是 mounting ≈100 行），外置却要 3–5 个成员的 host
+  接口（变体簇就要 `objects`/`assets`/`overrides`/`variantName` 四个共享状态），收益为负。
 - `src/bim/` 是单产品领域代码占公开子路径，消费者只有 `apps/playground/src/vent-demo.ts`。
   最该外迁的一块，但在「不拆包」前提下可接受。
 - **没有任何 import 边界门禁**（这正是 `scripts/check-boundaries.mjs` 存在的原因）。
