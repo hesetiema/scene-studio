@@ -59,6 +59,22 @@ jobs:
           # read from outside the org, the annotation does not.
           echo "node $(node --version), npm $(npm --version)"
 
+          # A token pasted with a trailing newline reaches npm as an illegal HTTP
+          # header value -- "*** is not a legal HTTP header value" -- which names
+          # neither the secret nor the character. Normalise first, then say what is
+          # wrong if it still does not look like a token.
+          TOKEN=$(printf '%s' "${NODE_AUTH_TOKEN:-}" | tr -d '[:space:]')
+          if [ -z "$TOKEN" ]; then
+            echo "::error::secret NPM_TOKEN is empty"
+            exit 1
+          fi
+          if ! printf '%s' "$TOKEN" | grep -qE '^[A-Za-z0-9_.-]+$'; then
+            echo "::error::secret NPM_TOKEN cannot be an HTTP header value (length ${#TOKEN}); re-paste it verbatim, no quotes and no line breaks"
+            exit 1
+          fi
+          echo "token accepted: ${#TOKEN} chars"
+          npm config set //registry.npmjs.org/:_authToken "$TOKEN" --location=user
+
           # `npm stage` shipped in npm 11 and node 24 bundles it. Fail loudly here
           # rather than with "Unknown command" halfway through a release.
           if ! npm stage --help >/dev/null 2>&1; then
