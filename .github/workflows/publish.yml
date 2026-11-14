@@ -96,7 +96,12 @@ jobs:
           if [ "$STATUS" -ne 0 ]; then
             # The annotation is the only channel readable without admin rights on
             # the job log, so the cause goes there; the tail goes to the summary.
-            echo "::error::npm publish failed (exit $STATUS): $(grep -m8 -E 'npm (error|ERR|notice)' "$LOG" | tr '\n' ' ' | cut -c1-900)"
+            # `npm notice` prints the whole tarball manifest first; including it
+            # in the pattern buries the one line that actually says what failed.
+            ERRS=$(grep -E '^npm (error|ERR)' "$LOG" | head -8 | tr '\n' ' ' | cut -c1-900)
+            echo "::error::npm publish failed (exit $STATUS): ${ERRS:-no npm error lines, see the job summary}"
+            OTHER=$(grep -viE '^npm (notice|error|ERR)' "$LOG" | tail -6 | tr '\n' ' ' | cut -c1-500)
+            if [ -n "$OTHER" ]; then echo "::error::other output: $OTHER"; fi
             if grep -q "Signed provenance statement" "$LOG"; then
               echo "::warning::OIDC worked (provenance was signed). npm deliberately answers 404 for an unauthorised write: the trusted publisher likely has only \"npm stage publish\" allowed, or its repo/workflow/environment fields do not match the claims in the Release identity step."
             else
