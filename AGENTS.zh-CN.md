@@ -69,8 +69,8 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 
 破坏其中任何一条都是回归，不是重构。有对应检查的地方已标明。
 
-1. **依赖方向单向。** `core` ← `runtime` ← {`element`, `three`}。当前实测：**78 个文件、
-   238 条静态内部边、0 个循环** —— 循环数必须保持 0。唯一残留的反向边是
+1. **依赖方向单向。** `core` ← `runtime` ← {`element`, `three`}。当前实测：**83 个文件、
+   263 条静态内部边、0 个循环** —— 循环数必须保持 0。唯一残留的反向边是
    `core/commands/transform-command.ts` → `runtime/runtime-contract.ts` 的
    `import type { Transform }`（纯类型）；`Transform` 本质是文档概念，理应归 `core`。
 
@@ -164,7 +164,7 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 - **不要为查看器特性新增第二条渲染路径。** 若某特性在查看器里要有不同表现，它属于
   `mode` / `interactive: false` 之后，不属于一个新的 `if (isViewer)`。
 - **`instancing` 与拾取相互影响。** 合批代理被移到 layer 1（`BATCH_PROXY_LAYER`，由
-  `three/viewer/instancing-rig.ts` 导出），主相机不渲染它 —— 所以任何全场景 raycast 都必须
+  `three/viewer/instancing/fingerprint.ts` 导出），主相机不渲染它 —— 所以任何全场景 raycast 都必须
   `layers.enableAll()`。`picker.ts` 就是这么干的；照抄它，不要自己手搓 `Raycaster`。
 - **`markDirty` 必须遍历子树。** 拖动一个 group 要让刷新到达合批子对象，否则批次会落后于父节点。
 - **`setExplode(0)` 必须短路。** 装载时重新断言该属性曾触发基线全量重建，把首帧时间翻倍。
@@ -204,7 +204,9 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 - `three/viewer/` 20 个单职责模块，其中 **10 个 `create*Rig` 工厂**（animation、camera、
   contact shadow、display、environment、explode、gizmo、instancing、lighting、morph；
   `contact-shadow.ts` 是第 10 个实现，只是文件名没带 `-rig`），外加 `object-store`、
-  `render-loop`、`framing`、`shared-resources`。
+  `render-loop`、`framing`、`shared-resources`。合批器的三个部件在旁边的 `three/viewer/instancing/`：
+  `fingerprint.ts`（什么算同内容、什么允许合批）、`chunks.ts`（单个 `InstancedMesh` 的槽位/扩容/销毁）、
+  `layout.ts`（纯函数空间排序）。
 - `src/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一产品**的领域加载代码，
   却住在通用 SDK 里，还占了一个公开的 `./bim` 子路径，而它的消费者只有一个
   （`apps/playground/src/vent-demo.ts`）。在「不拆包」前提下可接受，但它是最该搬出去的一块。

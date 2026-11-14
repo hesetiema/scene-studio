@@ -12,12 +12,12 @@
 | core | `src/core/` | 1 146 | 否 | 文档 schema、迁移、校验、层级、命令、历史、事件/错误码 |
 | runtime | `src/runtime/` | 2 133 | 否 | facade、controller、选择、插件宿主、事件总线、`FakeRuntime` |
 | element | `src/element/` | 3 465 | 仅懒加载 | 自定义元素：属性、slot、生命周期、模式、错误态、a11y |
-| three | `src/three/` | 7 518 | 是 | `ThreeRuntime`（1 361）+ `assembly.ts`（装配/连线）+ `viewer/` 20 个单职责模块（10 个 `create*Rig`） |
+| three | `src/three/` | 7 611 | 是 | `ThreeRuntime`（1 361）+ `assembly.ts`（装配/连线）+ `viewer/` 20 个单职责模块（10 个 `create*Rig`）+ `viewer/instancing/`（fingerprint / chunks / layout） |
 | assets | `src/assets/` | 1 249 | 是 | 缓存（引用计数）、加载器、变体、解码器懒装配 |
 | bim | `src/bim/` | 770 | 是 | Revit 楼层、FBX、轮廓网格、单位换算 |
 | plugins | `src/plugins/` | 38 | 否 | 插件契约 |
 
-实测（`scripts/check-boundaries.mjs`）：**80 文件 / 260 条静态内部边 / 0 循环 / 0 违规**。
+实测（`scripts/check-boundaries.mjs`）：**83 文件 / 263 条静态内部边 / 0 循环 / 0 违规**。
 另有 18 条**被许可的懒引用**（`import()` 形式的 three addon：DRACO/KTX2/Meshopt/GLTF/OBJ/STL/
 HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态依赖图。
 
@@ -60,7 +60,7 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
   缺文件时 demo 渲染「无本地数据」提示卡，那就是干净 clone 的正确状态。
 - **不给查看器特性开第二条渲染路径**。
 - **合批与拾取相互影响**：合批代理被移到 layer 1（`BATCH_PROXY_LAYER`，由
-  `three/viewer/instancing-rig.ts` 导出），主相机不渲染它 —— 任何全场景 raycast 必须
+  `three/viewer/instancing/fingerprint.ts` 导出），主相机不渲染它 —— 任何全场景 raycast 必须
   `layers.enableAll()`。`picker.ts` 已处理，照抄，不要手搓 `Raycaster`。
 - **`markDirty` 必须遍历子树**，否则拖动 group 时合批子对象不跟手。
 - **`setExplode(0)` 必须短路**：装载时重新断言该属性曾触发基线全量重建，首帧时间翻倍。
@@ -87,8 +87,13 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
   **验收口径**：三次外置后 `element-entry.d.ts` 与重构前**逐字节相同**、`SceneEditorElement`
   类声明块逐字节相同；21 条属性路径全部有单测覆盖。
   不可外置：加载流水线（17 个跨簇字段）、公开转发层 —— 都没有干净接缝。属 L2，需先定验收标准。
-- `three/three-runtime.ts` **1524 行**（装配 + 生命周期 + 转发，无分区注释），压在
-  `three/viewer/` 20 个单职责模块之上。第二可能的拆分目标。
+- `three/three-runtime.ts` **1 361 行**（契约实现 + 3–5 行转发，9 个分节），装配已外置到
+  `three/assembly.ts`（`createRigSet`）。剩下的是扁平转发层，**刻意不拆**。
+- `three/viewer/instancing-rig.ts` 717 → **422 行**，三个部件外置到 `three/viewer/instancing/`：
+  `fingerprint.ts`（内容指纹 + 合批资格）、`chunks.ts`（`InstancedMesh` 槽位/扩容/销毁）、
+  `layout.ts`（纯函数空间排序）。有 28 条特征测试兜底（`test/three/instancing-rig.test.ts`）。
+- `three/viewer/object-store.ts` **607 行**（文档树索引 + 代理生命周期 + 变体/覆盖）是下一个
+  候选，但**零单测**：拆之前先照 instancing 的做法补特征测试，否则等于盲拆。
 - `src/bim/` 是单产品领域代码占公开子路径，消费者只有 `apps/playground/src/vent-demo.ts`。
   最该外迁的一块，但在「不拆包」前提下可接受。
 - **没有任何 import 边界门禁**（这正是 `scripts/check-boundaries.mjs` 存在的原因）。

@@ -1,4 +1,16 @@
 import * as THREE from "three";
+import { BATCH_PROXY_LAYER, affordable, contentKey } from "./instancing/fingerprint";
+import {
+  createChunk,
+  disposeChunk,
+  moveSlot,
+  publish,
+  pushMatrices,
+  reserve,
+  writeSlot,
+  type Chunk,
+} from "./instancing/chunks";
+import { planSpatialOrder, type LayoutItem } from "./instancing/layout";
 
 /**
  * Draw-call batching for repeated primitive meshes.
@@ -22,35 +34,17 @@ import * as THREE from "three";
  * transforms — which is the entire point of the editor. Hiding a mesh keeps all
  * of that and still collapses N draw calls into one.
  *
- * A batch is keyed by *content*, not by instance: two boxes created separately
- * share nothing but their parameters, so the key is derived from
- * `geometry.parameters` + a field-by-field material fingerprint. Anything this
- * module cannot fingerprint exactly (procedural geometry without `parameters`,
- * array- or record-valued material fields, transparency) is simply **not
- * batched** — a missed optimisation, never a wrong pixel.
+ * Three concerns live beside this file, each with its own doc block:
  *
- * ### Chunks
+ * - `instancing/fingerprint` — what counts as "the same content" (`materialKey`,
+ *   `geometryKey`) and what is allowed to batch at all (`affordable`);
+ * - `instancing/chunks` — one `InstancedMesh`, its matrix slots, growth and
+ *   disposal;
+ * - `instancing/layout` — the pure spatial ordering that decides which member
+ *   sits in which chunk.
  *
- * One `InstancedMesh` per content group would be one draw call but *one* cull
- * test: a single bounding sphere around everything, so a 5 000-object scene
- * submits all 5 000 instances no matter where the camera looks. That trades a
- * draw-call problem for a vertex problem.
- *
- * Each group is therefore split into chunks of at most `chunkSize` instances,
- * one `InstancedMesh` each. three's frustum test is per-mesh, so a close-up
- * camera only submits the chunks it can see, while the whole group still costs
- * `ceil(n / chunkSize)` draw calls instead of `n`. The geometry and material
- * are cloned **once per group** and shared by its chunks: chunking costs
- * instance matrices, not another copy of the mesh.
- *
- * Chunk membership is **spatial**, not "the next 256 objects". Cutting the
- * admission order into fixed blocks produces slabs that all span the whole
- * scene — measured: 1 000 boxes, camera in a corner, triangles unchanged at
- * 12 000, i.e. four spheres that all intersect the frustum. So a chunk is a
- * grid cell instead: `layout()` buckets members by world position (grid side
- * chosen so a cell holds about `chunkSize` instances), sorts by cell and fills
- * chunks from that order. Sorting is deferred to the next `sync()` so a 5 000
- * object load pays for one sort, not 5 000.
+ * This file owns membership: `id → batch`, the append/swap-remove bookkeeping,
+ * and the deferred re-layout.
  */
 export interface InstancingStats {
   /** Content groups (one geometry + material fingerprint each). */
@@ -89,16 +83,6 @@ interface Slot {
   index: number;
 }
 
-interface Chunk {
-  mesh: THREE.InstancedMesh;
-  /** Member ids in slot order — the matrix slot of each member. */
-  ids: string[];
-  /** Member objects, parallel to `ids`. */
-  proxies: THREE.Object3D[];
-  /** `instanceMatrix` length in instances; grows by doubling. */
-  capacity: number;
-}
-
 interface Batch {
   key: string;
   /** Clone owned by the group and shared by every chunk. */
@@ -117,11 +101,6 @@ interface Batch {
   needsLayout: boolean;
 }
 
-/** First allocation for a chunk; doubling from here keeps growth amortised. */
-const MIN_CAPACITY = 16;
-/** Matrices are 4×4 floats. */
-const STRIDE = 16;
-
 /**
  * Default instances per `InstancedMesh`.
  *
@@ -134,146 +113,6 @@ const STRIDE = 16;
  * calls, i.e. past the knee.
  */
 const DEFAULT_CHUNK_SIZE = 256;
-
-/**
- * Material fields that are identity or bookkeeping, never surface appearance.
- * `version` is excluded on purpose: it bumps on every mutation, so including it
- * would put a just-edited material in a batch of its own forever.
- */
-const IGNORED_MATERIAL_KEYS: ReadonlySet<string> = new Set([
-  "uuid",
-  "id",
-  "name",
-  "type",
-  "version",
-  "userData",
-  "onBeforeCompile",
-  "customProgramCacheKey",
-  "onBeforeRender",
-  "onAfterRender",
-]);
-
-/**
- * Content key for a material, or `null` when it cannot be fingerprinted with
- * certainty.
- *
- * Conservative by design: only primitives, `Color`s, textures and vectors are
- * understood. An array or a record (clipping planes, `defines`, a custom
- * uniform bag) can change the program in ways this key cannot see, so the
- * material is refused instead of risked.
- */
-export function materialKey(material: THREE.Material): string | null {
-  const parts: string[] = [material.type];
-  const record = material as unknown as Record<string, unknown>;
-
-  for (const key of Object.keys(record)) {
-    if (IGNORED_MATERIAL_KEYS.has(key)) continue;
-    const value = record[key];
-
-    if (value === null || value === undefined) {
-      parts.push(`${key}=`);
-      continue;
-    }
-    if (typeof value === "number" || typeof value === "boolean" || typeof value === "string") {
-      parts.push(`${key}=${String(value)}`);
-      continue;
-    }
-    if (typeof value === "object") {
-      const candidate = value as {
-        isColor?: boolean;
-        isTexture?: boolean;
-        isVector2?: boolean;
-        isVector3?: boolean;
-        isVector4?: boolean;
-        isEuler?: boolean;
-        getHexString?: () => string;
-        toArray?: () => number[];
-        uuid?: string;
-      };
-      if (candidate.isColor === true && candidate.getHexString) {
-        parts.push(`${key}=#${candidate.getHexString()}`);
-        continue;
-      }
-      if (candidate.isTexture === true) {
-        parts.push(`${key}=tex:${candidate.uuid ?? ""}`);
-        continue;
-      }
-      if (
-        (candidate.isVector2 === true ||
-          candidate.isVector3 === true ||
-          candidate.isVector4 === true ||
-          candidate.isEuler === true) &&
-        candidate.toArray
-      ) {
-        parts.push(`${key}=${candidate.toArray().join(",")}`);
-        continue;
-      }
-      // `defines` is a plain record of shader constants (`{ STANDARD: "" }` on
-      // every stock material). Sorted so key order cannot fake a difference.
-      if (key === "defines") {
-        const entries = Object.entries(value as Record<string, unknown>);
-        entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-        const rendered = entries.map(([name, entry]) => `${name}:${String(entry)}`).join(",");
-        parts.push(`${key}={${rendered}}`);
-        continue;
-      }
-      return null;
-    }
-    // Functions: `Material` keeps a couple of callbacks we did not list.
-    if (key === "onShaderError") continue;
-    return null;
-  }
-
-  return parts.join("|");
-}
-
-/**
- * Content key for a geometry, or `null` when it has no declarative parameters.
- *
- * Every stock three primitive (`BoxGeometry`, `SphereGeometry`, …) records what
- * it was built from, so two objects built from the same document geometry get
- * the same key. A `BufferGeometry` that came out of a glTF has no parameters
- * and therefore is never merged with anything.
- */
-export function geometryKey(geometry: THREE.BufferGeometry): string | null {
-  const parameters = (geometry as unknown as { parameters?: unknown }).parameters;
-  if (!parameters || typeof parameters !== "object") return null;
-  try {
-    return `${geometry.type}|${JSON.stringify(parameters)}`;
-  } catch {
-    // Cyclic parameters: give up rather than throw during a load.
-    return null;
-  }
-}
-
-/**
- * Layer the batched proxies are moved to. The main camera renders layer 0 only,
- * so a proxy stops drawing — while staying `visible`, which is what keeps
- * vertex framing (`traverseVisible`), GLB export and host traversal working
- * unchanged. Anything that raycasts has to opt into this layer
- * (`raycaster.layers.enableAll()`, which is what `picker.ts` does).
- */
-export const BATCH_PROXY_LAYER = 1;
-
-/** Structural gate: a mesh that draws exactly one thing with one material. */
-function affordable(object: THREE.Object3D): object is THREE.Mesh {
-  const mesh = object as THREE.Mesh;
-  if (mesh.isMesh !== true) return false;
-  if ((mesh as THREE.SkinnedMesh).isSkinnedMesh === true) return false;
-  // A subtree (glTF scene root, articulated model) cannot be one instance.
-  if (mesh.children.length > 0) return false;
-  if (!mesh.geometry) return false;
-  if (Array.isArray(mesh.material)) return false;
-  const material = mesh.material as THREE.Material | undefined;
-  if (!material) return false;
-  // One instanced call has one draw order: per-instance alpha sorting is gone.
-  if (material.transparent === true) return false;
-  if (material.opacity !== undefined && material.opacity < 1) return false;
-  // Only default-layer objects are eligible, so releasing one can restore the
-  // default mask instead of guessing what the host had.
-  if (mesh.layers.mask !== 1) return false;
-  return true;
-}
 
 export interface InstancingRigOptions {
   /** Scene the batch root is attached to. */
@@ -311,69 +150,12 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
     root = null;
   }
 
-  function createChunk(batch: Batch): Chunk {
-    const mesh = new THREE.InstancedMesh(
-      // Shared with the group's other chunks: one geometry, one material, N
-      // draw calls — chunking must not multiply GPU memory.
-      batch.geometry,
-      batch.material,
-      MIN_CAPACITY,
-    );
-    mesh.name = `batch:${batch.geometry.type}`;
-    mesh.count = 0;
-    mesh.castShadow = true;
-    // Per-mesh cull test: this is what makes chunking worth its draw calls.
-    mesh.frustumCulled = true;
-    mesh.userData.sceneBatch = true;
-    // Drawing only. Picking stays on the proxies (they sit at the same world
-    // matrices), so a host raycasting the whole scene finds the document object
-    // instead of an anonymous instance.
-    mesh.raycast = () => {};
-    // Instance matrices are world-space, so the root must never move.
-    ensureRoot().add(mesh);
-    return { mesh, ids: [], proxies: [], capacity: MIN_CAPACITY };
-  }
-
-  /**
-   * Grow one chunk's `instanceMatrix` by doubling, preserving written slots.
-   *
-   * The old attribute's GPU buffer is not explicitly released (three drops it
-   * with the attribute's last reference only on context loss), so a load leaves
-   * at most twice the live matrix data behind per chunk — 1-2 MB for 5 000
-   * instances, and only while doubling. Disposing mid-flight would invalidate
-   * the renderer's VAO for a buffer it may still be bound to, which is the worse
-   * trade for a bounded, one-off cost.
-   */
-  function reserve(chunk: Chunk, needed: number): void {
-    if (needed <= chunk.capacity) return;
-    let capacity = Math.max(chunk.capacity, MIN_CAPACITY);
-    while (capacity < needed) capacity = Math.min(capacity * 2, chunkSize);
-    const previous = chunk.mesh.instanceMatrix.array as Float32Array;
-    const next = new THREE.InstancedBufferAttribute(new Float32Array(capacity * STRIDE), STRIDE);
-    next.array.set(previous);
-    chunk.mesh.instanceMatrix = next;
-    chunk.capacity = capacity;
-  }
-
-  /**
-   * Membership changed: publish the count and invalidate the cull volume.
-   *
-   * The sphere is *dropped*, not recomputed: `computeBoundingSphere()` walks
-   * every instance, and calling it per admit turns a 5 000-object load into
-   * 12.5M sphere unions (measured: +900 ms). three recomputes a null sphere on
-   * the next frustum test, i.e. once per frame instead of once per object.
-   */
-  function publish(chunk: Chunk): void {
-    chunk.mesh.count = chunk.ids.length;
-    chunk.mesh.instanceMatrix.needsUpdate = true;
-    chunk.mesh.boundingSphere = null;
-  }
-
-  function disposeChunk(chunk: Chunk): void {
-    chunk.mesh.removeFromParent();
-    // The mesh owns only its instance-matrix attribute; geometry and material
-    // belong to the group.
-    chunk.mesh.dispose();
+  function makeChunk(batch: Batch): Chunk {
+    return createChunk(ensureRoot(), {
+      geometry: batch.geometry,
+      material: batch.material,
+      label: batch.geometry.type,
+    });
   }
 
   function disposeBatch(batch: Batch): void {
@@ -398,99 +180,43 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
    * sorting inside `admit` would be O(n²·log n). Until the first layout the
    * append order is used, which is already *correct* — just not cull-friendly.
    *
-   * Two passes: world position + bounds, then a grid bucket sized so a cell
-   * holds about `chunkSize` instances. Members sort by grid index, so a chunk is
-   * one cell (or the tail of one), and a cell that is too dense spills into the
-   * next chunk in the same cell.
-   *
    * Returns whether matrices were rewritten; `false` means the caller still has
    * to push them itself.
    */
   function layout(batch: Batch): boolean {
-    const count = batch.entries.size;
-    // One chunk: there is nothing to split, and the append order already fills it.
-    if (count <= chunkSize) return false;
-
-    const items: Array<{ id: string; x: number; y: number; z: number }> = [];
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
+    const items: LayoutItem[] = [];
     const position = new THREE.Vector3();
     for (const [id, proxy] of batch.entries) {
+      // Admitting and re-laying out both happen outside the render loop, so the
+      // world matrix has to be brought current here.
       proxy.updateWorldMatrix(true, false);
       position.setFromMatrixPosition(proxy.matrixWorld);
       items.push({ id, x: position.x, y: position.y, z: position.z });
-      if (position.x < minX) minX = position.x;
-      if (position.y < minY) minY = position.y;
-      if (position.z < minZ) minZ = position.z;
-      if (position.x > maxX) maxX = position.x;
-      if (position.y > maxY) maxY = position.y;
-      if (position.z > maxZ) maxZ = position.z;
     }
 
-    // Aim for one cell per chunk. Cell counts are spread per axis in proportion
-    // to each axis' extent (grow the axis with the largest current cell until
-    // there are enough cells), so a flat scene culls in 2D instead of spending
-    // cells on an empty Y — a cube grid put 500 instances in one cell and culled
-    // nothing. Near-cubic cells also keep each chunk's bounding sphere small.
-    const targetCells = Math.max(1, Math.ceil(count / chunkSize));
-    const extentX = maxX - minX;
-    const extentY = maxY - minY;
-    const extentZ = maxZ - minZ;
-    let nx = 1;
-    let ny = 1;
-    let nz = 1;
-    while (nx * ny * nz < targetCells) {
-      const cellX = extentX / nx;
-      const cellY = extentY / ny;
-      const cellZ = extentZ / nz;
-      if (cellX >= cellY && cellX >= cellZ) nx += 1;
-      else if (cellZ >= cellY) nz += 1;
-      else ny += 1;
-    }
-    const cellOf = (value: number, min: number, cells: number, extent: number): number =>
-      extent > 0
-        ? Math.min(cells - 1, Math.max(0, Math.floor(((value - min) / extent) * cells)))
-        : 0;
-
-    // Grid index, not a hash: same cell sorts together *and* neighbouring cells
-    // sort adjacent, so a chunk boundary rarely straddles two distant cells.
-    // `Array.prototype.sort` is stable, so insertion order breaks ties.
-    const keyed = items.map((item) => ({
-      id: item.id,
-      key:
-        cellOf(item.z, minZ, nz, extentZ) * nx * ny +
-        cellOf(item.y, minY, ny, extentY) * nx +
-        cellOf(item.x, minX, nx, extentX),
-    }));
-    keyed.sort((a, b) => a.key - b.key);
+    const order = planSpatialOrder(items, chunkSize);
+    if (order === null) return false;
 
     let cursor = 0;
-    for (const item of keyed) {
+    for (const id of order) {
       const chunkIndex = Math.floor(cursor / chunkSize);
       const index = cursor % chunkSize;
       let chunk = batch.chunks[chunkIndex];
       if (!chunk) {
-        chunk = createChunk(batch);
+        chunk = makeChunk(batch);
         batch.chunks.push(chunk);
       }
-      const proxy = batch.entries.get(item.id)!;
-      reserve(chunk, index + 1);
+      const proxy = batch.entries.get(id)!;
+      reserve(chunk, index + 1, chunkSize);
       if (index === chunk.ids.length) {
-        chunk.ids.push(item.id);
+        chunk.ids.push(id);
         chunk.proxies.push(proxy);
       } else {
-        chunk.ids[index] = item.id;
+        chunk.ids[index] = id;
         chunk.proxies[index] = proxy;
       }
-      (chunk.mesh.instanceMatrix.array as Float32Array).set(
-        proxy.matrixWorld.elements,
-        index * STRIDE,
-      );
-      batch.slot.set(item.id, { chunk: chunkIndex, index });
+      writeSlot(chunk, index, proxy.matrixWorld);
+      batch.slot.set(id, { chunk: chunkIndex, index });
       cursor += 1;
     }
 
@@ -543,14 +269,12 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
     // Capture before the swap: the released proxy is the one being popped, not
     // the one that moves into its slot.
     const proxy = chunk.proxies[index];
-    const matrix = chunk.mesh.instanceMatrix.array as Float32Array;
     if (index !== lastIndex) {
       const movedId = chunk.ids[lastIndex]!;
       chunk.ids[index] = movedId;
       chunk.proxies[index] = chunk.proxies[lastIndex]!;
       batch.slot.set(movedId, { chunk: slot.chunk, index });
-      // `set` on a subarray of the same buffer behaves like `memmove`.
-      matrix.set(matrix.subarray(lastIndex * STRIDE, lastIndex * STRIDE + STRIDE), index * STRIDE);
+      moveSlot(chunk, lastIndex, index);
     }
     chunk.ids.pop();
     chunk.proxies.pop();
@@ -582,14 +306,8 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
       if (membership.has(id)) return true;
       if (!affordable(object)) return false;
 
-      const geometryKeyValue = geometryKey(object.geometry);
-      if (geometryKeyValue === null) return false;
-      // Re-checked for the type system; `affordable` already ruled it out.
-      const material = object.material;
-      if (Array.isArray(material) || !material) return false;
-      const materialKeyValue = materialKey(material);
-      if (materialKeyValue === null) return false;
-      const key = `${geometryKeyValue}||${materialKeyValue}`;
+      const key = contentKey(object);
+      if (key === null) return false;
 
       let batch = batches.get(key);
       if (!batch) {
@@ -598,7 +316,7 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
           // Clones, not the member's resources: the group must outlive whichever
           // member happened to create it.
           geometry: object.geometry.clone(),
-          material: material.clone(),
+          material: (object.material as THREE.Material).clone(),
           entries: new Map(),
           chunks: [],
           slot: new Map(),
@@ -616,16 +334,16 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
       let chunk = batch.chunks.at(-1);
       let chunkIndex = batch.chunks.length - 1;
       if (!chunk || chunk.ids.length >= chunkSize) {
-        chunk = createChunk(batch);
+        chunk = makeChunk(batch);
         batch.chunks.push(chunk);
         chunkIndex = batch.chunks.length - 1;
       }
 
-      reserve(chunk, chunk.ids.length + 1);
+      reserve(chunk, chunk.ids.length + 1, chunkSize);
       const index = chunk.ids.length;
       chunk.ids.push(id);
       chunk.proxies.push(object);
-      chunk.mesh.instanceMatrix.array.set(object.matrixWorld.elements, index * STRIDE);
+      writeSlot(chunk, index, object.matrixWorld);
       batch.slot.set(id, { chunk: chunkIndex, index });
       batch.entries.set(id, object);
       // Only worth a spatial pass once the group needs more than one chunk.
@@ -670,21 +388,8 @@ export function createInstancingRig(options: InstancingRigOptions): InstancingRi
           if (layout(batch)) continue;
         }
         for (const chunk of batch.chunks) {
-          const target = chunk.mesh.instanceMatrix.array as Float32Array;
-          let moved = false;
-          for (let i = 0; i < chunk.proxies.length; i += 1) {
-            const world = chunk.proxies[i]!.matrixWorld.elements;
-            const offset = i * STRIDE;
-            for (let e = 0; e < STRIDE; e += 1) {
-              const value = world[e]!;
-              if (target[offset + e] !== value) {
-                target[offset + e] = value;
-                moved = true;
-              }
-            }
-          }
-          // Static scenes upload nothing: the compare above is the whole cost.
-          if (!moved) continue;
+          // Static scenes upload nothing: the compare is the whole cost.
+          if (!pushMatrices(chunk)) continue;
           chunk.mesh.instanceMatrix.needsUpdate = true;
           // Same lazy trade as `publish`: one recompute per frame, only on motion.
           chunk.mesh.boundingSphere = null;

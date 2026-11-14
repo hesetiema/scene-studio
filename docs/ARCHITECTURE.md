@@ -53,7 +53,7 @@
 | core | `src/core/`（schema、迁移、层级、命令、历史） | 1 146 行 |
 | runtime 契约 | `src/runtime/`（facade、controller、selection、plugin、FakeRuntime） | 2 133 行 |
 | element | `src/element/`（element 2 042 行 + slot-chrome 629 + viewer-attributes 573 + attribute-math 108） | 3 465 行 |
-| three | `src/three/`（`three-runtime.ts` 1 361 行 + `assembly.ts` 装配 + `viewer/` 20 个单职责模块） | 7 518 行 |
+| three | `src/three/`（`three-runtime.ts` 1 361 行 + `assembly.ts` 装配 + `viewer/` 20 个单职责模块 + `viewer/instancing/` 三个合批部件） | 7 611 行 |
 | assets | `src/assets/`（cache、loader、variants、解码器懒装配） | 1 249 行 |
 
 ---

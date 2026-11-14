@@ -69,7 +69,7 @@ don't hand-delete `node_modules` to get past it.
 Breaking one of these is a regression, not a refactor. Where a check exists, it's named.
 
 1. **Layer direction is one-way.** `core` ← `runtime` ← {`element`, `three`}. Measured today:
-   **78 files, 238 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
+   **83 files, 263 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
    backwards edge is a *type-only* `import type { Transform }` from
    `core/commands/transform-command.ts` → `runtime/runtime-contract.ts`; `Transform` is a
    document-level concept and ideally belongs in `core`.
@@ -152,8 +152,8 @@ stale `dist`.
 - **Don't add a second render path for viewer features.** If a feature needs to look different in
   viewer mode, it belongs behind `mode` / `interactive: false`, not behind a new `if (isViewer)`.
 - **`instancing` and picking interact.** Batched proxies are moved to layer 1 (`BATCH_PROXY_LAYER`,
-  exported from `three/viewer/instancing-rig.ts`), which the main camera does not render — so any
-  full-scene raycast must `layers.enableAll()`. `picker.ts` does exactly this; copy it, don't
+  exported from `three/viewer/instancing/fingerprint.ts`), which the main camera does not render —
+  so any full-scene raycast must `layers.enableAll()`. `picker.ts` does exactly this; copy it, don't
   hand-roll a `Raycaster`.
 - **`markDirty` must walk the subtree.** Dragging a group has to reach batched children, or the
   batch lags behind its parents.
@@ -198,7 +198,9 @@ stale `dist`.
 - `three/viewer/` holds 20 single-concern modules, **10** of them `create*Rig` factories (animation,
   camera, contact shadow, display, environment, explode, gizmo, instancing, lighting, morph — the
   tenth, `contact-shadow.ts`, just does not carry `-rig` in its filename), plus `object-store`,
-  `render-loop`, `framing`, `shared-resources`.
+  `render-loop`, `framing`, `shared-resources`. The batcher's three moving parts sit beside it in
+  `three/viewer/instancing/`: `fingerprint.ts` (what counts as the same content, what may batch),
+  `chunks.ts` (one `InstancedMesh`: slots, growth, disposal), `layout.ts` (pure spatial ordering).
 - `src/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion) is
   domain-specific loading code for one product living inside a general-purpose SDK, exposed as a
   public `./bim` entry with exactly one consumer (`apps/playground/src/vent-demo.ts`). Acceptable
