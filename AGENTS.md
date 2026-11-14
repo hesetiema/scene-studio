@@ -123,7 +123,7 @@ stale `dist`.
 | State machine, selection, plugin host | `runtime/` | Zero DOM, zero three; must work against `FakeRuntime` |
 | A new runtime capability | `runtime/runtime-contract.ts` **+** `runtime/fake-runtime.ts` **+** `three/three-runtime.ts` | Both implementations or neither |
 | Asset loading, decoder assembly | `assets/` | |
-| Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/` |
+| Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/`; creation order and cross-rig wiring in `three/assembly.ts` |
 | DOM attributes, slots, lifecycle, a11y | `element/` | Element + `slot-chrome` + `viewer-attributes` + `attribute-math` + three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
 | Host UI, panels, URL params | `apps/playground/src/` | Never a reason to touch the SDK |
 
@@ -185,11 +185,20 @@ stale `dist`.
     Both `slot-chrome` and `viewer-attributes` import it; it imports nothing from `element/`.
   Do **not** extract the load pipeline (139 lines but 17 cross-cluster fields) or the façade
   forwards — no clean seam exists for either.
-- `three/three-runtime.ts` is **1 524 lines** of wiring + lifecycle + forwarding, with no section
-  markers, sitting on top of `three/viewer/`'s 20 single-concern modules (9 `*-rig.ts`: animation,
-  camera, display, environment, explode, gizmo, instancing, lighting, morph; plus picking-adjacent
-  pieces like `object-store`, `render-loop`, `framing`, `shared-resources`). Second-most-likely
-  split target.
+- `three/three-runtime.ts` is **1 361 lines**: the `RuntimeContract` implementation plus a flat
+  forwarding surface, in nine marked sections (Engine seams, RuntimeContract, Viewer-side extras,
+  Selection, Variants, Embedded cameras, Morph, Animation, Internals). The forwards are deliberately
+  flat — don't split them for a line count.
+- **Construction lives in `three/assembly.ts`** (`createRigSet`). The creation order is load-bearing
+  and reviewable in exactly one place: lighting → renderer → environment → camera rig → render loop →
+  picker → animation → morph → batcher + resources → object store → display / explode / contact
+  shadow → gizmo. A new rig is one block there, one field on `RigSet`, and one assignment in the
+  constructor. The assembly takes its options as a structural subset (`AssemblyOptions`) so it never
+  imports the runtime back — that would close an import cycle (B3).
+- `three/viewer/` holds 20 single-concern modules, **10** of them `create*Rig` factories (animation,
+  camera, contact shadow, display, environment, explode, gizmo, instancing, lighting, morph — the
+  tenth, `contact-shadow.ts`, just does not carry `-rig` in its filename), plus `object-store`,
+  `render-loop`, `framing`, `shared-resources`.
 - `src/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion) is
   domain-specific loading code for one product living inside a general-purpose SDK, exposed as a
   public `./bim` entry with exactly one consumer (`apps/playground/src/vent-demo.ts`). Acceptable

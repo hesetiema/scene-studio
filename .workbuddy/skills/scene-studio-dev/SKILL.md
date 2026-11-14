@@ -80,7 +80,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 | 状态机、选择、插件宿主 | `runtime/` | 必须能在 `FakeRuntime` 上跑 |
 | 新运行时能力 | `runtime-contract.ts` + `fake-runtime.ts` + `three-runtime.ts` | 三处都写或都不写，且为新**可选**成员 |
 | 资产加载、解码器 | `assets/` | |
-| three.js：rig / 拾取 / 导出 | `three/` | 一个关注点一个 `*-rig.ts` |
+| three.js：rig / 拾取 / 导出 | `three/` | 一个关注点一个 `*-rig.ts`；创建顺序与跨 rig 连线在 `three/assembly.ts` |
 | DOM 属性、slot、生命周期 | `element/` | 分三层：`attribute-math` → `slot-chrome`/`viewer-attributes` → element；改前先读 §已知弱点 |
 | 宿主 UI、面板、URL 参数 | `apps/playground/src/` | 永远不是改 SDK 的理由 |
 

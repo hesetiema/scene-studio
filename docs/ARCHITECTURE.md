@@ -45,15 +45,16 @@
 ```
 
 三入口：`.`（core）、`./element`、`./three`（SDK 不附带样式，元素布局由宿主负责）。约束是硬的：
-**`three` 的 import 只出现在 `src/three/` 下**，core 与 element 不感知渲染器。
+**`three` 的静态 import 只出现在 `src/three/`、`src/assets/`、`src/bim/` 下**；`element/` 只经
+动态 import 触碰 addon；core 与 runtime 不感知渲染器（`scripts/check-boundaries.mjs` 的 B1/B2）。
 
 | 层 | 目录 | 规模 |
 |---|---|---|
-| core | `src/core/`（schema、迁移、层级、命令、历史） | ~920 行 |
-| runtime 契约 | `src/runtime/`（facade、controller、selection、plugin、FakeRuntime） | ~2.0k 行 |
-| element | `src/element/`（2773 行单文件：属性、slot、生命周期、模式、错误态） | ~2.8k 行 |
-| three | `src/three/`（`three-runtime.ts` 1330 行 + 13 个 rig） | ~5.5k 行 |
-| assets | `src/assets/`（cache、loader、variants、解码器懒装配） | ~1.0k 行 |
+| core | `src/core/`（schema、迁移、层级、命令、历史） | 1 146 行 |
+| runtime 契约 | `src/runtime/`（facade、controller、selection、plugin、FakeRuntime） | 2 133 行 |
+| element | `src/element/`（element 2 042 行 + slot-chrome 629 + viewer-attributes 573 + attribute-math 108） | 3 465 行 |
+| three | `src/three/`（`three-runtime.ts` 1 361 行 + `assembly.ts` 装配 + `viewer/` 20 个单职责模块） | 7 518 行 |
+| assets | `src/assets/`（cache、loader、variants、解码器懒装配） | 1 249 行 |
 
 ---
 
@@ -90,7 +91,7 @@
 
 1. **双形态单内核**：`<scene-editor src>` 与完整编辑器共用同一文档/历史/选择链路，没有 fork；**形态差异落到 `mode`**——同一份文档加 `mode="viewer"` 就丢掉 gizmo、点选和编辑快捷键，`ThreeRuntime` 连 TransformControls 都不加载（`interactive: false`），因此查看器页面不存在"被误选中的坐标轴"。
 2. **model-viewer 语义级对标**：`camera-orbit`/`field-of-view`/`auto-rotate`/`reveal`/`poster`/hotspot/`variant-name`/`camera-name`/`shadow-*` 等同名同义；取景复刻 `updateFraming()`，接触阴影复刻 `Shadow` 算法（地面正交相机朝上 + 高度写 alpha）。并排对照结论见 [TODOS.md](../TODOS.md) 第三节（对照页已移除）。
-3. **可测性作为一等功能**：379 个单测（37 个文件）覆盖用户可见契约——元素属性与事件、文档模型与迁移、资产解析、headless facade；内部 rig / controller 的实现细节不再单独建用例。`FakeRuntime` 让编辑器逻辑不需要浏览器。
+3. **可测性作为一等功能**：380 个单测（37 个文件）覆盖用户可见契约——元素属性与事件、文档模型与迁移、资产解析、headless facade；内部 rig / controller 的实现细节不再单独建用例。`FakeRuntime` 让编辑器逻辑不需要浏览器。
 4. **质量门禁分层**：单测（three 版本矩阵）→ critical e2e → 视觉回归（SwiftShader、仅 canvas、1% 容差）→ 性能门禁（含 unload-zero 硬断言）→ `npm pack` 消费者冒烟 → 发布元数据一致性。
 5. **卸载零泄漏是断言，不是愿望**：`perf.spec.ts` 要求 `flushDisposers()` 后对象表清空、几何计数回到基线。
 6. **失败是可见状态**：`error` 事件之外还有 `slot="error"`（无该 slot 时自绘消息），空白画布不再是一种"正常结果"。
@@ -164,7 +165,7 @@
 
 | 层 | 数量 | 耗时 |
 |---|---|---|
-| 单元测试（vitest） | **379 通过 / 37 文件**（用户可见契约；内部 rig / controller 用例已精简） | 22.2 s |
+| 单元测试（vitest） | **380 通过 / 37 文件**（用户可见契约；内部 rig / controller 用例已精简） | 22.2 s |
 | e2e（Playwright：critical / viewer / decoders / visual / perf） | 11 用例 / 5 个 spec（`playwright test --list` 实测；原 25 个 `?demo=` 场景用例与 playground 面板细节用例已移除，visual / perf 为独立项目） | CI 三个 job |
 | 视觉基线 | 4 张 canvas-only 截图 | SwiftShader |
 | 性能门禁 | 本地 p95 ≤ 40 ms、首帧 ≤ 3 s（设计目标 2 s，见 5.2 末段）；CI（SwiftShader）≤ 500 ms / ≤ 15 s，unload-zero 精确断言 | — |
@@ -173,7 +174,7 @@
 
 ```bash
 pnpm install && pnpm build
-pnpm test                 # 379 单测
+pnpm test                 # 380 单测
 pnpm test:perf            # 1k 对象：首帧、p95、draw calls、unload-zero
 pnpm test:e2e:visual      # 视觉回归（需 Playwright 浏览器）
 # 手工：pnpm --filter @scenio/playground dev → http://127.0.0.1:3000/perf.html?objects=5000

@@ -12,12 +12,12 @@
 | core | `src/core/` | 1 146 | 否 | 文档 schema、迁移、校验、层级、命令、历史、事件/错误码 |
 | runtime | `src/runtime/` | 2 133 | 否 | facade、controller、选择、插件宿主、事件总线、`FakeRuntime` |
 | element | `src/element/` | 3 465 | 仅懒加载 | 自定义元素：属性、slot、生命周期、模式、错误态、a11y |
-| three | `src/three/` | 7 320 | 是 | `ThreeRuntime` + `viewer/` 20 个单职责模块（9 个 `*-rig.ts`） |
+| three | `src/three/` | 7 518 | 是 | `ThreeRuntime`（1 361）+ `assembly.ts`（装配/连线）+ `viewer/` 20 个单职责模块（10 个 `create*Rig`） |
 | assets | `src/assets/` | 1 249 | 是 | 缓存（引用计数）、加载器、变体、解码器懒装配 |
 | bim | `src/bim/` | 770 | 是 | Revit 楼层、FBX、轮廓网格、单位换算 |
 | plugins | `src/plugins/` | 38 | 否 | 插件契约 |
 
-实测（`scripts/check-boundaries.mjs`）：**78 文件 / 238 条静态内部边 / 0 循环 / 0 违规**。
+实测（`scripts/check-boundaries.mjs`）：**80 文件 / 260 条静态内部边 / 0 循环 / 0 违规**。
 另有 18 条**被许可的懒引用**（`import()` 形式的 three addon：DRACO/KTX2/Meshopt/GLTF/OBJ/STL/
 HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态依赖图。
 

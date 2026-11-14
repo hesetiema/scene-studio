@@ -6,7 +6,6 @@ import type {
   SceneObjectDTO,
   ViewState,
 } from "../core/document/schema";
-import { createDefaultViewState } from "../core/document/default-view";
 import type {
   AnimationBlendLayer,
   AnimationOptions,
@@ -21,44 +20,26 @@ import type {
   Transform,
 } from "../runtime/runtime-contract";
 import { TypedEventBus } from "../runtime/typed-event-bus";
-import { createRenderer } from "./create-renderer";
 import type { RendererHandle } from "./renderer-handle";
-import { createPicker, type Picker } from "./picker";
+import type { Picker } from "./picker";
 import type { AssetCache } from "../assets/asset-cache";
-import { AssetErrorCode } from "../assets/asset-error";
-import {
-  createCameraRig,
-  type CameraRig,
-  type CameraView,
-  type OrbitControlsLike,
-} from "./viewer/camera-rig";
-import { createLightingRig, type LightingRig } from "./viewer/lighting-rig";
-import { createEnvironmentRig, type EnvironmentRig } from "./viewer/environment-rig";
-import { createObjectStore, type ObjectStore } from "./viewer/object-store";
+import { createRigSet } from "./assembly";
+import { TONE_MAPPINGS } from "./tone-mapping";
+import type { CameraRig, CameraView, OrbitControlsLike } from "./viewer/camera-rig";
+import type { LightingRig } from "./viewer/lighting-rig";
+import type { EnvironmentRig } from "./viewer/environment-rig";
+import type { ObjectStore } from "./viewer/object-store";
 import { createInstancingRig, type InstancingRig } from "./viewer/instancing-rig";
-import {
-  createSharedResourcePool,
-  type SharedResourcePool,
-  type SharedResourceStats,
-} from "./viewer/shared-resources";
+import type { SharedResourcePool, SharedResourceStats } from "./viewer/shared-resources";
 import { measureFraming } from "./viewer/framing";
-import { createContactShadowRig, type ContactShadowRig } from "./viewer/contact-shadow";
-import {
-  createGizmoRig,
-  type GizmoControls,
-  type GizmoRig,
-  type TransformMode,
-} from "./viewer/gizmo-rig";
-import {
-  createAnimationRig,
-  type AnimationClipInfo,
-  type AnimationRig,
-} from "./viewer/animation-rig";
-import { createRenderLoop, type RenderLoop } from "./viewer/render-loop";
+import type { ContactShadowRig } from "./viewer/contact-shadow";
+import type { GizmoControls, GizmoRig, TransformMode } from "./viewer/gizmo-rig";
+import type { AnimationClipInfo, AnimationRig } from "./viewer/animation-rig";
+import type { RenderLoop } from "./viewer/render-loop";
 import { collectEmbeddedCameras, orbitTargetFor } from "./viewer/embedded-cameras";
-import { createMorphRig, type MorphRig } from "./viewer/morph-rig";
-import { createDisplayRig, type DisplayRig } from "./viewer/display-rig";
-import { createExplodeRig, type ExplodeRig } from "./viewer/explode-rig";
+import type { MorphRig } from "./viewer/morph-rig";
+import type { DisplayRig } from "./viewer/display-rig";
+import type { ExplodeRig } from "./viewer/explode-rig";
 import { exportDocumentBlob } from "./document-export";
 
 export type { OrbitControlsLike } from "./viewer/camera-rig";
@@ -67,9 +48,6 @@ export type { AnimationClipInfo, AnimationBlendInfo } from "./viewer/animation-r
 export type { AnimationBlendLayer } from "../runtime/runtime-contract";
 export type { DisplayModeId } from "../runtime/runtime-contract";
 export type { EmbeddedCamera } from "./viewer/embedded-cameras";
-
-/** Asset-layer codes forwarded verbatim on the runtime `error` event (D6). */
-const ASSET_ERROR_CODES: ReadonlySet<string> = new Set(Object.values(AssetErrorCode));
 
 export interface ThreeRuntimeOptions {
   canvas: HTMLCanvasElement;
@@ -145,15 +123,6 @@ export interface ThreeRuntimeOptions {
    */
   environmentPreset?: EnvironmentPreset;
 }
-
-/** Display mode → three constant. Kept here so the core stays three-free. */
-const TONE_MAPPINGS: Record<ToneMappingMode, THREE.ToneMapping> = {
-  none: THREE.NoToneMapping,
-  linear: THREE.LinearToneMapping,
-  aces: THREE.ACESFilmicToneMapping,
-  agx: THREE.AgXToneMapping,
-  neutral: THREE.NeutralToneMapping,
-};
 
 /**
  * model-viewer's `field-of-view="auto"` framing FOV, in degrees. Constant
@@ -248,152 +217,44 @@ export class ThreeRuntime implements RuntimeContract {
       this.#resolveControlsReady = resolve;
     });
 
-    const initial = createDefaultViewState();
-    this.camera = new THREE.PerspectiveCamera(initial.camera.fov, 4 / 3, 0.1, 1000);
-    const [cx, cy, cz] = initial.camera.position;
-    this.camera.position.set(cx, cy, cz);
-    this.camera.lookAt(0, 0, 0);
-
-    this.#lighting = createLightingRig(this.scene, initial.lights);
-
-    const factory = options.rendererFactory ?? createRenderer;
-    this.renderer = factory(options.canvas);
-    // Only touch the renderer when the host asked for a display mode; a
-    // pre-configured rendererFactory must keep its own tone mapping.
-    if (options.toneMapping !== undefined) this.#applyToneMapping();
-    if (options.exposure !== undefined) this.#applyExposure();
-
-    // After the renderer: IBL prefilters through PMREM, which needs the GPU context.
-    this.#environment = createEnvironmentRig(this.scene, initial.environment, {
-      renderer: this.renderer,
-      preset: options.environmentPreset ?? "room",
-      onEnvironmentReady: () => this.#render(),
-      ...(options.resolveAsset ? { resolveAsset: options.resolveAsset } : {}),
-      onHdrError: (error, source) => this.#emitEnvironmentError(error, source),
-      onSkyboxError: (error, source) => this.#emitEnvironmentError(error, source),
-    });
-
-    const dom = (this.renderer as { domElement?: HTMLElement }).domElement ?? options.canvas;
-
-    this.#cameraRig = createCameraRig({
-      camera: this.camera,
-      domElement: dom,
-      ...(options.orbitControlsFactory ? { orbitControlsFactory: options.orbitControlsFactory } : {}),
-      onRender: () => {
-        this.#render();
-        this.#emitViewChanging();
+    // Creation order and wiring live in `./assembly`; this constructor only
+    // hands over the runtime's callbacks and keeps the result.
+    const rigs = createRigSet({
+      scene: this.scene,
+      options,
+      events: this.events,
+      hooks: {
+        render: (force) => this.#render(force),
+        emitViewChanging: () => this.#emitViewChanging(),
+        emitViewChange: () => this.#emitViewChange(),
+        framingRoots: () => this.#framingRoots(),
+        documentObjects: () => this.#document?.objects ?? [],
+        selectedObject: () => this.#selectedObject(),
+        selectedId: () => this.#selectedIds[0],
       },
-      // A user gesture ends → the view is worth persisting (D22).
-      onInteractionEnd: () => this.#emitViewChange(),
     });
+
+    this.camera = rigs.camera;
+    this.renderer = rigs.renderer;
+    this.#lighting = rigs.lighting;
+    this.#environment = rigs.environment;
+    this.#cameraRig = rigs.cameraRig;
+    this.#renderLoop = rigs.renderLoop;
+    this.#picker = rigs.picker;
+    this.#animation = rigs.animation;
+    this.#morph = rigs.morph;
+    this.#batcher = rigs.batcher;
+    this.#resources = rigs.resources;
+    this.#ownsResources = rigs.ownsResources;
+    this.#objects = rigs.objects;
+    this.#display = rigs.display;
+    this.#explode = rigs.explode;
+    this.#contactShadow = rigs.contactShadow;
+    this.#contactShadowView = rigs.contactShadowView;
+    this.#gizmo = rigs.gizmo;
 
     // Seed the sampler so mounting never fakes a camera move.
     this.#lastCameraSample = this.#cameraRig.readView();
-
-    this.#renderLoop = createRenderLoop({
-      renderer: this.renderer,
-      scene: this.scene,
-      camera: this.camera,
-      getOrbit: () => this.#cameraRig.orbit,
-    });
-
-    this.#picker = createPicker({
-      camera: this.camera,
-      // dom is the renderer's canvas in production; the picker only needs a rect.
-      canvas: dom as HTMLCanvasElement,
-    });
-
-    this.#animation = createAnimationRig({
-      // Transport transitions are host-facing events (`play` / `pause` /
-      // `loop` / `finished`); the rig knows when they happen, the bus carries them.
-      onTransport: (event) => {
-        switch (event.type) {
-          case "play":
-            this.events.emit("play", {
-              objectId: event.objectId,
-              index: event.index,
-              name: event.name,
-            });
-            break;
-          case "pause":
-            this.events.emit("pause", null);
-            break;
-          case "loop":
-            this.events.emit("loop", { count: event.count, name: event.name });
-            break;
-          case "finished":
-            this.events.emit("finished", { objectId: event.objectId, name: event.name });
-            break;
-        }
-      },
-    });
-    this.#morph = createMorphRig({
-      roots: () => this.#framingRoots(),
-      // A clip driving `morphTargetInfluences` owns the channel; the rig asks
-      // before letting a manual weight through.
-      activeTrackNames: () => this.#animation.activeTrackNames(),
-    });
-    this.#batcher = options.instancing === false ? null : createInstancingRig({ scene: this.scene });
-    this.#resources = options.resources ?? createSharedResourcePool();
-    this.#ownsResources = options.resources === undefined;
-    this.#objects = createObjectStore({
-      scene: this.scene,
-      assetCache: options.assetCache ?? null,
-      batcher: this.#batcher,
-      resources: this.#resources,
-      onAssetError: (error, dto) => this.#emitAssetError(error, dto),
-      onAssetMounted: ({ objectId, object, asset }) => {
-        this.#animation.register(objectId, object, asset.animations ?? []);
-      },
-    });
-
-    // After the object store: both rigs walk it, and the explode baseline
-    // reads document positions (never the live, possibly-offset ones).
-    this.#display = createDisplayRig({
-      store: this.#objects,
-      batchRoot: () => this.#batcher?.root() ?? null,
-      onInvalidate: () => this.#render(),
-    });
-    this.#explode = createExplodeRig({
-      store: this.#objects,
-      getObjects: () => this.#document?.objects ?? [],
-      onInvalidate: () => this.#render(),
-    });
-
-    // After the object store: the catch plane is fitted to the content bounds.
-    this.#contactShadowView = initial.environment.contactShadow;
-    this.#contactShadow = createContactShadowRig({
-      scene: this.scene,
-      renderer: this.renderer,
-      // Batched instances are hidden proxies, so the depth pass needs the
-      // `InstancedMesh` root alongside them or nothing is captured.
-      contentRoots: () => {
-        const roots = this.#framingRoots();
-        const batchRoot = this.#batcher?.root();
-        if (batchRoot) roots.push(batchRoot);
-        return roots;
-      },
-      // Animated content can leave its resting bounds, so the shadow volume
-      // has to cover more than the box it was fitted to.
-      animated: () => this.#animation.list().length > 0,
-    });
-    this.#syncContactShadow();
-
-    this.#gizmo = createGizmoRig({
-      scene: this.scene,
-      camera: this.camera,
-      domElement: dom,
-      initialMode: this.#transformMode,
-      getSelectedObject: () => this.#selectedObject(),
-      onCommit: ({ from, to }) => {
-        const id = this.#selectedIds[0];
-        if (!id) return;
-        this.events.emit("transform-commit", { id, from, to });
-      },
-      ...(options.transformControlsFactory
-        ? { factory: options.transformControlsFactory }
-        : {}),
-    });
 
     if (options.enableControls !== false) {
       this.#initControls(options);
@@ -1420,31 +1281,6 @@ export class ThreeRuntime implements RuntimeContract {
         ? this.#animation.playByName(name)
         : this.#animation.play(null, 0);
     if (started) this.#ensureAnimationLoop();
-  }
-
-  #emitAssetError(err: unknown, dto: { id: string; assetId?: string | undefined }): void {
-    // Forward the loader's classification (resolve / load / format / not-found)
-    // instead of collapsing everything into a generic load failure.
-    const candidate = (err as { code?: string }).code;
-    const code = candidate && ASSET_ERROR_CODES.has(candidate) ? candidate : "asset-load-failed";
-    this.events.emit("error", {
-      code,
-      message: err instanceof Error ? err.message : String(err),
-      cause: err,
-      detail: { objectId: dto.id, assetId: dto.assetId },
-    } as RuntimeEventMap["error"]);
-  }
-
-  /** A broken HDR / skybox keeps the previous look but must not be silent. */
-  #emitEnvironmentError(err: unknown, assetId: string): void {
-    const candidate = (err as { code?: string }).code;
-    const code = candidate && ASSET_ERROR_CODES.has(candidate) ? candidate : "asset-load-failed";
-    this.events.emit("error", {
-      code,
-      message: err instanceof Error ? err.message : String(err),
-      cause: err,
-      detail: { assetId, kind: "environment" },
-    } as RuntimeEventMap["error"]);
   }
 
   /** Stubs without GPU display settings silently skip this. */

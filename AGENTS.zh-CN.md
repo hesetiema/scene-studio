@@ -132,7 +132,7 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 | 状态机、选择、插件宿主 | `runtime/` | 零 DOM、零 three；必须能在 `FakeRuntime` 上跑 |
 | 一项新的运行时能力 | `runtime/runtime-contract.ts` **+** `runtime/fake-runtime.ts` **+** `three/three-runtime.ts` | 要么三处都写，要么都不写 |
 | 资产加载、解码器装配 | `assets/` | |
-| 任何 three.js 相关：rig、拾取、导出 | `three/` | `three/viewer/` 下一个关注点一个 `*-rig.ts` |
+| 任何 three.js 相关：rig、拾取、导出 | `three/` | `three/viewer/` 下一个关注点一个 `*-rig.ts`；创建顺序与跨 rig 连线在 `three/assembly.ts` |
 | DOM 属性、slot、生命周期、无障碍 | `element/` | element + `slot-chrome` + `viewer-attributes` + `attribute-math` + 三个小助手（`register`、`src-document`、`download`），见「已知弱点」 |
 | 宿主 UI、面板、URL 参数 | `apps/playground/src/` | 永远不是改 SDK 的理由 |
 
@@ -193,10 +193,18 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
     `cameraFromOrbit`）与属性解析器（`parseVector3`、`parseOrbitToken`、`parseAngle`）。
     `slot-chrome` 与 `viewer-attributes` 都 import 它；它不从 `element/` 里 import 任何东西。
   **不要**外置加载流水线（139 行但触碰 17 个跨簇字段），也不要外置公开转发层 —— 两者都没有干净的接缝。
-- `three/three-runtime.ts` 有 **1524 行**，装配 + 生命周期 + 转发三合一，且没有分区注释，
-  压在 `three/viewer/` 的 20 个单职责模块之上（9 个 `*-rig.ts`：animation、camera、display、
-  environment、explode、gizmo、instancing、lighting、morph；外加 `object-store`、`render-loop`、
-  `framing`、`shared-resources` 等）。是第二可能的拆分目标。
+- `three/three-runtime.ts` 有 **1 361 行**：`RuntimeContract` 实现 + 一层扁平转发，按 9 个分节
+  组织（Engine seams / RuntimeContract / Viewer-side extras / Selection / Variants /
+  Embedded cameras / Morph / Animation / Internals）。转发层刻意扁平 —— 不要为了行数去切。
+- **装配在 `three/assembly.ts`**（`createRigSet`）。创建顺序是有约束的，且只在这一处可审：
+  lighting → renderer → environment → camera rig → render loop → picker → animation → morph →
+  batcher + resources → object store → display / explode / contact shadow → gizmo。
+  **新增一个 rig = 这里加一段 + `RigSet` 加一个字段 + 构造函数加一行赋值。**
+  装配的 options 用结构化子集 `AssemblyOptions`，不反向 import runtime —— 那会构成循环（B3）。
+- `three/viewer/` 20 个单职责模块，其中 **10 个 `create*Rig` 工厂**（animation、camera、
+  contact shadow、display、environment、explode、gizmo、instancing、lighting、morph；
+  `contact-shadow.ts` 是第 10 个实现，只是文件名没带 `-rig`），外加 `object-store`、
+  `render-loop`、`framing`、`shared-resources`。
 - `src/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一产品**的领域加载代码，
   却住在通用 SDK 里，还占了一个公开的 `./bim` 子路径，而它的消费者只有一个
   （`apps/playground/src/vent-demo.ts`）。在「不拆包」前提下可接受，但它是最该搬出去的一块。
