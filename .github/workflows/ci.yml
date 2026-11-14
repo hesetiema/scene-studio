@@ -138,6 +138,10 @@ jobs:
           cache: pnpm
       - name: Install (lockfile)
         run: pnpm install --frozen-lockfile
+      # Cheapest gate we have and the only one that catches a type-only import
+      # cycle (tsc stays green). Pure static scan: no build, no deps, <1 s.
+      - name: Import boundaries (B1/B2/B3)
+        run: pnpm test:boundaries
       - name: Release metadata
         run: pnpm test:release
       - name: Pack + consume

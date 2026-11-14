@@ -92,6 +92,7 @@
 | 门禁 | 命令 | 覆盖 |
 |---|---|---|
 | 单元 | `pnpm test` | vitest 单测；CI 跑 `three` 版本矩阵（`0.186.0` + `latest`） |
+| 边界 | `pnpm test:boundaries` | B1/B2/B3 引用规则；能抓到 `tsc` 漏掉的纯类型环 |
 | E2E | `pnpm test:e2e` | 查看器 / 编辑器关键流程 + 解码器回归 |
 | 视觉 | `pnpm test:e2e:visual` | 仅 canvas 的基线，SwiftShader，1% 容差 |
 | 性能 | `pnpm test:perf` | 首帧可交互、p95 帧时间、unload-zero |

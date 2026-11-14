@@ -55,7 +55,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 | 改了什么 | 必须跑 |
 |---|---|
 | 任何代码 | `pnpm typecheck && pnpm test` |
-| 涉及跨层引用 / 新增 import | `node <skill>/scripts/check-boundaries.mjs` |
+| 涉及跨层引用 / 新增 import | `pnpm test:boundaries` |
 | 公开 API、exports、版本、文档 | 再加 `pnpm test:release` |
 | 构建产物、入口、external | 再加 `pnpm test:pack && pnpm build` |
 | 元素属性 / 查看器交互 / 加载路径 | 再加 `pnpm test:e2e` |
@@ -114,7 +114,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 - 执行命令：
   - `pnpm typecheck` → <结果>
   - `pnpm test` → <通过数/失败数/文件数>
-  - `node scripts/check-boundaries.mjs` → <N 文件 / M 边 / 0 违规>
+  - `pnpm test:boundaries` → <N 文件 / M 边 / 0 违规>
 - 未覆盖项：<没验证的部分 + 原因>
 - 风险与回滚：<风险点 + 回滚方式>
 ```

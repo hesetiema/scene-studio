@@ -120,6 +120,7 @@ package).
 | Gate | Command | Covers |
 |---|---|---|
 | Unit | `pnpm test` | vitest suites; CI runs a `three` version matrix (`0.186.0` + `latest`) |
+| Boundaries | `pnpm test:boundaries` | B1/B2/B3 import rules; catches type-only cycles `tsc` misses |
 | E2E | `pnpm test:e2e` | critical viewer/editor flows + decoder regression |
 | Visual | `pnpm test:e2e:visual` | canvas-only baselines, SwiftShader, 1% tolerance |
 | Perf | `pnpm test:perf` | first-interactive, p95 frame time, unload-zero |

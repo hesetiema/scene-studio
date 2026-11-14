@@ -218,11 +218,11 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
   `apps/playground/src/vent-demo.ts`；0.7.0 把它搬到这里，公开面收敛成三个入口。它**不在**
   npm 包里、**没有**单测，只靠 playground 的 `tsc --noEmit` 与 `vite build` 兜着。
   不要把它的任何符号重新导出成包入口。
-- **仓库里没有任何 import 边界门禁。** 不变式 1–3 只靠自觉，以及 node 环境的单测兜着 ——
-  往 `core/` 里加一个 `three` import 能通过 `pnpm typecheck`，最后只表现为一个莫名其妙的
-  测试环境报错。仓库外已有一个约 150 行的检查脚本（遍历 `src/`、区分静态/懒加载/纯类型
-  引用、报 B1/B2/B3 违规）；把它放进 `scripts/` 并接进 CI 是当前性价比最高的质量改进。
-  该改动动到 CI，属 L3 —— 先问。
+- **不变式 1–3 由 `scripts/check-boundaries.mjs` 把关**（`pnpm test:boundaries`），已接进
+  `pack-smoke` 这个 CI job。它遍历 `src/`、区分静态/懒加载/纯类型引用，一秒内报出 B1/B2/B3 违规。
+  改动跨层 import 后先跑它：往 `core/` 里加一个 `three` import 能通过 `pnpm typecheck`，
+  否则只表现为一个莫名其妙的测试环境报错。注意它按**全图**判环，所以**纯类型**的环在这里
+  会红，而 `tsc` 是绿的。当前基线：78 文件 / 258 条边 / 0 循环。
 
 ---
 

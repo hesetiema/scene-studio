@@ -102,8 +102,8 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
   `./bim` 入口，消费者只有 `apps/playground/src/vent-demo.ts`。0.7.0 起搬出包（公开面=三个入口）。
   它不在 npm 包里、没有单测，只靠 playground 的 `tsc --noEmit` + `vite build` 兜着；
   契约说明随代码走：`apps/playground/src/bim/README.md`。
-- **没有任何 import 边界门禁**（这正是 `scripts/check-boundaries.mjs` 存在的原因）。
-  把它接进 CI 是性价比最高的质量改进；接法属 L1，改 CI 属 L3。
+- **import 边界门禁已接入**：`pnpm test:boundaries`（`scripts/check-boundaries.mjs`），
+  在 CI 的 `pack-smoke` job 里跑。基线 78 文件 / 258 边 / 0 循环 / 0 违规。
 
 ## 6. 约定速查
 

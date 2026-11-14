@@ -13,6 +13,7 @@
   "packageManager": "pnpm@11.1.1",
   "scripts": {
     "test": "pnpm -r test",
+    "test:boundaries": "node scripts/check-boundaries.mjs",
     "test:release": "node scripts/check-release-consistency.mjs",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
     "test:e2e:visual": "playwright test --config e2e/playwright.config.ts --project=visual",

@@ -27,8 +27,8 @@ const rootFlag = args.indexOf("--root");
 const ROOT =
   rootFlag >= 0 && args[rootFlag + 1]
     ? path.resolve(args[rootFlag + 1])
-    : // scripts/ -> scene-studio-dev/ -> skills/ -> .workbuddy/ -> <repo>/
-      path.resolve(HERE, "../../../../packages/scene-editor/src");
+    : // scripts/ -> <repo>/packages/scene-editor/src
+      path.resolve(HERE, "../packages/scene-editor/src");
 
 const rel = (p) => path.relative(ROOT, p).replace(/\\/g, "/");
 const layerOf = (p) => rel(p).split("/")[0];

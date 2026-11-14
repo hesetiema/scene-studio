@@ -215,12 +215,12 @@ stale `dist`.
   entry with exactly one consumer; 0.7.0 moved it here so the published surface is three entries.
   It is **not** part of the tarball, has **no unit tests**, and is verified by the playground
   `tsc --noEmit` + `vite build` only. Do not re-export it from the package.
-- **No import-boundary check is wired into the repo.** Invariants 1–3 are enforced by discipline and
-  by the node-environment unit suite, nothing else — a `three` import added to `core/` passes
-  `pnpm typecheck` and only fails as a confusing test-environment error. A ~150-line checker exists
-  outside the repo (it walks `src/`, resolves static vs lazy vs type-only specifiers, and reports
-  B1/B2/B3 violations); promoting it to `scripts/` and a CI step is the cheapest quality win
-  available. That change touches CI, so it is L3 — ask first.
+- **Invariants 1–3 are enforced by `scripts/check-boundaries.mjs`** (`pnpm test:boundaries`), wired
+  into the `pack-smoke` CI job. It walks `src/`, resolves static vs lazy vs type-only specifiers, and
+  reports B1/B2/B3 violations in under a second. Run it before pushing any cross-layer import change:
+  a `three` import added to `core/` passes `pnpm typecheck` and would otherwise only surface as a
+  confusing test-environment error. Note it walks the whole graph for cycles, so a **type-only** cycle
+  fails here even though `tsc` stays green. Current baseline: 78 files, 258 edges, 0 cycles.
 
 ## When in doubt
 
