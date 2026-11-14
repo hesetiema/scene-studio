@@ -162,7 +162,11 @@ stale `dist`.
   it, authenticated by **npm trusted publishing (OIDC)**. There is no npm token in this repo and no OTP
   step; the trust is bound on npmjs.com to this repo plus the workflow filename. If that binding is
   missing the workflow fails with a hint rather than falling back to a token — and a granular token could
-  not finish the job anyway, since `npm stage approve` needs a human TOTP code.
+  not finish the job anyway, since `npm stage approve` needs a human TOTP code. A probe result of
+  `404 OIDC token exchange error - package not found` means the npm-side trusted publisher config did
+  **not** match these claims (not that the package is missing); npm does not validate those fields on
+  save. Job logs need admin rights, so the workflow reports the diagnosis through `::notice::` /
+  `::error::` annotations — the only channel an agent can read anonymously.
   Version bumps go through `test:release`.
 
 ## Traps that have already cost time

@@ -169,7 +169,10 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
   `publish.yml` 就会发布，认证走 **npm 信任发布（OIDC）**。仓库里没有任何 npm token，
   也没有 OTP 人工步骤；信任关系在 npmjs.com 上绑定到「本仓库 + 该 workflow 文件名」。
   绑定缺失时 workflow 会带提示失败，而不会退回 token —— 何况 granular token 也做不完这件事，
-  `npm stage approve` 需要人工 TOTP 码。版本号变更走 `test:release`。
+  `npm stage approve` 需要人工 TOTP 码。探针若报 `404 OIDC token exchange error - package not found`，
+  意思是 npm 侧的信任发布配置没匹配上这些 claims（**不是**包不存在），而且 npm 保存配置时不校验字段；
+  job 日志要 admin 权限才能读，所以 workflow 把诊断写进 `::notice::` / `::error::` 注解 ——
+  这是 agent 匿名可读的唯一通道。版本号变更走 `test:release`。
 
 ---
 

@@ -197,3 +197,23 @@
   `npm stage publish` → `npm stage approve <uuid> --otp`，approve 必须人工 OTP，token 再强也过不去。
   GitHub secret `NPM_TOKEN` 已于 2026-11-15 确认失效（`E401`），OIDC 跑通后应当删掉它。
 - 发布前必跑：`pnpm test` → `pnpm typecheck` → `pnpm build` → `pnpm test:release` → `pnpm test:pack`。
+- **2026-11-15 `0.7.1` 首跑诊断（当前 `latest` 仍为 `0.7.0`）**：OIDC 版 `publish.yml` 能跑完
+  `test:release` / typecheck / 单测 / 构建，并在 Publish 前用只读探针把 GitHub 的 id_token 拿到 npm 的
+  exchange 端点试换一次，结果是 `npm OIDC exchange: 404 -- {"message":"OIDC token exchange error - package not found"}`，
+  npm 自己的 debug 日志同因；随后 `npm publish` 以 `E404 PUT …/@scenio%2fscene-editor` 失败，且**没有**
+  `Signed provenance statement`（凭据交换根本没发生）。CI 侧已由 `::notice::` 注解自证正常：
+  node v24.22.2 / npm 11.19.1（`npx npm@11` 发包）、`ACTIONS_ID_TOKEN_REQUEST_URL present`、
+  `repo=hesetiema/scene-studio`、`workflow_ref=…/publish.yml@refs/tags/0.7.1`、`runner=github-hosted`。
+- **`package not found` 不是「包不存在」**：`@scenio/scene-editor@0.7.0` 公开可装。这个 404 是 registry 按
+  「包名 + 仓库 + workflow」查该包的 Trusted Publisher 配置时一条都没匹配上，npm 于是退化成无凭据 PUT，
+  再回一个误导性的 E404。**npm 保存配置时不校验字段**，写错只有真正发布才暴露。去 npmjs.com → 包
+  `@scenio/scene-editor` → Settings → Trusted Publisher 逐项核对（全部大小写敏感、一个包只能有一条配置、
+  必须配在包而不是账号/组织上）：`Organization or user = hesetiema`（独立字段，别把
+  `hesetiema/scene-studio` 整串贴进 Repository）、`Repository name = scene-studio`（不带 owner 前缀）、
+  `Workflow filename = publish.yml`（裸文件名，不是路径、不是 `.yaml`）、`Environment name` 留空、
+  `Allowed actions` 勾 `npm publish`。包必须已存在（已满足）。
+- **修完配置的验证**：`git tag -f 0.7.1 HEAD && git push -f origin 0.7.1`；成功时注解是
+  `npm OIDC exchange: 201 -- trusted publisher claims match`，随后 `npm view @scenio/scene-editor dist-tags`
+  的 `latest` 变成 `0.7.1`。Actions 的 job 日志匿名读不到（403，需 admin），**`::notice::` / `::error::`
+  注解是唯一可观测通道**：`GET /repos/hesetiema/scene-studio/check-runs/<id>/annotations`，check-run id 从
+  `GET /repos/hesetiema/scene-studio/commits/<sha>/check-runs` 取。
