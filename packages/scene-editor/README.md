@@ -9,8 +9,6 @@ runtime contract, so a viewer can grow into an editor without a rewrite.
 **Status:** `0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still adjust before
 `1.0.0`; after that, semver applies. `three` is a peer dependency you install yourself.
 
-> Package scope (`@scenio`) is a placeholder until the npm org name is chosen.
-
 **Upgrading from 0.6.0.** Every exported name survives (compare `index`, `./element`, `./three`: 58/8/40
 → 87/14/76, all additive). One entry does not: `@scenio/scene-editor/style.css` is gone, because the
 package now ships no CSS at all — copy the handful of rules you relied on into your own stylesheet

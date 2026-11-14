@@ -147,7 +147,9 @@ stale `dist`.
 - **E2E:** Playwright. **Use `127.0.0.1`, never `localhost`** — the dev server binds IPv4 only.
 - **Visual baselines:** canvas-only, SwiftShader, 1% tolerance. Refresh with
   `pnpm test:e2e:visual --update-snapshots` and commit the PNGs.
-- **`@scenio` is a placeholder scope.** Don't publish; version bumps go through `test:release`.
+- **`@scenio` is the live scope** (`0.6.0` is published there). **Never run `npm publish` on your own
+  initiative** — it is irreversible and outward-facing; ask the human, who holds the credentials.
+  Version bumps go through `test:release`.
 
 ## Traps that have already cost time
 

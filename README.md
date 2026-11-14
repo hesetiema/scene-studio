@@ -1,7 +1,7 @@
 # scene-studio
 
 Embeddable 3D scene editor and model viewer for the web. Published as
-[`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) — the `@scenio` scope is a placeholder.
+[`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor).
 This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
 
 **Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Architecture & benchmarks](docs/ARCHITECTURE.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)

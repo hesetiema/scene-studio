@@ -70,7 +70,7 @@ pnpm test:pack     # npm pack → 干净消费者安装/类型检查/构建
 
 结构变更再加 `pnpm test:e2e` / `test:e2e:visual` / `test:perf`。
 版本号、`exports`、peer 范围、lockfile 变更 = **L3**，动手前先取批准。
-`@scenio` 是占位 scope，真发布前必须先定 scope。
+`@scenio` 是已在用的 scope（0.6.0 发在那儿）；`npm publish` 必须由人批准 + 提供凭据，agent 不自行执行。
 
 ---
 

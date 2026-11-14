@@ -155,7 +155,8 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 - **E2E：** Playwright。**用 `127.0.0.1`，不要用 `localhost`** —— dev server 只绑 IPv4。
 - **视觉基线：** 仅 canvas、SwiftShader、1% 容差。用
   `pnpm test:e2e:visual --update-snapshots` 刷新并提交 PNG。
-- **`@scenio` 是占位 scope。** 不要发布；版本号变更走 `test:release`。
+- **`@scenio` 是已在用的 scope**（`0.6.0` 就发在那儿）。**绝不要自己执行 `npm publish`** —— 它不可
+  撤销且对外可见，必须先问持有凭据的人。版本号变更走 `test:release`。
 
 ---
 

@@ -116,4 +116,4 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 - 单测：vitest、`test/**/*.test.ts`、node 环境、无 DOM，断言公开契约不断言私有 `#方法`。
 - E2E：Playwright，用 `127.0.0.1`。视觉基线仅 canvas、SwiftShader、1% 容差，
   刷新用 `--update-snapshots` 并提交 PNG。
-- `@scenio` 是占位 scope，不要发布。
+- `@scenio` 是已在用的 scope（0.6.0 已发布）；`npm publish` 需人工批准与凭据，agent 不自行执行。
