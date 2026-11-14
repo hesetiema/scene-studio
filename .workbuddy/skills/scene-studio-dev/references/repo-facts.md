@@ -116,5 +116,8 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 - 单测：vitest、`test/**/*.test.ts`、node 环境、无 DOM，断言公开契约不断言私有 `#方法`。
 - E2E：Playwright，用 `127.0.0.1`。视觉基线仅 canvas、SwiftShader、1% 容差，
   刷新用 `--update-snapshots` 并提交 PNG。
-- `@scenio` 是已在用的 scope（0.7.0 为当前 `latest`）；`npm publish` 需人工批准与凭据。granular
-  token 只能推 staging，最终 `npm stage approve` 必须人工 OTP，agent 不自行执行发布。
+- `@scenio` 是已在用的 scope（`latest` 以 `npm view @scenio/scene-editor dist-tags` 为准，
+  2026-11-15 起为 0.7.1）。发版靠推 tag 触发 `publish.yml`，认证是 npm 信任发布（OIDC），
+  无 token / 无人工 OTP，provenance 自动生成；**推 tag 等同于发布，须用户明确要求**，
+  agent 不得自行 `npm publish`。配置不匹配时 OIDC exchange 报 `404 package not found`
+  （不是包不存在），逐字段清单见 TODOS.md §六。

@@ -103,8 +103,9 @@
 
 ## 状态与路线图
 
-`0.7.0` alpha 已发布，即 npm 当前的 `latest`。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
+`0.7.1` alpha 已发布，即 npm 当前的 `latest`。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
 
+- **`0.7.1`** — 发版改为推 tag 后由 npm 信任发布（OIDC）自动完成：无 token、无人工 OTP，自动生成 provenance 证明。SDK 侧修复材质变体切换后的重绘、`dirty` 改为与上一次干净视图比较；BIM 加载从 SDK 外迁到 playground；另有 rig / element 内部重构。公开入口仍是三个，未变。
 - **`0.7.0`** — schema v3：真实 `parentId` 层级、`type: "primitive"`（8 种程序化几何）、对象级 `material` 覆盖、`view.lights.additional`；`addObject` / `removeObject` / `reparent` / `setMaterial` 全部可撤销，并复用加载时的 `validateHierarchy`。
 - **`0.6.0`** — 单行 glTF 预览（`src`）、自动取景、`progress`/`load` 生命周期、tone mapping / exposure、`visibility-change` 与按需开启的 `view-changing`。
 - **`0.7.0` 查看器能力**（元素属性 + 可选 runtime 方法，`view` schema 未动）：`camera-orbit` / `field-of-view` 与位姿缓动、`environment-image` 预设与 HDR URL、接触阴影、glTF 内嵌相机、morph target、播放传输与 `play`/`pause`/`loop`/`finished`、带法线的 hotspot、指针灵敏度、`loaded` / `modelIsVisible`。

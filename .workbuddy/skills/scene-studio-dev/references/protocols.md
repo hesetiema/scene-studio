@@ -70,9 +70,11 @@ pnpm test:pack     # npm pack → 干净消费者安装/类型检查/构建
 
 结构变更再加 `pnpm test:e2e` / `test:e2e:visual` / `test:perf`。
 版本号、`exports`、peer 范围、lockfile 变更 = **L3**，动手前先取批准。
-`@scenio` 是已在用的 scope（0.7.0 为当前 `latest`）；`npm publish` 必须由人批准 + 提供凭据，agent
-不自行执行。granular token 只能推 staging（`npm stage publish`，需 npm >= 11），最终
-`npm stage approve` 必须人工 OTP。
+`@scenio` 是已在用的 scope（`latest` 以 `npm view @scenio/scene-editor dist-tags` 为准，
+2026-11-15 起为 0.7.1）。发布 = 推一个与包版本号相同的 tag，`publish.yml` 走 npm 信任发布
+（OIDC），无 token / 无人工 OTP；**推 tag 即执行发布，属 L3，须用户明确要求**，
+agent 不得自行 `npm publish`。OIDC 交换若报 `404 package not found`，是 npm 侧 Trusted Publisher
+字段没匹配上（不是包不存在），逐字段清单见 TODOS.md §六。
 
 ---
 

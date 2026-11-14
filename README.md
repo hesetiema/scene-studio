@@ -136,9 +136,14 @@ the browser e2e suites target the studio, the minimal host page and the perf ben
 
 ## Status and roadmap
 
-`0.7.0` alpha is published and is the current npm `latest`. The API may still shift before `1.0.0`;
+`0.7.1` alpha is published and is the current npm `latest`. The API may still shift before `1.0.0`;
 after that, semver applies.
 
+- **`0.7.1`** — tag-driven releases now publish through npm trusted publishing (OIDC): no token,
+  no human OTP, provenance attestation attached automatically. SDK fixes: repaint after a
+  material-variant switch, `dirty` compared against the last clean view; BIM loading moved out of
+  the package into the playground app; internal rig/element refactors. The three public entries
+  are unchanged.
 - **`0.7.0`** — schema v3: real `parentId` hierarchy, `type: "primitive"` (8 procedural kinds),
   per-object `material` overrides, `view.lights.additional`; undoable `addObject` / `removeObject` /
   `reparent` / `setMaterial`, validated by the same `validateHierarchy` used on load.

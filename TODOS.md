@@ -1,6 +1,6 @@
 # TODOS
 
-仓库内为 `0.7.1`；线上 `latest` 以 `npm view @scenio/scene-editor dist-tags` 为准（0.7.0 已发布并 approve）。
+仓库内为 `0.7.1`；线上 `latest` 以 `npm view @scenio/scene-editor dist-tags` 为准（0.7.1 已于 2026-11-15 由 OIDC 信任发布全自动发出，无 token、无人工 OTP）。
 架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 一、已完成（`0.7.0`）
@@ -197,7 +197,7 @@
   `npm stage publish` → `npm stage approve <uuid> --otp`，approve 必须人工 OTP，token 再强也过不去。
   GitHub secret `NPM_TOKEN` 已于 2026-11-15 确认失效（`E401`），OIDC 跑通后应当删掉它。
 - 发布前必跑：`pnpm test` → `pnpm typecheck` → `pnpm build` → `pnpm test:release` → `pnpm test:pack`。
-- **2026-11-15 `0.7.1` 首跑诊断（当前 `latest` 仍为 `0.7.0`）**：OIDC 版 `publish.yml` 能跑完
+- **2026-11-15 `0.7.1` 首跑诊断（run #5–#13 失败）**：OIDC 版 `publish.yml` 能跑完
   `test:release` / typecheck / 单测 / 构建，并在 Publish 前用只读探针把 GitHub 的 id_token 拿到 npm 的
   exchange 端点试换一次，结果是 `npm OIDC exchange: 404 -- {"message":"OIDC token exchange error - package not found"}`，
   npm 自己的 debug 日志同因；随后 `npm publish` 以 `E404 PUT …/@scenio%2fscene-editor` 失败，且**没有**
@@ -212,8 +212,11 @@
   `hesetiema/scene-studio` 整串贴进 Repository）、`Repository name = scene-studio`（不带 owner 前缀）、
   `Workflow filename = publish.yml`（裸文件名，不是路径、不是 `.yaml`）、`Environment name` 留空、
   `Allowed actions` 勾 `npm publish`。包必须已存在（已满足）。
-- **修完配置的验证**：`git tag -f 0.7.1 HEAD && git push -f origin 0.7.1`；成功时注解是
-  `npm OIDC exchange: 201 -- trusted publisher claims match`，随后 `npm view @scenio/scene-editor dist-tags`
-  的 `latest` 变成 `0.7.1`。Actions 的 job 日志匿名读不到（403，需 admin），**`::notice::` / `::error::`
-  注解是唯一可观测通道**：`GET /repos/hesetiema/scene-studio/check-runs/<id>/annotations`，check-run id 从
-  `GET /repos/hesetiema/scene-studio/commits/<sha>/check-runs` 取。
+- **结果（run #14，2026-11-15）**：npm 侧 Trusted Publisher 配置按上面清单修正后，重推 `0.7.1` tag 的
+  第 14 次运行 49 秒全绿，`npm publish` 成功，`latest` 变为 `0.7.1`，provenance 自动生成 ——
+  全程无 token、无人工 OTP。**注意 registry 的 `dist-tags` 有 CDN 缓存**：发布成功后几十秒内旧值仍可能
+  返回 `0.7.0`，以 npm 包页 / 稍后重查为准，别误判成发布失败。
+- **可观测性**：Actions 的 job 日志匿名读不到（403，需 admin），**`::notice::` / `::error::` 注解是唯一
+  通道**：`GET /repos/hesetiema/scene-studio/check-runs/<id>/annotations`，check-run id 从
+  `GET /repos/hesetiema/scene-studio/commits/<sha>/check-runs` 取（匿名 API 60 次/小时，超限时改抓
+  `github.com/.../actions/workflows/publish.yml` 页面）。
