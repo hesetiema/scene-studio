@@ -187,6 +187,12 @@
   `npm stage publish`，不勾就会变成一次等人工 OTP 的 staging，正是这套流程要消灭的那一步。
   配完后把 Publishing access 设成「Require two-factor authentication and disallow tokens」，
   这样只剩 OIDC 能发布。
+- 同一件事也能用 CLI 做（npm >= 11.15.0、账号已开 2FA、对该包有写权限）：
+  `npx --yes npm@latest trust github @scenio/scene-editor --repo hesetiema/scene-studio --file publish.yml --allow-publish --yes`，
+  再用 `… trust list @scenio/scene-editor` 复查。连 `list` 都会返回 `EOTP` 并给出
+  `npmjs.com/auth/cli/…` 的浏览器认证链接，需要人过一次；bypass-2FA 的 granular token
+  **不支持** trust 命令，所以这一步绕不开人工 —— 但一生只需一次，不污染日常发版。
+  本机 npm 是 10.9.7，务必用 `npx npm@latest`。
 - **兜底（信任发布不可用时）**：granular token 只能推 staging ——
   `npm stage publish` → `npm stage approve <uuid> --otp`，approve 必须人工 OTP，token 再强也过不去。
   GitHub secret `NPM_TOKEN` 已于 2026-11-15 确认失效（`E401`），OIDC 跑通后应当删掉它。
