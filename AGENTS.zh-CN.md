@@ -133,7 +133,7 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 | 一项新的运行时能力 | `runtime/runtime-contract.ts` **+** `runtime/fake-runtime.ts` **+** `three/three-runtime.ts` | 要么三处都写，要么都不写 |
 | 资产加载、解码器装配 | `assets/` | |
 | 任何 three.js 相关：rig、拾取、导出 | `three/` | `three/viewer/` 下一个关注点一个 `*-rig.ts` |
-| DOM 属性、slot、生命周期、无障碍 | `element/` | 3106 行单文件 + 三个小助手（`register`、`src-document`、`download`），见「已知弱点」 |
+| DOM 属性、slot、生命周期、无障碍 | `element/` | element + `slot-chrome`（poster/错误/热点）+ 三个小助手（`register`、`src-document`、`download`），见「已知弱点」 |
 | 宿主 UI、面板、URL 参数 | `apps/playground/src/` | 永远不是改 SDK 的理由 |
 
 ---
@@ -174,14 +174,17 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 
 ## 已知弱点（已知且接受 —— 没人要求就别去「改进」）
 
-- `element/scene-editor-element.ts` 有 **3106 行**，单个 class，约 60 个公开成员 + 约 50 个私有成员。
-  它是刻意的聚合：属性解析、slot 生命周期、错误浮层、解码器装配、加载编排、模式投影。
+- `element/scene-editor-element.ts` 有 **2580 行**，单个 class，约 93 个公开成员 + 约 60 个私有成员。
+  它是刻意的聚合：属性解析、解码器装配、加载编排、模式投影，以及 DOM 契约本身。
   它同时也是全仓最难单测的文件。**connect 装配已拆成七个命名阶段** —— `#mountCanvas` →
   `#createRuntime` → `#pushInitialState` → `#wireInput` → `#wireViewport` → `#forwardFacadeEvents`
   → `#publishReady`。**新接线放进它所属的阶段，绝不要把 `#init` 养回 269 行。**
   `#forwardFacadeEvents` 是一张扁平转发表，刻意不拆 —— 不要为了行数去切它。
-  下一步真正值得做的是外置 `slot-chrome`（455 行、27 个专属字段、零跨簇状态）和
-  `viewer-attributes`（422 行、10 个字段）；那是一个项目，不是顺手重构。
+  槽位界面（poster、进度条、错误浮层、热点锚点）已外置到 `element/slot-chrome.ts` ——
+  **新的槽位行为加到那里，不要加回 element**；element 只保留四个公开转发
+  （`queryHotspot`、`updateHotspot`、`dismissPoster`、`refreshSlots`），并持有 `#contentLoaded`，
+  由槽位模块经 host 回调读取。
+  下一步真正值得做的是外置 `viewer-attributes`（422 行、10 个字段）；那是一个项目，不是顺手重构。
   **不要**外置加载流水线（139 行但触碰 17 个跨簇字段），也不要外置公开转发层。
 - `three/three-runtime.ts` 有 **1524 行**，装配 + 生命周期 + 转发三合一，且没有分区注释，
   压在 `three/viewer/` 的 20 个单职责模块之上（9 个 `*-rig.ts`：animation、camera、display、
