@@ -216,7 +216,8 @@
   第 14 次运行 49 秒全绿，`npm publish` 成功，`latest` 变为 `0.7.1`，provenance 自动生成 ——
   全程无 token、无人工 OTP。**注意 registry 的 `dist-tags` 有 CDN 缓存**：发布成功后几十秒内旧值仍可能
   返回 `0.7.0`，以 npm 包页 / 稍后重查为准，别误判成发布失败。
-- **可观测性**：Actions 的 job 日志匿名读不到（403，需 admin），**`::notice::` / `::error::` 注解是唯一
+- **可观测性**：成功信号是注解 `npm OIDC exchange: 201 -- trusted publisher claims match`；
+  Actions 的 job 日志匿名读不到（403，需 admin），**`::notice::` / `::error::` 注解是唯一
   通道**：`GET /repos/hesetiema/scene-studio/check-runs/<id>/annotations`，check-run id 从
   `GET /repos/hesetiema/scene-studio/commits/<sha>/check-runs` 取（匿名 API 60 次/小时，超限时改抓
   `github.com/.../actions/workflows/publish.yml` 页面）。
