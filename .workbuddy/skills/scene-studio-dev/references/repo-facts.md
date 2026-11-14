@@ -68,9 +68,13 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 
 ## 5. 已知弱点（已知且接受，别顺手重构）
 
-- `element/scene-editor-element.ts` **3014 行**单 class，约 60 公开 + 约 50 私有成员，
+- `element/scene-editor-element.ts` **3106 行**单 class，约 60 公开 + 约 50 私有成员，
   聚合了属性解析、slot 生命周期、错误浮层、解码器装配、加载编排、模式投影。全仓最难单测。
-  拆 controller 是真实选项，但那是项目不是顺手重构 → 属 L2，需先定验收标准。
+  connect 装配已拆七阶段（`#mountCanvas` → `#createRuntime` → `#pushInitialState` →
+  `#wireInput` → `#wireViewport` → `#forwardFacadeEvents` → `#publishReady`）——
+  **新接线进对应阶段，别把 `#init` 养回长方法**。`#forwardFacadeEvents` 是扁平表，刻意不拆。
+  可外置：`slot-chrome`（455 行/27 专属字段）、`viewer-attributes`（422 行/10 字段）。
+  不可外置：加载流水线（17 个跨簇字段）、公开转发层。属 L2，需先定验收标准。
 - `three/three-runtime.ts` **1524 行**（装配 + 生命周期 + 转发，无分区注释），压在
   `three/viewer/` 20 个单职责模块之上。第二可能的拆分目标。
 - `src/bim/` 是单产品领域代码占公开子路径，消费者只有 `apps/playground/src/vent-demo.ts`。

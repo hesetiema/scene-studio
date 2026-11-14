@@ -124,7 +124,7 @@ stale `dist`.
 | A new runtime capability | `runtime/runtime-contract.ts` **+** `runtime/fake-runtime.ts` **+** `three/three-runtime.ts` | Both implementations or neither |
 | Asset loading, decoder assembly | `assets/` | |
 | Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/` |
-| DOM attributes, slots, lifecycle, a11y | `element/` | One 3 014-line class plus three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
+| DOM attributes, slots, lifecycle, a11y | `element/` | One 3 106-line class plus three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
 | Host UI, panels, URL params | `apps/playground/src/` | Never a reason to touch the SDK |
 
 ## Conventions
@@ -164,10 +164,16 @@ stale `dist`.
 
 ## Known weak points (known, accepted — don't "improve" them unasked)
 
-- `element/scene-editor-element.ts` is **3 014 lines**, one class, ~60 public + ~50 private members.
+- `element/scene-editor-element.ts` is **3 106 lines**, one class, ~60 public + ~50 private members.
   It is one aggregation on purpose: attribute parsing, slot lifecycle, error overlay, decoder
   assembly, load orchestration, mode projection. It is also the least unit-testable file in the repo.
-  Splitting it into controllers is a real option — but it's a project, not a drive-by refactor.
+  Connect-time assembly is already split into seven named stages — `#mountCanvas` → `#createRuntime`
+  → `#pushInitialState` → `#wireInput` → `#wireViewport` → `#forwardFacadeEvents` → `#publishReady`.
+  **Put new wiring in the stage it belongs to; never grow `#init` back into a 269-line method.**
+  `#forwardFacadeEvents` is one flat table on purpose — don't split it for a line count.
+  The next real step is extracting `slot-chrome` (455 lines, 27 private fields, zero cross-cluster
+  state) and `viewer-attributes` (422 lines, 10 fields); that is a project, not a drive-by refactor.
+  Do **not** extract the load pipeline (139 lines but 17 cross-cluster fields) or the façade forwards.
 - `three/three-runtime.ts` is **1 524 lines** of wiring + lifecycle + forwarding, with no section
   markers, sitting on top of `three/viewer/`'s 20 single-concern modules (9 `*-rig.ts`: animation,
   camera, display, environment, explode, gizmo, instancing, lighting, morph; plus picking-adjacent

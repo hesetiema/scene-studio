@@ -2612,258 +2612,22 @@ export class SceneEditorElement extends HTMLElement {
     });
   }
 
+  /**
+   * Connect-time assembly, one stage per call. The order below is load-bearing —
+   * `alt` before the runtime, decoders before the first load, framing before the
+   * held `load` — so stages may be renamed but not reordered.
+   */
   async #init(): Promise<void> {
     this.#abort = new AbortController();
     const { signal } = this.#abort;
     try {
-      const canvas = document.createElement("canvas");
-      canvas.style.width = "100%";
-      canvas.style.height = "100%";
-      canvas.style.display = "block";
-      this.appendChild(canvas);
-      // The canvas is the accessible representation of the model (`alt`).
-      this.#canvas = canvas;
-      this.#applyAlt();
-      // DOM-only, so it lands before the runtime exists. Also the reason an
-      // attribute set before upgrade still takes effect: nothing to re-assert.
-      this.#applyTouchAction();
-      const assetResolver = this.#createAssetResolver();
-      const environmentPreset = this.#environmentPreset;
-      const interactive = this.mode === "editor";
-      const instancing = this.instancing;
-      const runtime = SceneEditorElement.runtimeFactory(canvas, {
-        assetResolver,
-        environmentPreset,
-        interactive,
-        instancing,
-        getDecoders: () => {
-          // Host-assigned instances win over the bundle: a host that built its
-          // own KTX2Loader (or pointed Draco somewhere specific) meant it.
-          const lazy = this.#decoders?.current() ?? {};
-          return {
-            // `?? null`, not `?? undefined`: "not set" has always been reported
-            // as `null` here, and a host clearing `el.ktx2Loader = null` must
-            // see that back.
-            dracoLoader: this.#dracoLoader ?? lazy.dracoLoader ?? null,
-            ktx2Loader: this.#ktx2Loader ?? lazy.ktx2Loader ?? null,
-            meshoptDecoder: this.#meshoptDecoder ?? lazy.meshoptDecoder ?? null,
-          };
-        },
-        // Read at load time, so setting it before the fetch is enough — the
-        // model and its external buffers both pick it up.
-        getWithCredentials: () => this.hasAttribute("with-credentials"),
-      });
-      const editor = createSceneEditor({ runtime });
-      this.#editor = editor;
-      // After the editor so the KTX2 renderer accessor has something to read;
-      // the bundle itself imports nothing until the first load asks for it.
-      this.#syncDecoders();
-      // Attributes set before upgrade land here: observedAttributes fires during
-      // upgrade, but the runtime only exists now.
-      runtime.setLiveViewEvents?.(this.#liveViewEvents);
-      runtime.setEnvironmentPreset?.(environmentPreset);
-      // The default factory already got this; repeating it covers a custom
-      // factory that dropped the option (and is a no-op when it did not).
-      runtime.setInstancing?.(instancing);
-      this.#applyDisplaySettings();
-      // Attributes set before upgrade land here (observedAttributes already ran).
-      this.#applyCameraSettings();
-      this.#applyPlaybackSettings();
-      // The factory already got the preset, but the URL overrides and the
-      // skybox only exist as attributes — nothing else applies them.
-      this.#applyEnvironmentPreset();
-      // Again now that a runtime exists: the canvas alone is not enough, the
-      // orbit addon overwrites `touch-action` when it mounts.
-      this.#applyTouchAction();
-      // Now that a runtime exists, the mode can be pushed to it (the factory
-      // already received `interactive`; this applies the derived viewer/editor
-      // mode from the connect-time `src` declaration).
-      this.#applyMode();
-
-      // Click-to-select (P2-T7): pick on canvas click, empty → clear.
-      // Shift / Ctrl / Cmd makes the click additive (toggle), matching the
-      // facade's multi-select surface (`add` / `remove` / `toggle`).
-      const onClick = (event: MouseEvent): void => {
-        // A viewer has no selection at all — orbit is its only pointer verb.
-        if (this.mode === "viewer") return;
-        // `disable-tap` keeps orbit/zoom but never turns a click into a selection.
-        if (this.hasAttribute("disable-tap")) return;
-        const picked = runtime.pick(event.clientX, event.clientY);
-        const additive = event.shiftKey || event.ctrlKey || event.metaKey;
-        if (!picked) {
-          if (!additive) editor.clearSelection();
-          return;
-        }
-        if (additive) editor.toggle(picked);
-        else editor.select([picked]);
-      };
-      canvas.addEventListener("click", onClick, { signal });
-
-      // `reveal="interaction"`: the first gesture (orbit, zoom, key) dismisses
-      // the poster. Passive — the viewer must never block gestures.
-      const onFirstInteraction = (): void => {
-        this.#dismissPoster("interaction");
-      };
-      for (const type of ["pointerdown", "wheel", "touchstart"]) {
-        this.addEventListener(type, onFirstInteraction, { signal, passive: true });
-      }
-
-      // One TransformControls drag → one undoable command (D15 / P2-T6).
-      runtime.events.on("transform-commit", ({ id, from, to }) => {
-        editor.applyTransform(id, from, to);
-      });
-
-      // resize seam: ThreeRuntime exposes resize(); FakeRuntime does not (optional).
-      const maybeResize = runtime as { resize?: (w?: number, h?: number) => void };
-      const applySize = (): void => {
-        maybeResize?.resize?.(this.clientWidth, this.clientHeight);
-        // Hotspot anchors are canvas-local pixels: re-project after a resize.
-        this.#updateHotspots();
-      };
-      applySize();
-      if (typeof ResizeObserver !== "undefined") {
-        const ro = new ResizeObserver(applySize);
-        ro.observe(this);
-        this.#resizeObserver = ro;
-      }
-
-      // Element-only visibility signal (IntersectionObserver; opt-out by
-      // setting `visibilityObserverFactory = () => null`).
-      this.#visibilityObserver = SceneEditorElement.visibilityObserverFactory(
-        this.#onVisibilityChange,
-      );
-      this.#visibilityObserver?.observe(this);
-
-      // Background tabs pause too; rAF is throttled there but a hidden viewer
-      // still wakes up for animation ticks and paints.
-      if (typeof document !== "undefined") {
-        const onDocumentHidden = (): void => {
-          this.#tabHidden = document.hidden === true;
-          this.#setRenderingPaused();
-        };
-        document.addEventListener("visibilitychange", onDocumentHidden, { signal });
-        this.#tabHidden = document.hidden === true;
-      }
-
-      // Facade events → DOM CustomEvents (element public contract, D18/D20).
-      editor.on("selection-change", (payload) => {
-        this.dispatchEvent(new CustomEvent("selection-change", { detail: payload }));
-      });
-      editor.on("history-change", (payload) => {
-        this.dispatchEvent(new CustomEvent("history-change", { detail: payload }));
-      });
-      editor.on("document-dirty", (payload) => {
-        this.dispatchEvent(new CustomEvent("document-dirty", { detail: payload }));
-      });
-      editor.on("save-request", (payload) => {
-        this.dispatchEvent(new CustomEvent("save-request", { detail: payload }));
-      });
-      editor.on("view-change", (payload) => {
-        this.dispatchEvent(new CustomEvent("view-change", { detail: payload }));
-      });
-      editor.on("view-changing", (payload) => {
-        this.dispatchEvent(new CustomEvent("view-changing", { detail: payload }));
-      });
-      editor.on("camera-change", (camera) => {
-        this.dispatchEvent(new CustomEvent("camera-change", { detail: camera }));
-        // Hotspots are screen-space projections of world points.
-        this.#updateHotspots();
-      });
-      editor.on("environment-change", (payload) => {
-        this.dispatchEvent(new CustomEvent("environment-change", { detail: payload }));
-      });
-      editor.on("progress", (payload) => {
-        // Any progress sample means a load is in flight → show the progress bar.
-        this.#setLoading(true);
-        this.dispatchEvent(new CustomEvent("progress", { detail: payload }));
-      });
-      // Playback transport (model-viewer parity). `play` keeps a payload that
-      // says *what* started; `pause` / `finished` carry none upstream either.
-      editor.on("play", (payload) => {
-        this.#noteActiveClip(payload.name);
-        this.dispatchEvent(new CustomEvent("play", { detail: payload }));
-      });
-      editor.on("pause", () => {
-        this.dispatchEvent(new CustomEvent("pause", { detail: {} }));
-      });
-      editor.on("loop", (payload) => {
-        this.dispatchEvent(new CustomEvent("loop", { detail: payload }));
-      });
-      editor.on("finished", () => {
-        this.dispatchEvent(new CustomEvent("finished", { detail: {} }));
-      });
-      editor.on("load", (payload) => {
-        // A preview is *one* asset, so the store's "partial success" rule (skip
-        // the broken object, keep the rest) leaves nothing to show. Announcing
-        // `load` here would be a lie host code acts on — and the `#clearError()`
-        // below would erase the only explanation on screen.
-        if (this.#documentOwner === "src" && this.#srcLoadFailed) {
-          this.#setLoading(false);
-          this.#syncModelVisibility();
-          this.#updateHotspots();
-          return;
-        }
-        // Only the `src` path knows a URL; headless/host documents report null.
-        const url = this.#documentOwner === "src" ? this.src : null;
-        this.#contentLoaded = true;
-        this.#setLoading(false);
-        this.#clearError();
-        const detail = { ...payload, url };
-        if (this.#pendingSrcLoads > 0) {
-          // Hold the event back: `frameViewer()` has not run yet, so a host
-          // reading `getDimensions()` or the camera here would see pre-fit state.
-          // Only the load that drains the counter to zero releases the event.
-          this.#deferredLoadDetail = detail;
-          this.#syncModelVisibility();
-          this.#updateHotspots();
-          return;
-        }
-        this.dispatchEvent(new CustomEvent("load", { detail }));
-        this.#syncModelVisibility();
-        this.#updateHotspots();
-        // `reveal="auto"` (the default): the model is on screen — drop the poster.
-        this.#dismissPoster("load");
-      });
-      editor.on("error", (payload) => {
-        this.#setLoading(false);
-        // The event alone left hosts with a blank canvas; the message is now
-        // also a visual state (`slot="error"`, or the built-in overlay).
-        this.#showError(payload.message);
-        // A preview owns exactly one asset: remember that this load produced
-        // nothing, so the `load` that follows cannot announce success.
-        if (this.#documentOwner === "src") this.#srcLoadFailed = true;
-        this.dispatchEvent(new CustomEvent("error", { detail: payload }));
-      });
-
-      this.addEventListener("keydown", this.#onKeyDown, { signal });
-
-      // Slots live in the light DOM (no shadow root): adopt whatever is already
-      // there, then keep watching for later additions.
-      this.#observeSlots();
-      this.#collectSlots();
-
-      this.dispatchEvent(new CustomEvent("scene-ready"));
-      this.#resolveReady();
-
-      // Declarative preview loads after `ready`, so a host that awaits the
-      // element still observes `progress` / `load`. `loading="lazy"` defers it
-      // until the element is first visible.
-      if (this.src && this.#documentOwner !== "host") this.#maybeLoadSrc();
-
-      // flush plugins queued before init (use() before connect); a failing
-      // install must not reject ready — it surfaces as an error event.
-      const queued = this.#pendingPlugins.splice(0);
-      for (const plugin of queued) {
-        try {
-          editor.use(plugin);
-        } catch (err) {
-          this.#emitError(
-            SceneErrorCode.Lifecycle,
-            err instanceof Error ? err.message : "Plugin install failed",
-            err,
-          );
-        }
-      }
+      const canvas = this.#mountCanvas();
+      const { runtime, editor } = this.#createRuntime(canvas);
+      this.#pushInitialState(runtime);
+      this.#wireInput(editor, runtime, canvas, signal);
+      this.#wireViewport(runtime, signal);
+      this.#forwardFacadeEvents(editor);
+      this.#publishReady(editor);
     } catch (err) {
       const se =
         err instanceof SceneEditorError
@@ -2873,6 +2637,334 @@ export class SceneEditorElement extends HTMLElement {
             });
       this.#emitError(se.code, se.message, se.cause);
       this.#rejectReady(se);
+    }
+  }
+
+  /**
+   * The canvas, plus the two DOM-only attributes (`alt`, `touch-action`).
+   *
+   * Both land before the runtime exists on purpose: an attribute set before
+   * upgrade must still take effect, and neither has anything for the runtime to
+   * re-assert later.
+   */
+  #mountCanvas(): HTMLCanvasElement {
+    const canvas = document.createElement("canvas");
+    canvas.style.width = "100%";
+    canvas.style.height = "100%";
+    canvas.style.display = "block";
+    this.appendChild(canvas);
+    // The canvas is the accessible representation of the model (`alt`).
+    this.#canvas = canvas;
+    this.#applyAlt();
+    // DOM-only, so it lands before the runtime exists. Also the reason an
+    // attribute set before upgrade still takes effect: nothing to re-assert.
+    this.#applyTouchAction();
+    return canvas;
+  }
+
+  /**
+   * Build the runtime, wrap it in the headless facade, publish it as `#editor`.
+   *
+   * The factory options are the connect-time snapshot of the derived inputs
+   * (host document vs `src` preview, mode, `instancing`); `#pushInitialState`
+   * repeats them for the benefit of a custom factory that dropped one.
+   *
+   * `#syncDecoders` runs *after* the editor so the KTX2 renderer accessor has
+   * something to read; the bundle itself imports nothing until the first load
+   * asks for it.
+   */
+  #createRuntime(canvas: HTMLCanvasElement): {
+    runtime: RuntimeContract;
+    editor: SceneEditor;
+  } {
+    const assetResolver = this.#createAssetResolver();
+    const environmentPreset = this.#environmentPreset;
+    const interactive = this.mode === "editor";
+    const instancing = this.instancing;
+    const runtime = SceneEditorElement.runtimeFactory(canvas, {
+      assetResolver,
+      environmentPreset,
+      interactive,
+      instancing,
+      getDecoders: () => {
+        // Host-assigned instances win over the bundle: a host that built its
+        // own KTX2Loader (or pointed Draco somewhere specific) meant it.
+        const lazy = this.#decoders?.current() ?? {};
+        return {
+          // `?? null`, not `?? undefined`: "not set" has always been reported
+          // as `null` here, and a host clearing `el.ktx2Loader = null` must
+          // see that back.
+          dracoLoader: this.#dracoLoader ?? lazy.dracoLoader ?? null,
+          ktx2Loader: this.#ktx2Loader ?? lazy.ktx2Loader ?? null,
+          meshoptDecoder: this.#meshoptDecoder ?? lazy.meshoptDecoder ?? null,
+        };
+      },
+      // Read at load time, so setting it before the fetch is enough — the
+      // model and its external buffers both pick it up.
+      getWithCredentials: () => this.hasAttribute("with-credentials"),
+    });
+    const editor = createSceneEditor({ runtime });
+    this.#editor = editor;
+    // After the editor so the KTX2 renderer accessor has something to read;
+    // the bundle itself imports nothing until the first load asks for it.
+    this.#syncDecoders();
+    return { runtime, editor };
+  }
+
+  /**
+   * Replay the attributes that were already present when the element upgraded.
+   * `observedAttributes` fires *during* upgrade, when there is no runtime to
+   * push to, so everything declared in markup lands here instead.
+   *
+   * Order is the original one: display → camera → playback → environment (the
+   * URL override and the skybox only exist as attributes) → `touch-action` (the
+   * orbit addon overwrites it on mount) → mode (needs the runtime).
+   */
+  #pushInitialState(runtime: RuntimeContract): void {
+    // Attributes set before upgrade land here: observedAttributes fires during
+    // upgrade, but the runtime only exists now.
+    runtime.setLiveViewEvents?.(this.#liveViewEvents);
+    runtime.setEnvironmentPreset?.(this.#environmentPreset);
+    // The default factory already got this; repeating it covers a custom
+    // factory that dropped the option (and is a no-op when it did not).
+    runtime.setInstancing?.(this.instancing);
+    this.#applyDisplaySettings();
+    // Attributes set before upgrade land here (observedAttributes already ran).
+    this.#applyCameraSettings();
+    this.#applyPlaybackSettings();
+    // The factory already got the preset, but the URL overrides and the
+    // skybox only exist as attributes — nothing else applies them.
+    this.#applyEnvironmentPreset();
+    // Again now that a runtime exists: the canvas alone is not enough, the
+    // orbit addon overwrites `touch-action` when it mounts.
+    this.#applyTouchAction();
+    // Now that a runtime exists, the mode can be pushed to it (the factory
+    // already received `interactive`; this applies the derived viewer/editor
+    // mode from the connect-time `src` declaration).
+    this.#applyMode();
+  }
+
+  /**
+   * Turn user input into editor actions: click-to-select, the first-gesture
+   * poster reveal, the gizmo's commit command, and the keyboard domain.
+   */
+  #wireInput(
+    editor: SceneEditor,
+    runtime: RuntimeContract,
+    canvas: HTMLCanvasElement,
+    signal: AbortSignal,
+  ): void {
+    // Click-to-select (P2-T7): pick on canvas click, empty → clear.
+    // Shift / Ctrl / Cmd makes the click additive (toggle), matching the
+    // facade's multi-select surface (`add` / `remove` / `toggle`).
+    const onClick = (event: MouseEvent): void => {
+      // A viewer has no selection at all — orbit is its only pointer verb.
+      if (this.mode === "viewer") return;
+      // `disable-tap` keeps orbit/zoom but never turns a click into a selection.
+      if (this.hasAttribute("disable-tap")) return;
+      const picked = runtime.pick(event.clientX, event.clientY);
+      const additive = event.shiftKey || event.ctrlKey || event.metaKey;
+      if (!picked) {
+        if (!additive) editor.clearSelection();
+        return;
+      }
+      if (additive) editor.toggle(picked);
+      else editor.select([picked]);
+    };
+    canvas.addEventListener("click", onClick, { signal });
+
+    // `reveal="interaction"`: the first gesture (orbit, zoom, key) dismisses
+    // the poster. Passive — the viewer must never block gestures.
+    const onFirstInteraction = (): void => {
+      this.#dismissPoster("interaction");
+    };
+    for (const type of ["pointerdown", "wheel", "touchstart"]) {
+      this.addEventListener(type, onFirstInteraction, { signal, passive: true });
+    }
+
+    // One TransformControls drag → one undoable command (D15 / P2-T6).
+    runtime.events.on("transform-commit", ({ id, from, to }) => {
+      editor.applyTransform(id, from, to);
+    });
+
+    // Keys are input too: the focus domain, the editor commands and the camera
+    // fallbacks all live in `#onKeyDown`.
+    this.addEventListener("keydown", this.#onKeyDown, { signal });
+  }
+
+  /**
+   * Keep the viewport in sync with the element's box and its visibility: resize
+   * → `runtime.resize()` plus hotspot reprojection, `IntersectionObserver` →
+   * off-screen pause, background tab → the same pause.
+   */
+  #wireViewport(runtime: RuntimeContract, signal: AbortSignal): void {
+    // resize seam: ThreeRuntime exposes resize(); FakeRuntime does not (optional).
+    const maybeResize = runtime as { resize?: (w?: number, h?: number) => void };
+    const applySize = (): void => {
+      maybeResize?.resize?.(this.clientWidth, this.clientHeight);
+      // Hotspot anchors are canvas-local pixels: re-project after a resize.
+      this.#updateHotspots();
+    };
+    applySize();
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(applySize);
+      ro.observe(this);
+      this.#resizeObserver = ro;
+    }
+
+    // Element-only visibility signal (IntersectionObserver; opt-out by
+    // setting `visibilityObserverFactory = () => null`).
+    this.#visibilityObserver = SceneEditorElement.visibilityObserverFactory(
+      this.#onVisibilityChange,
+    );
+    this.#visibilityObserver?.observe(this);
+
+    // Background tabs pause too; rAF is throttled there but a hidden viewer
+    // still wakes up for animation ticks and paints.
+    if (typeof document !== "undefined") {
+      const onDocumentHidden = (): void => {
+        this.#tabHidden = document.hidden === true;
+        this.#setRenderingPaused();
+      };
+      document.addEventListener("visibilitychange", onDocumentHidden, { signal });
+      this.#tabHidden = document.hidden === true;
+    }
+  }
+
+  /**
+   * Facade events → DOM `CustomEvent`s (element public contract, D18/D20).
+   *
+   * One flat table on purpose: every row is the same two-line forward, in the
+   * order the facade declares them. The two rows that carry real work
+   * (`camera-change` reprojects hotspots, `load` releases the held event) say so
+   * inline.
+   */
+  #forwardFacadeEvents(editor: SceneEditor): void {
+    editor.on("selection-change", (payload) => {
+      this.dispatchEvent(new CustomEvent("selection-change", { detail: payload }));
+    });
+    editor.on("history-change", (payload) => {
+      this.dispatchEvent(new CustomEvent("history-change", { detail: payload }));
+    });
+    editor.on("document-dirty", (payload) => {
+      this.dispatchEvent(new CustomEvent("document-dirty", { detail: payload }));
+    });
+    editor.on("save-request", (payload) => {
+      this.dispatchEvent(new CustomEvent("save-request", { detail: payload }));
+    });
+    editor.on("view-change", (payload) => {
+      this.dispatchEvent(new CustomEvent("view-change", { detail: payload }));
+    });
+    editor.on("view-changing", (payload) => {
+      this.dispatchEvent(new CustomEvent("view-changing", { detail: payload }));
+    });
+    editor.on("camera-change", (camera) => {
+      this.dispatchEvent(new CustomEvent("camera-change", { detail: camera }));
+      // Hotspots are screen-space projections of world points.
+      this.#updateHotspots();
+    });
+    editor.on("environment-change", (payload) => {
+      this.dispatchEvent(new CustomEvent("environment-change", { detail: payload }));
+    });
+    editor.on("progress", (payload) => {
+      // Any progress sample means a load is in flight → show the progress bar.
+      this.#setLoading(true);
+      this.dispatchEvent(new CustomEvent("progress", { detail: payload }));
+    });
+    // Playback transport (model-viewer parity). `play` keeps a payload that
+    // says *what* started; `pause` / `finished` carry none upstream either.
+    editor.on("play", (payload) => {
+      this.#noteActiveClip(payload.name);
+      this.dispatchEvent(new CustomEvent("play", { detail: payload }));
+    });
+    editor.on("pause", () => {
+      this.dispatchEvent(new CustomEvent("pause", { detail: {} }));
+    });
+    editor.on("loop", (payload) => {
+      this.dispatchEvent(new CustomEvent("loop", { detail: payload }));
+    });
+    editor.on("finished", () => {
+      this.dispatchEvent(new CustomEvent("finished", { detail: {} }));
+    });
+    editor.on("load", (payload) => {
+      // A preview is *one* asset, so the store's "partial success" rule (skip
+      // the broken object, keep the rest) leaves nothing to show. Announcing
+      // `load` here would be a lie host code acts on — and the `#clearError()`
+      // below would erase the only explanation on screen.
+      if (this.#documentOwner === "src" && this.#srcLoadFailed) {
+        this.#setLoading(false);
+        this.#syncModelVisibility();
+        this.#updateHotspots();
+        return;
+      }
+      // Only the `src` path knows a URL; headless/host documents report null.
+      const url = this.#documentOwner === "src" ? this.src : null;
+      this.#contentLoaded = true;
+      this.#setLoading(false);
+      this.#clearError();
+      const detail = { ...payload, url };
+      if (this.#pendingSrcLoads > 0) {
+        // Hold the event back: `frameViewer()` has not run yet, so a host
+        // reading `getDimensions()` or the camera here would see pre-fit state.
+        // Only the load that drains the counter to zero releases the event.
+        this.#deferredLoadDetail = detail;
+        this.#syncModelVisibility();
+        this.#updateHotspots();
+        return;
+      }
+      this.dispatchEvent(new CustomEvent("load", { detail }));
+      this.#syncModelVisibility();
+      this.#updateHotspots();
+      // `reveal="auto"` (the default): the model is on screen — drop the poster.
+      this.#dismissPoster("load");
+    });
+    editor.on("error", (payload) => {
+      this.#setLoading(false);
+      // The event alone left hosts with a blank canvas; the message is now
+      // also a visual state (`slot="error"`, or the built-in overlay).
+      this.#showError(payload.message);
+      // A preview owns exactly one asset: remember that this load produced
+      // nothing, so the `load` that follows cannot announce success.
+      if (this.#documentOwner === "src") this.#srcLoadFailed = true;
+      this.dispatchEvent(new CustomEvent("error", { detail: payload }));
+    });
+  }
+
+  /**
+   * The tail of a connect: adopt the light-DOM slots, announce `scene-ready`,
+   * resolve `ready`, kick the deferred `src` load, then install the plugins a
+   * host queued with `use()` before the element connected.
+   *
+   * A failing install surfaces as an `error` event instead of rejecting
+   * `ready` — the element itself is up and the host can `unuse()` the plugin.
+   */
+  #publishReady(editor: SceneEditor): void {
+    // Slots live in the light DOM (no shadow root): adopt whatever is already
+    // there, then keep watching for later additions.
+    this.#observeSlots();
+    this.#collectSlots();
+
+    this.dispatchEvent(new CustomEvent("scene-ready"));
+    this.#resolveReady();
+
+    // Declarative preview loads after `ready`, so a host that awaits the
+    // element still observes `progress` / `load`. `loading="lazy"` defers it
+    // until the element is first visible.
+    if (this.src && this.#documentOwner !== "host") this.#maybeLoadSrc();
+
+    // flush plugins queued before init (use() before connect); a failing
+    // install must not reject ready — it surfaces as an error event.
+    const queued = this.#pendingPlugins.splice(0);
+    for (const plugin of queued) {
+      try {
+        editor.use(plugin);
+      } catch (err) {
+        this.#emitError(
+          SceneErrorCode.Lifecycle,
+          err instanceof Error ? err.message : "Plugin install failed",
+          err,
+        );
+      }
     }
   }
 
