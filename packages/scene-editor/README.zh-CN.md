@@ -9,6 +9,11 @@
 
 > `@scenio` 只是占位 scope，发布前会换成正式的组织名。
 
+**从 0.6.0 升级。** 导出的名字一个都没少（对照 `index`、`./element`、`./three`：58/8/40 →
+87/14/76，全是新增）。少的是一个入口：`@scenio/scene-editor/style.css` 不再存在——包现在完全不附带
+CSS，原来依赖的少量规则请抄进宿主样式表（见[安装](#安装)）。两次发布之间在 `main` 上短暂出现过的
+`./bim` 入口从未发布，不影响 0.6.0 的使用方。
+
 仓库：<https://github.com/hesetiema/scene-studio> · 问题反馈：<https://github.com/hesetiema/scene-studio/issues>
 
 **文档：** 简体中文（本页） · [English](README.md) · [API 参考](API.md) · [技术架构与基准](https://github.com/hesetiema/scene-studio/blob/main/docs/ARCHITECTURE.md)

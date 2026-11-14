@@ -11,6 +11,12 @@ runtime contract, so a viewer can grow into an editor without a rewrite.
 
 > Package scope (`@scenio`) is a placeholder until the npm org name is chosen.
 
+**Upgrading from 0.6.0.** Every exported name survives (compare `index`, `./element`, `./three`: 58/8/40
+→ 87/14/76, all additive). One entry does not: `@scenio/scene-editor/style.css` is gone, because the
+package now ships no CSS at all — copy the handful of rules you relied on into your own stylesheet
+(see [Install](#install)). The `./bim` entry that existed on `main` between the two releases was never
+published, so nothing there affects you.
+
 Repository: <https://github.com/hesetiema/scene-studio> · Issues: <https://github.com/hesetiema/scene-studio/issues>
 
 **Docs:** English (this page) · [简体中文](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/README.zh-CN.md) · [API reference](https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md) · [Architecture & benchmarks](https://github.com/hesetiema/scene-studio/blob/main/docs/ARCHITECTURE.md)
