@@ -69,7 +69,7 @@ don't hand-delete `node_modules` to get past it.
 Breaking one of these is a regression, not a refactor. Where a check exists, it's named.
 
 1. **Layer direction is one-way.** `core` ← `runtime` ← {`element`, `three`}. Measured today:
-   **75 files, 227 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
+   **78 files, 238 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
    backwards edge is a *type-only* `import type { Transform }` from
    `core/commands/transform-command.ts` → `runtime/runtime-contract.ts`; `Transform` is a
    document-level concept and ideally belongs in `core`.
@@ -124,7 +124,7 @@ stale `dist`.
 | A new runtime capability | `runtime/runtime-contract.ts` **+** `runtime/fake-runtime.ts` **+** `three/three-runtime.ts` | Both implementations or neither |
 | Asset loading, decoder assembly | `assets/` | |
 | Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/` |
-| DOM attributes, slots, lifecycle, a11y | `element/` | Element + `slot-chrome` (poster/error/hotspots) + three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
+| DOM attributes, slots, lifecycle, a11y | `element/` | Element + `slot-chrome` + `viewer-attributes` + `attribute-math` + three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
 | Host UI, panels, URL params | `apps/playground/src/` | Never a reason to touch the SDK |
 
 ## Conventions
@@ -164,20 +164,27 @@ stale `dist`.
 
 ## Known weak points (known, accepted — don't "improve" them unasked)
 
-- `element/scene-editor-element.ts` is **2 580 lines**, one class, ~93 public + ~60 private members.
-  It is one aggregation on purpose: attribute parsing, decoder assembly, load orchestration, mode
-  projection, the DOM contract itself. It is still the least unit-testable file in the repo.
+- `element/scene-editor-element.ts` is **2 042 lines**, one class, ~95 public + ~42 private members.
+  It is one aggregation on purpose: load orchestration, decoder assembly, mode projection, the DOM
+  contract itself. It is still the least unit-testable file in the repo.
   Connect-time assembly is split into seven named stages — `#mountCanvas` → `#createRuntime`
   → `#pushInitialState` → `#wireInput` → `#wireViewport` → `#forwardFacadeEvents` → `#publishReady`.
   **Put new wiring in the stage it belongs to; never grow `#init` back into a 269-line method.**
   `#forwardFacadeEvents` is one flat table on purpose — don't split it for a line count.
-  Slot chrome (poster, progress, error surface, hotspot anchors) now lives in
-  `element/slot-chrome.ts` — **add slot behaviour there, not back into the element**; the element
-  keeps only the four public forwards (`queryHotspot`, `updateHotspot`, `dismissPoster`,
-  `refreshSlots`) and owns `#contentLoaded`, which the slot module reads through the host callback.
-  The next real step is extracting `viewer-attributes` (422 lines, 10 fields); that is a project,
-  not a drive-by refactor. Do **not** extract the load pipeline (139 lines but 17 cross-cluster
-  fields) or the façade forwards.
+  Three things have moved out; put new code where it belongs rather than back into the element:
+  - `element/slot-chrome.ts` — poster / progress / error overlay / hotspot anchors. The element
+    keeps the four public forwards (`queryHotspot`, `updateHotspot`, `dismissPoster`,
+    `refreshSlots`) and owns `#contentLoaded`, which the slot module reads via a host callback.
+  - `element/viewer-attributes.ts` — attribute → runtime projection (environment, alt, display,
+    shadow, camera pose and policy, playback, `touch-action`). It owns the applied-pose signature;
+    the element owns *when* (connect, load, attribute change) plus the five-member host and the
+    four imperative camera setters that share `commitCamera` / `clampFieldOfView`.
+    **A new viewer attribute is a method here plus one line in `attributeChangedCallback`.**
+  - `element/attribute-math.ts` — the bottom of the layer: orbit geometry (`orbitFromCamera` /
+    `cameraFromOrbit`) and the attribute parsers (`parseVector3`, `parseOrbitToken`, `parseAngle`).
+    Both `slot-chrome` and `viewer-attributes` import it; it imports nothing from `element/`.
+  Do **not** extract the load pipeline (139 lines but 17 cross-cluster fields) or the façade
+  forwards — no clean seam exists for either.
 - `three/three-runtime.ts` is **1 524 lines** of wiring + lifecycle + forwarding, with no section
   markers, sitting on top of `three/viewer/`'s 20 single-concern modules (9 `*-rig.ts`: animation,
   camera, display, environment, explode, gizmo, instancing, lighting, morph; plus picking-adjacent

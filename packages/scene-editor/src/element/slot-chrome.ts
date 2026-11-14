@@ -12,6 +12,7 @@
  * types only — no `three`, not even lazily.
  */
 import type { RuntimeContract } from "../runtime/runtime-contract";
+import { parseVector3 } from "./attribute-math";
 
 /** A vector in the `{x, y, z}` shape model-viewer's `queryHotspot()` returns. */
 export interface HotspotVector {
@@ -100,22 +101,6 @@ const REVEAL_MODES: ReadonlySet<string> = new Set<RevealMode>(["auto", "interact
 
 /** The slot families this element styles itself (no shadow root). */
 type SlotRole = "poster" | "progress" | "hotspot" | "error";
-
-/**
- * `"1 2 3"` → tuple, or `null` when the attribute is unusable.
- *
- * One format serves three attributes — hotspot `data-position` / `data-normal`
- * and the camera's `camera-target` — which is why this lives here rather than
- * being duplicated: it is the parser for a `data-*` vector attribute.
- */
-export function parseVector3(raw: string | null): [number, number, number] | null {
-  if (raw === null) return null;
-  const parts = raw.trim().split(/[\s,]+/);
-  if (parts.length !== 3) return null;
-  const values = parts.map((part) => Number.parseFloat(part));
-  if (values.some((value) => !Number.isFinite(value))) return null;
-  return [values[0] as number, values[1] as number, values[2] as number];
-}
 
 /** The slice of the host element this module drives. */
 export interface SlotChromeHost {

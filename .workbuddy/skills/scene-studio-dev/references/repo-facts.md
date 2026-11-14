@@ -11,13 +11,13 @@
 |---|---|---|---|---|
 | core | `src/core/` | 1 146 | 否 | 文档 schema、迁移、校验、层级、命令、历史、事件/错误码 |
 | runtime | `src/runtime/` | 2 133 | 否 | facade、controller、选择、插件宿主、事件总线、`FakeRuntime` |
-| element | `src/element/` | 3 127 | 仅懒加载 | 自定义元素：属性、slot、生命周期、模式、错误态、a11y |
+| element | `src/element/` | 3 465 | 仅懒加载 | 自定义元素：属性、slot、生命周期、模式、错误态、a11y |
 | three | `src/three/` | 7 320 | 是 | `ThreeRuntime` + `viewer/` 20 个单职责模块（9 个 `*-rig.ts`） |
 | assets | `src/assets/` | 1 249 | 是 | 缓存（引用计数）、加载器、变体、解码器懒装配 |
 | bim | `src/bim/` | 770 | 是 | Revit 楼层、FBX、轮廓网格、单位换算 |
 | plugins | `src/plugins/` | 38 | 否 | 插件契约 |
 
-实测（`scripts/check-boundaries.mjs`）：**75 文件 / 227 条静态内部边 / 0 循环 / 0 违规**。
+实测（`scripts/check-boundaries.mjs`）：**78 文件 / 238 条静态内部边 / 0 循环 / 0 违规**。
 另有 18 条**被许可的懒引用**（`import()` 形式的 three addon：DRACO/KTX2/Meshopt/GLTF/OBJ/STL/
 HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态依赖图。
 
@@ -68,17 +68,25 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 
 ## 5. 已知弱点（已知且接受，别顺手重构）
 
-- `element/scene-editor-element.ts` **2580 行**单 class，约 93 公开 + 约 60 私有成员，
-  聚合了属性解析、解码器装配、加载编排、模式投影，以及 DOM 契约本身。全仓最难单测。
+- `element/scene-editor-element.ts` **2042 行**单 class，约 95 公开 + 约 42 私有成员，
+  聚合了加载编排、解码器装配、模式投影，以及 DOM 契约本身。全仓最难单测。
   connect 装配已拆七阶段（`#mountCanvas` → `#createRuntime` → `#pushInitialState` →
   `#wireInput` → `#wireViewport` → `#forwardFacadeEvents` → `#publishReady`）——
   **新接线进对应阶段，别把 `#init` 养回长方法**。`#forwardFacadeEvents` 是扁平表，刻意不拆。
-  槽位界面已外置到 `element/slot-chrome.ts`（644 行）：poster、进度条、错误浮层、热点锚点。
-  **新的槽位行为加到那里**；element 只留四个公开转发 + `#contentLoaded`（槽位模块经 host
-  回调读它）。公开类型 `HotspotVector/HotspotData/HotspotConfig` 现在声明在 slot-chrome，
-  由 element 再导出 —— **`element-entry.d.ts` 与重构前逐字节相同**，挪动不影响宿主。
-  可外置：`viewer-attributes`（422 行/10 字段）。
-  不可外置：加载流水线（17 个跨簇字段）、公开转发层。属 L2，需先定验收标准。
+  `element/` 自下而上三层，新代码按此落位：
+  1. `attribute-math.ts`（108 行）—— 轨道几何 `orbitFromCamera`/`cameraFromOrbit` 与属性解析器
+     `parseVector3`/`parseOrbitToken`/`parseAngle`。零 import（除 `ViewState` 类型）。
+  2. `slot-chrome.ts`（629 行）—— poster、进度条、错误浮层、热点锚点。
+     **新的槽位行为加这里**；element 只留四个公开转发 + `#contentLoaded`（经 host 回调读）。
+     公开类型 `HotspotVector/HotspotData/HotspotConfig` 声明在此，由 element 再导出。
+  3. `viewer-attributes.ts`（577 行）—— 属性 → runtime 投影：environment、alt、display、
+     shadow、camera pose/policy、playback、`touch-action`。持「已应用姿势」签名（唯一可变状态）。
+     host 只有 5 个成员：`element`/`runtime()`/`canvas()`/`documentOwner()`/`explicitPause()`。
+     **新增 viewer 属性 = 这里一个方法 + `attributeChangedCallback` 一行。**
+     导出 `commitCamera`/`clampFieldOfView` 供四个公开相机 setter 复用。
+  **验收口径**：三次外置后 `element-entry.d.ts` 与重构前**逐字节相同**、`SceneEditorElement`
+  类声明块逐字节相同；21 条属性路径全部有单测覆盖。
+  不可外置：加载流水线（17 个跨簇字段）、公开转发层 —— 都没有干净接缝。属 L2，需先定验收标准。
 - `three/three-runtime.ts` **1524 行**（装配 + 生命周期 + 转发，无分区注释），压在
   `three/viewer/` 20 个单职责模块之上。第二可能的拆分目标。
 - `src/bim/` 是单产品领域代码占公开子路径，消费者只有 `apps/playground/src/vent-demo.ts`。

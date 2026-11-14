@@ -1,10 +1,8 @@
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import type {
-  CameraOrbitLimits,
   DisplayModeId,
   EnvironmentPreset,
   RuntimeContract,
-  ToneMappingMode,
   Transform,
 } from "../runtime/runtime-contract";
 import type {
@@ -40,11 +38,20 @@ import { createSrcDocument, SRC_ASSET_ID } from "./src-document";
 import { createDocumentFromAsset } from "../core/document/create";
 import { createPreviewViewState } from "../core/document/default-view";
 import { createFileBundleUrl, type FileBundle } from "../assets/file-bundle";
-import { SlotChrome, parseVector3, type HotspotConfig, type HotspotData } from "./slot-chrome";
+// Element-internal layering, bottom up: math → slot chrome / attributes.
+import {
+  cameraFromOrbit,
+  orbitFromCamera,
+  type CameraOrbit,
+} from "./attribute-math";
+import { SlotChrome, type HotspotConfig, type HotspotData } from "./slot-chrome";
+import { ViewerAttributes, displayModeFrom, explodeFrom } from "./viewer-attributes";
 
 // The hotspot vocabulary lives next to the code that produces it; it is still
 // exported from this module because `element-entry.ts` re-exports it from here.
 export type { HotspotConfig, HotspotData, HotspotVector } from "./slot-chrome";
+// Camera vocabulary now lives next to the orbit math; still reachable from here.
+export type { CameraOrbit } from "./attribute-math";
 
 /** Options for {@link SceneEditorElement.exportDocument}. */
 export interface SceneExportOptions {
@@ -140,45 +147,6 @@ export type VisibilityObserverFactory = (
   onChange: (visible: boolean) => void,
 ) => VisibilityObserver | null;
 
-const TONE_MAPPING_MODES: readonly ToneMappingMode[] = [
-  "none",
-  "linear",
-  "aces",
-  "agx",
-  "neutral",
-];
-
-function normalizeToneMapping(value: string): ToneMappingMode | null {
-  const lower = value.toLowerCase();
-  return (TONE_MAPPING_MODES as readonly string[]).includes(lower)
-    ? (lower as ToneMappingMode)
-    : null;
-}
-
-const DISPLAY_MODE_IDS: readonly DisplayModeId[] = [
-  "studio",
-  "xray",
-  "wireframe",
-  "normal",
-  "clay",
-];
-
-/** `display-mode`; invalid spellings are ignored (not guessed into a mode). */
-function displayModeFrom(value: string | null): DisplayModeId | null {
-  if (value === null) return null;
-  const lower = value.trim().toLowerCase();
-  return (DISPLAY_MODE_IDS as readonly string[]).includes(lower)
-    ? (lower as DisplayModeId)
-    : null;
-}
-
-/** `explode` as 0..1; `null` (absent) means 0, invalid text means 0. */
-function explodeFrom(value: string | null): number {
-  if (value === null) return 0;
-  const parsed = Number.parseFloat(value);
-  return Number.isFinite(parsed) ? Math.min(1, Math.max(0, parsed)) : 0;
-}
-
 /** Attributes that only steer the orbit controls (never persisted, never dirty). */
 const CAMERA_ATTRIBUTES: ReadonlySet<string> = new Set([
   "auto-rotate",
@@ -211,20 +179,6 @@ const SENSITIVITY_ATTRIBUTES: ReadonlySet<string> = new Set([
   "zoom-sensitivity",
   "pan-sensitivity",
 ]);
-
-/**
- * `touch-action` values a viewer may hand to the browser. `auto` is
- * deliberately absent: model-viewer's docs treat "the CSS default" as "do not
- * opt into camera interaction at all", and `auto` on the canvas is what causes
- * the scroll hijack this attribute exists to prevent.
- */
-const TOUCH_ACTION_KEYWORDS: ReadonlySet<string> = new Set(["none", "pan-x", "pan-y"]);
-
-/**
- * model-viewer's default: one-finger vertical drags scroll the page, and a
- * drag that starts horizontally still orbits (`pan-y` allows the latter).
- */
-const DEFAULT_TOUCH_ACTION = "pan-y";
 
 /** Attributes that only steer animation playback (viewer chrome, not the document). */
 const PLAYBACK_ATTRIBUTES: ReadonlySet<string> = new Set([
@@ -299,134 +253,6 @@ const VIEW_ATTRIBUTES: ReadonlySet<string> = new Set([
 
 /** `<scene-editor mode="viewer">` vs `mode="editor"` (see `SceneEditorElement.mode`). */
 export type SceneEditorMode = "viewer" | "editor";
-
-const ORBIT_AXES = ["theta", "phi", "radius"] as const;
-
-/** 0..1 range for opacity-like attributes; `NaN` collapses to 0. */
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(Math.max(value, 0), 1);
-}
-
-/** model-viewer's `auto` placeholder, `90deg`, `1.2rad`, or a bare number. */
-function parseOrbitToken(
-  raw: string | undefined,
-  axis: (typeof ORBIT_AXES)[number],
-): number | undefined {
-  if (raw === undefined) return undefined;
-  const token = raw.trim().toLowerCase();
-  if (token === "" || token === "auto") return undefined;
-  const value = Number.parseFloat(token);
-  if (!Number.isFinite(value)) return undefined;
-  if (axis === "radius") return value;
-  // Angles: `rad` converts, `deg` and unitless are already degrees.
-  return token.endsWith("rad") ? (value * 180) / Math.PI : value;
-}
-
-function readOrbitLimits(el: HTMLElement): CameraOrbitLimits | undefined {
-  const minRaw = el.getAttribute("min-camera-orbit");
-  const maxRaw = el.getAttribute("max-camera-orbit");
-  if (minRaw === null && maxRaw === null) return undefined;
-
-  const minTokens = (minRaw ?? "").trim().split(/\s+/);
-  const maxTokens = (maxRaw ?? "").trim().split(/\s+/);
-  const limits: CameraOrbitLimits = {};
-  for (const [index, axis] of ORBIT_AXES.entries()) {
-    const low = parseOrbitToken(minTokens[index], axis);
-    const high = parseOrbitToken(maxTokens[index], axis);
-    // `auto` on either side means "unlimited" — a half-open range is not a range.
-    if (low === undefined || high === undefined || low > high) continue;
-    limits[axis] = [low, high] as const;
-  }
-  return Object.keys(limits).length > 0 ? limits : undefined;
-}
-
-function readNumberAttr(el: HTMLElement, name: string, fallback: number): number {
-  const raw = el.getAttribute(name);
-  if (raw === null) return fallback;
-  const value = Number.parseFloat(raw);
-  return Number.isFinite(value) ? value : fallback;
-}
-
-/** model-viewer's `interpolation-decay` default, in milliseconds. */
-const DEFAULT_INTERPOLATION_DECAY = 50;
-
-/** The camera half of a view state, as the runtime and rig hand it around. */
-type CameraView = ViewState["camera"];
-
-/* ------------------------------------------------------------ orbit math ---- */
-
-/** model-viewer's orbit triple: azimuth / polar / distance, degrees + world units. */
-export interface CameraOrbit {
-  /** Azimuth, degrees, measured from +Z toward +X (0 = looking from the front). */
-  theta: number;
-  /** Polar angle from +Y, degrees (75 = 15° above the horizon). */
-  phi: number;
-  /** Distance from the orbit target, world units. */
-  radius: number;
-}
-
-const DEG = Math.PI / 180;
-/** Keeps the eye off the pole: `lookAt` is undefined when the offset is vertical. */
-const PHI_EPSILON = 0.5;
-
-/**
- * Camera offset → orbit angles. `null` when the eye sits on the target (no
- * direction to speak of), so callers fall back instead of emitting `NaN`.
- *
- * The convention matches `min-camera-orbit` / `max-camera-orbit`: `theta` is the
- * azimuth from +Z toward +X and `phi` the polar angle from +Y — the same frame
- * model-viewer's `camera-orbit` uses, hence the same numbers a host can paste
- * between the two elements.
- */
-export function orbitFromCamera(
-  position: readonly [number, number, number],
-  target: readonly [number, number, number],
-): CameraOrbit | null {
-  const dx = position[0] - target[0];
-  const dy = position[1] - target[1];
-  const dz = position[2] - target[2];
-  const radius = Math.hypot(dx, dy, dz);
-  if (!Number.isFinite(radius) || radius < 1e-6) return null;
-  const phi = Math.acos(Math.min(Math.max(dy / radius, -1), 1)) / DEG;
-  // atan2(x, z): 0° on +Z, +90° on +X.
-  const theta = Math.atan2(dx, dz) / DEG;
-  return { theta, phi, radius };
-}
-
-/** Orbit angles → camera offset from the target. */
-export function cameraFromOrbit(
-  target: readonly [number, number, number],
-  orbit: CameraOrbit,
-): [number, number, number] {
-  const phi = Math.min(Math.max(orbit.phi, PHI_EPSILON), 180 - PHI_EPSILON) * DEG;
-  const theta = orbit.theta * DEG;
-  const radius = Math.max(orbit.radius, 1e-6);
-  const horizontal = radius * Math.sin(phi);
-  return [
-    target[0] + horizontal * Math.sin(theta),
-    target[1] + radius * Math.cos(phi),
-    target[2] + horizontal * Math.cos(theta),
-  ];
-}
-
-/** `field-of-view="30deg"` → degrees; `auto` / garbage → undefined. */
-function parseAngle(raw: string | undefined): number | undefined {
-  return parseOrbitToken(raw, "theta");
-}
-
-/** OrbitControls' own default `dampingFactor`. */
-const DEFAULT_DAMPING = 0.08;
-
-/**
- * `camera-damping="0.08"` → inertia factor. Absent means "no inertia", which is
- * what a render-on-demand editor wants; a bare attribute gets the addon default.
- */
-function readDamping(el: HTMLElement): number | undefined {
-  if (!el.hasAttribute("camera-damping")) return undefined;
-  const raw = Number.parseFloat(el.getAttribute("camera-damping") ?? "");
-  return Number.isFinite(raw) ? clamp01(raw) : DEFAULT_DAMPING;
-}
 
 /**
  * Thin DOM shell (0.2): owns the canvas, viewport wiring (click-select, resize,
@@ -700,6 +526,24 @@ export class SceneEditorElement extends HTMLElement {
     onSlotStateChange: () => this.#syncModelVisibility(),
   });
 
+  /* ---------------------------------------------------- viewer attributes ---- */
+  /**
+   * Attribute → runtime projection: environment, alt, display, shadow, camera
+   * pose and policy, playback, `touch-action`. It owns the "what does this
+   * attribute mean" half; this element owns the "when" half (connect, load,
+   * attribute change) and the public API those attributes feed.
+   *
+   * The five callbacks are read at call time, so building it here — before
+   * `#editor` or `#canvas` exist — is safe.
+   */
+  readonly #attrs = new ViewerAttributes({
+    element: this,
+    runtime: () => this.#editor?.runtime ?? null,
+    canvas: () => this.#canvas,
+    documentOwner: () => this.#documentOwner,
+    explicitPause: () => this.#explicitPause,
+  });
+
   /* ----------------------------------------------------------- load order ---- */
   /**
    * The `src` path holds its `load` event back until framing finished: hosts read
@@ -740,9 +584,7 @@ export class SceneEditorElement extends HTMLElement {
   /** Clip the transport last started/continued; `null` = nothing played yet. */
   #activeClipName: string | null = null;
 
-  /* --------------------------------------------------------- camera pose ---- */
-  /** Signature of the last applied `camera-orbit|-target|-field-of-view` triple. */
-  #appliedCameraPose: string | null = null;
+  /* --------------------------------------------------------------- canvas ---- */
   /** Canvas this element owns — carries the `alt` text as an `aria-label`. */
   #canvas: HTMLCanvasElement | null = null;
 
@@ -797,16 +639,16 @@ export class SceneEditorElement extends HTMLElement {
       return;
     }
     if (DISPLAY_ATTRIBUTES.has(name)) {
-      this.#applyDisplaySettings();
+      this.#attrs.applyDisplaySettings();
       return;
     }
     if (name === "environment-image" || name === "skybox-image") {
       // Display-only, same as `tone-mapping`: never written to the document.
-      this.#applyEnvironmentPreset();
+      this.#attrs.applyEnvironmentPreset();
       return;
     }
     if (name === "alt") {
-      this.#applyAlt();
+      this.#attrs.applyAlt();
       return;
     }
     if (DECODER_ATTRIBUTES.has(name)) {
@@ -824,23 +666,23 @@ export class SceneEditorElement extends HTMLElement {
     }
     if (VIEW_ATTRIBUTES.has(name)) {
       // `min/max-field-of-view` only constrain the clamp, so re-run the pose.
-      this.#applyCameraPose(true);
+      this.#attrs.applyCameraPose(true);
       return;
     }
     if (CAMERA_ATTRIBUTES.has(name)) {
-      this.#applyCameraSettings();
+      this.#attrs.applyCameraSettings();
       return;
     }
     if (name === "touch-action") {
-      this.#applyTouchAction();
+      this.#attrs.applyTouchAction();
       return;
     }
     if (SENSITIVITY_ATTRIBUTES.has(name)) {
-      this.#applyCameraSettings();
+      this.#attrs.applyCameraSettings();
       return;
     }
     if (PLAYBACK_ATTRIBUTES.has(name)) {
-      this.#applyPlaybackSettings();
+      this.#attrs.applyPlaybackSettings();
       return;
     }
     if (name === "reveal") {
@@ -963,7 +805,7 @@ export class SceneEditorElement extends HTMLElement {
     this.#applyMode();
     this.#slots.clearError();
     // Editor mode again: back to the warm room unless the host chose otherwise.
-    this.#applyEnvironmentPreset();
+    this.#attrs.applyEnvironmentPreset();
     this.#slots.setLoading(true);
     performance.mark("scene-editor:load:start");
     try {
@@ -973,7 +815,7 @@ export class SceneEditorElement extends HTMLElement {
       await this.#requireEditor().loadDocument(doc);
       // Same reason as the `src` path: the document's `view` lands after the
       // `load` event, so display-only attributes are re-asserted afterwards.
-      this.#reassertDisplaySettings();
+      this.#attrs.reassertDisplaySettings();
     } finally {
       this.#slots.setLoading(false);
       performance.mark("scene-editor:load:end");
@@ -1387,7 +1229,7 @@ export class SceneEditorElement extends HTMLElement {
     this.#pendingSrcLoads += 1;
     this.#deferredLoadDetail = null;
     // Preview mode may have just switched the default preset to `neutral`.
-    this.#applyEnvironmentPreset();
+    this.#attrs.applyEnvironmentPreset();
     this.#slots.setLoading(true);
     try {
       // Decoders first: a Draco/KTX2/Meshopt asset cannot even parse without
@@ -1406,7 +1248,7 @@ export class SceneEditorElement extends HTMLElement {
       // display-only attributes (tone mapping / exposure / contact shadow) are
       // re-asserted here, once the host's document is the current one. Framing
       // comes first: the shadow pass re-applies the camera it reads.
-      this.#reassertDisplaySettings();
+      this.#attrs.reassertDisplaySettings();
     } catch {
       // The facade already emitted `error`; swallowing keeps the
       // fire-and-forget call site free of unhandled rejections.
@@ -1428,231 +1270,6 @@ export class SceneEditorElement extends HTMLElement {
     this.#slots.dismissPoster("load");
   }
 
-  /**
-   * Built-in IBL for the current mode. `environment-image` wins; without it a
-   * preview is a viewer (model-viewer's neutral studio) while a host-owned
-   * document keeps the editor's warm room.
-   *
-   * `legacy` is model-viewer's old default; here it aliases `room`, which is
-   * literally the studio this project used before the `neutral` port.
-   */
-  get #environmentPreset(): EnvironmentPreset {
-    const raw = (this.getAttribute("environment-image") ?? "").trim().toLowerCase();
-    if (raw === "neutral" || raw === "room" || raw === "legacy") return raw;
-    return this.src !== null && this.#documentOwner !== "host" ? "neutral" : "room";
-  }
-
-  /**
-   * `environment-image` as a file URL, or `null` when it names a preset (or is
-   * unset). model-viewer accepts `neutral`, `legacy` or a URL in the same
-   * attribute, so the value's shape — not a separate flag — decides.
-   */
-  get #environmentImageUrl(): string | null {
-    const raw = (this.getAttribute("environment-image") ?? "").trim();
-    if (raw === "") return null;
-    const lower = raw.toLowerCase();
-    return lower === "neutral" || lower === "room" || lower === "legacy" ? null : raw;
-  }
-
-  /**
-   * Apply the lighting side of `environment-image` / `skybox-image`.
-   *
-   * Order matters: the preset goes first (it owns the fallback IBL), then the
-   * URL override takes the reflection over, then the backdrop — because
-   * model-viewer lets a skybox light the model only when no `environment-image`
-   * is set, and deciding that needs to see the other attribute.
-   */
-  #applyEnvironmentPreset(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-    runtime.setEnvironmentPreset?.(this.#environmentPreset);
-    runtime.setEnvironmentImage?.(this.#environmentImageUrl);
-    this.#applySkyboxImage();
-  }
-
-  /** `skybox-image`: the visible backdrop, and the IBL too when nothing else is. */
-  #applySkyboxImage(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-    const url = (this.getAttribute("skybox-image") ?? "").trim() || null;
-    runtime.setSkyboxImage?.(url, {
-      asEnvironment: url !== null && this.#environmentImageUrl === null,
-    });
-  }
-
-  /**
-   * `alt` — the canvas is the accessible representation of the model
-   * (model-viewer parity). Without the attribute the label falls back to the
-   * file name, which beats an unlabelled canvas: a screen-reader user then hears
-   * *something* instead of "graphic".
-   */
-  #applyAlt(): void {
-    const canvas = this.#canvas;
-    if (!canvas) return;
-    canvas.setAttribute("role", "img");
-    const text = this.getAttribute("alt")?.trim() || this.#fallbackAlt();
-    if (text) canvas.setAttribute("aria-label", text);
-    else canvas.removeAttribute("aria-label");
-  }
-
-  #fallbackAlt(): string {
-    const name = this.src?.split(/[?#]/)[0]?.split("/").pop() ?? "";
-    return name ? `3D model: ${name}` : "";
-  }
-
-  /**
-   * Display-only settings. `src` previews default to `neutral` because that is
-   * what model-viewer's `tone-mapping="auto"` resolves to on a glTF asset
-   * (measured: identical mean/p95 luminance on the Khronos Fox, while ACES
-   * renders ~35% darker and more saturated). Documents loaded through
-   * `loadDocument()` keep three's default unless the host opts in.
-   */
-  #applyDisplaySettings(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-
-    const mode = this.getAttribute("tone-mapping") ?? (this.src ? "neutral" : null);
-    if (mode) {
-      const normalized = normalizeToneMapping(mode);
-      if (normalized) runtime.setToneMapping?.(normalized);
-    }
-
-    const rawExposure = this.getAttribute("exposure");
-    if (rawExposure !== null) {
-      const exposure = Number(rawExposure);
-      if (Number.isFinite(exposure)) runtime.setExposure?.(exposure);
-    }
-
-    // Shading overlay + component explode: both presentation-only, both
-    // re-asserted after a load (the runtime resets explode on document swap).
-    const rawMode = this.getAttribute("display-mode");
-    runtime.setDisplayMode?.(displayModeFrom(rawMode) ?? "studio");
-    runtime.setExplode?.(explodeFrom(this.getAttribute("explode")));
-
-    this.#applyShadowSettings();
-    this.#applyVariantName();
-    // An authored camera is a complete pose, so it gets the first word;
-    // `#applyCameraPose` stands down while one is selected.
-    this.#applyCameraName();
-    this.#applyCameraPose();
-  }
-
-  /**
-   * Re-run the display settings after a load. Unlike the attribute path this
-   * also forgets the applied camera pose: the document's own `view` is restored
-   * after the `load` event, which silently overwrites whatever the attributes
-   * applied before it.
-   */
-  #reassertDisplaySettings(): void {
-    // Forget the applied pose so the post-load application snaps to the
-    // document's own `view` instead of fading toward it.
-    this.#appliedCameraPose = null;
-    this.#applyDisplaySettings();
-  }
-
-  /**
-   * `camera-orbit` / `camera-target` / `field-of-view` — model-viewer's
-   * declarative pose.
-   *
-   * Only the axes a host actually spells out are touched: `camera-orbit="auto
-   * auto 2m"` keeps the current angles and just moves the eye, which is what
-   * `auto` means in model-viewer. The pose goes through `applyViewState` on the
-   * *runtime*, never the document — a viewer attribute must not dirty the scene
-   * (the persisted pose stays `view.camera`).
-   *
-   * `force` is what keeps the two paths apart: an attribute *change* always
-   * applies, while the post-load re-assert applies once and then stands down, so
-   * an unrelated `tone-mapping` tweak cannot snap a user's drag back.
-   */
-  #applyCameraPose(force = false): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-    // `camera-name` owns the whole pose while it is set.
-    if (this.cameraName !== null) return;
-
-    const orbitRaw = this.getAttribute("camera-orbit");
-    const targetRaw = this.getAttribute("camera-target");
-    const fovRaw = this.getAttribute("field-of-view");
-    if (orbitRaw === null && targetRaw === null && fovRaw === null) {
-      this.#appliedCameraPose = null;
-      return;
-    }
-    const signature = `${orbitRaw ?? ""}|${targetRaw ?? ""}|${fovRaw ?? ""}`;
-    if (!force && signature === this.#appliedCameraPose) return;
-    this.#appliedCameraPose = signature;
-
-    const view = runtime.getViewState();
-    const camera = {
-      position: [...view.camera.position] as [number, number, number],
-      target: [...view.camera.target] as [number, number, number],
-      fov: view.camera.fov,
-    };
-    const targetValue = parseVector3(targetRaw);
-    const target = targetValue ?? camera.target;
-    const current = orbitFromCamera(camera.position, camera.target);
-
-    const tokens = (orbitRaw ?? "").trim().split(/\s+/);
-    const theta = orbitRaw === null ? undefined : parseOrbitToken(tokens[0], "theta");
-    const phi = orbitRaw === null ? undefined : parseOrbitToken(tokens[1], "phi");
-    const radius = orbitRaw === null ? undefined : parseOrbitToken(tokens[2], "radius");
-    const targetGiven = targetValue !== null;
-
-    if (theta !== undefined || phi !== undefined || radius !== undefined) {
-      // Nothing framed yet (an empty scene): assume the reference's default
-      // front view rather than inventing `NaN`s.
-      const base = current ?? { theta: 0, phi: 75, radius: 1 };
-      camera.position = cameraFromOrbit(target, {
-        theta: theta ?? base.theta,
-        phi: phi ?? base.phi,
-        radius: radius ?? base.radius,
-      });
-      camera.target = target;
-    } else if (targetGiven) {
-      // Target alone: keep the angles, translate the eye with it.
-      if (current) camera.position = cameraFromOrbit(target, current);
-      camera.target = target;
-    }
-
-    const fov = parseAngle(fovRaw ?? undefined);
-    if (fov !== undefined) camera.fov = this.#clampFieldOfView(fov);
-
-    // A post-load re-assert (`force` is false) is the *initial* placement: it
-    // snaps. An attribute the host changed afterwards is a user intent, so it
-    // fades — that is what model-viewer does with `camera-orbit`.
-    this.#commitCamera(view, camera, !force);
-  }
-
-  /**
-   * Hand a pose to the runtime.
-   *
-   * model-viewer interpolates any change to `camera-orbit` / `camera-target`
-   * (asymptotically, over `interpolation-decay`), but the initial placement
-   * after a load snaps: fading in from wherever the camera happened to be would
-   * look like an accidental animation on page load.
-   *
-   * The fade path deliberately does *not* go through `applyViewState`: an eased
-   * pose is presentation only, and must not look like a user view change that
-   * gets persisted into the document.
-   */
-  #commitCamera(view: ViewState, camera: CameraView, instant: boolean): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-    if (!instant && runtime.smoothViewTo) {
-      runtime.smoothViewTo(camera, this.#interpolationDecay);
-      return;
-    }
-    runtime.applyViewState({ ...view, camera });
-  }
-
-  /**
-   * `interpolation-decay` (ms, model-viewer default 50): how long a camera move
-   * takes. Larger = slower; the decay is asymptotic, so most of the motion
-   * happens inside this window.
-   */
-  get #interpolationDecay(): number {
-    const raw = Number.parseFloat(this.getAttribute("interpolation-decay") ?? "");
-    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_INTERPOLATION_DECAY;
-  }
 
   /**
    * Land on the last camera goal immediately instead of fading into it
@@ -1665,15 +1282,6 @@ export class SceneEditorElement extends HTMLElement {
     return true;
   }
 
-  /** `min-field-of-view` / `max-field-of-view`; absent on either side = no clamp. */
-  #clampFieldOfView(value: number): number {
-    const min = readNumberAttr(this, "min-field-of-view", 0);
-    const max = readNumberAttr(this, "max-field-of-view", 0);
-    const lower = min > 0 ? min : 0;
-    const upper = max > 0 ? max : Number.POSITIVE_INFINITY;
-    const clamped = Math.min(Math.max(value, lower), upper);
-    return Number.isFinite(clamped) && clamped > 0 ? clamped : value;
-  }
 
   /* ----------------------------------------------------------- camera api ---- */
 
@@ -1700,7 +1308,7 @@ export class SceneEditorElement extends HTMLElement {
       phi: orbit.phi ?? base.phi,
       radius: orbit.radius ?? base.radius,
     });
-    this.#commitCamera(view, { ...view.camera, position }, false);
+    this.#attrs.commitCamera(view, { ...view.camera, position }, false);
     return true;
   }
 
@@ -1717,7 +1325,7 @@ export class SceneEditorElement extends HTMLElement {
     const orbit = orbitFromCamera(view.camera.position, view.camera.target);
     const nextTarget: [number, number, number] = [target[0], target[1], target[2]];
     const position = orbit ? cameraFromOrbit(nextTarget, orbit) : nextTarget;
-    this.#commitCamera(view, { ...view.camera, position, target: nextTarget }, false);
+    this.#attrs.commitCamera(view, { ...view.camera, position, target: nextTarget }, false);
     return true;
   }
 
@@ -1730,7 +1338,8 @@ export class SceneEditorElement extends HTMLElement {
     const runtime = this.#editor?.runtime;
     if (!runtime || !Number.isFinite(degrees) || degrees <= 0) return false;
     const view = runtime.getViewState();
-    this.#commitCamera(view, { ...view.camera, fov: this.#clampFieldOfView(degrees) }, false);
+    const fov = this.#attrs.clampFieldOfView(degrees);
+    this.#attrs.commitCamera(view, { ...view.camera, fov }, false);
     return true;
   }
 
@@ -1833,37 +1442,6 @@ export class SceneEditorElement extends HTMLElement {
     if (name !== null) this.#activeClipName = name;
   }
 
-  /**
-   * `camera-name` — look through a camera authored inside the asset.
-   *
-   * Display-only and re-asserted after every load, like `variant-name`: camera
-   * names only exist once the asset parses, and a document's own `view` would
-   * otherwise win the race and leave the attribute ignored.
-   */
-  #applyCameraName(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime?.setCameraByName) return;
-    const name = this.cameraName;
-    // `null` only clears an active camera; it must not reset a restored view.
-    if (name === null && runtime.cameraName === null) return;
-    runtime.setCameraByName(name);
-  }
-
-  /**
-   * `variant-name` — a `KHR_materials_variants` pick (model-viewer parity).
-   *
-   * Display-only: the choice describes how to look at the asset, not what the
-   * document contains, so it never reaches the document. Like the shadow knobs it
-   * re-runs after every load — variants are only known once the asset parses, and
-   * a name set beforehand has to be applied retroactively.
-   */
-  #applyVariantName(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime?.setVariant) return;
-    const raw = this.getAttribute("variant-name");
-    const name = raw === null || raw.trim() === "" ? null : raw.trim();
-    runtime.setVariant(name);
-  }
 
   /** Variant names declared by the loaded asset(s) — model-viewer `availableVariants`. */
   get availableVariants(): string[] {
@@ -1949,114 +1527,6 @@ export class SceneEditorElement extends HTMLElement {
     );
   }
 
-  /**
-   * `shadow-intensity` / `shadow-softness` — model-viewer's contact shadow knobs.
-   *
-   * Display-only, so it patches the *runtime* view (`applyViewState` never
-   * touches the document). It has to re-run after every load: a document's own
-   * `view.environment` wins over whatever was applied before it, which is
-   * exactly how the promo page's shadow used to disappear the moment the GLB
-   * finished loading.
-   */
-  #applyShadowSettings(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-    const intensityAttr = this.getAttribute("shadow-intensity");
-    const softnessAttr = this.getAttribute("shadow-softness");
-    if (intensityAttr === null && softnessAttr === null) return;
-
-    const intensity = clamp01(intensityAttr === null ? 1 : Number(intensityAttr));
-    const view = runtime.getViewState();
-    const environment = { ...view.environment };
-    if (intensity <= 0) {
-      delete environment.contactShadow;
-    } else {
-      const softness = Number(softnessAttr ?? 1);
-      environment.contactShadow = {
-        enabled: true,
-        // Straight through: the shadow rig applies the reference's own
-        // softness-dependent easing, so a flat fudge factor here would darken
-        // the comparison twice.
-        opacity: intensity,
-        ...(Number.isFinite(softness) ? { softness: clamp01(softness) } : {}),
-      };
-    }
-    runtime.applyViewState({ ...view, environment });
-  }
-
-  /**
-   * Camera policy: pointer verbs, orbit limits and the turntable. Presentation
-   * only — never recorded in the document, so it cannot mark the scene dirty.
-   */
-  #applyCameraSettings(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-
-    const limits = readOrbitLimits(this);
-    const damping = readDamping(this);
-    // `orbit-sensitivity` follows model-viewer: any finite number, negatives
-    // invert the drag. A garbage value falls back to 1 rather than freezing.
-    const sensitivity = readNumberAttr(this, "orbit-sensitivity", 1);
-    // Same contract for the other two verbs — `zoom-sensitivity="0"` freezes
-    // the wheel while the drag still orbits.
-    const zoomSensitivity = readNumberAttr(this, "zoom-sensitivity", 1);
-    const panSensitivity = readNumberAttr(this, "pan-sensitivity", 1);
-    runtime.setCameraControls?.({
-      pan: !this.hasAttribute("disable-pan"),
-      zoom: !this.hasAttribute("disable-zoom"),
-      ...(limits === undefined ? {} : { limits }),
-      ...(damping === undefined ? {} : { damping }),
-      ...(Number.isFinite(sensitivity) ? { sensitivity } : {}),
-      ...(Number.isFinite(zoomSensitivity) ? { zoomSensitivity } : {}),
-      ...(Number.isFinite(panSensitivity) ? { panSensitivity } : {}),
-    });
-
-    runtime.setAutoRotate?.(
-      this.hasAttribute("auto-rotate")
-        ? {
-            enabled: true,
-            degreesPerSecond: readNumberAttr(this, "rotation-per-second", 30),
-            delayMs: readNumberAttr(this, "auto-rotate-delay", 3000),
-          }
-        : null,
-    );
-  }
-
-  /**
-   * `touch-action`: mostly DOM. The browser decides whether a drag becomes a
-   * page scroll *before* any pointer event reaches us, so there is nothing for
-   * the runtime to compute — which is why model-viewer uses this attribute
-   * instead of a CSS rule (`touch-action` on the canvas is unreliable on iOS).
-   *
-   * It still goes through the runtime as well: `OrbitControls` **and**
-   * `TransformControls` write `touch-action: none` onto the canvas when they
-   * connect, both from async imports whose order is not ours, so a value applied
-   * before an addon mounts is silently overwritten. The runtime holds the value
-   * against them (see `viewer/touch-action-owner.ts`); this DOM write is what
-   * makes the attribute work even before a runtime exists.
-   */
-  #applyTouchAction(): void {
-    const raw = (this.getAttribute("touch-action") ?? "").trim().toLowerCase();
-    const value = TOUCH_ACTION_KEYWORDS.has(raw) ? raw : DEFAULT_TOUCH_ACTION;
-    const canvas = this.#canvas;
-    if (canvas) canvas.style.touchAction = value;
-    this.#editor?.runtime.setTouchAction?.(value);
-  }
-
-  /** Playback transport (autoplay / clip name / crossfade / one-shot). */
-  #applyPlaybackSettings(): void {
-    const runtime = this.#editor?.runtime;
-    if (!runtime) return;
-
-    runtime.setAnimationOptions?.({
-      // `pause()` before the content arrives must survive the load: the host
-      // asked for a still frame, not for autoplay to win the race.
-      autoplay: this.hasAttribute("autoplay") && !this.#explicitPause,
-      clipName: this.getAttribute("animation-name"),
-      crossfadeSeconds: readNumberAttr(this, "animation-crossfade-duration", 0) / 1000,
-      pauseAtEnd: this.hasAttribute("pause-at-end"),
-    });
-  }
 
   /**
    * Load the declarative `src` once — unless `loading="lazy"` and the element is
@@ -2129,10 +1599,10 @@ export class SceneEditorElement extends HTMLElement {
     this.appendChild(canvas);
     // The canvas is the accessible representation of the model (`alt`).
     this.#canvas = canvas;
-    this.#applyAlt();
+    this.#attrs.applyAlt();
     // DOM-only, so it lands before the runtime exists. Also the reason an
     // attribute set before upgrade still takes effect: nothing to re-assert.
-    this.#applyTouchAction();
+    this.#attrs.applyTouchAction();
     return canvas;
   }
 
@@ -2152,7 +1622,7 @@ export class SceneEditorElement extends HTMLElement {
     editor: SceneEditor;
   } {
     const assetResolver = this.#createAssetResolver();
-    const environmentPreset = this.#environmentPreset;
+    const environmentPreset = this.#attrs.environmentPreset();
     const interactive = this.mode === "editor";
     const instancing = this.instancing;
     const runtime = SceneEditorElement.runtimeFactory(canvas, {
@@ -2198,20 +1668,12 @@ export class SceneEditorElement extends HTMLElement {
     // Attributes set before upgrade land here: observedAttributes fires during
     // upgrade, but the runtime only exists now.
     runtime.setLiveViewEvents?.(this.#liveViewEvents);
-    runtime.setEnvironmentPreset?.(this.#environmentPreset);
     // The default factory already got this; repeating it covers a custom
     // factory that dropped the option (and is a no-op when it did not).
     runtime.setInstancing?.(this.instancing);
-    this.#applyDisplaySettings();
-    // Attributes set before upgrade land here (observedAttributes already ran).
-    this.#applyCameraSettings();
-    this.#applyPlaybackSettings();
-    // The factory already got the preset, but the URL overrides and the
-    // skybox only exist as attributes — nothing else applies them.
-    this.#applyEnvironmentPreset();
-    // Again now that a runtime exists: the canvas alone is not enough, the
-    // orbit addon overwrites `touch-action` when it mounts.
-    this.#applyTouchAction();
+    // Everything the attributes declare, in the connect-time order; the
+    // environment preset is re-pushed inside (factory option or not).
+    this.#attrs.applyInitial();
     // Now that a runtime exists, the mode can be pushed to it (the factory
     // already received `interactive`; this applies the derived viewer/editor
     // mode from the connect-time `src` declaration).

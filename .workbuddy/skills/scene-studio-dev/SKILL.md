@@ -81,7 +81,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 | 新运行时能力 | `runtime-contract.ts` + `fake-runtime.ts` + `three-runtime.ts` | 三处都写或都不写，且为新**可选**成员 |
 | 资产加载、解码器 | `assets/` | |
 | three.js：rig / 拾取 / 导出 | `three/` | 一个关注点一个 `*-rig.ts` |
-| DOM 属性、slot、生命周期 | `element/` | 3014 行单 class，改前先读 §已知弱点 |
+| DOM 属性、slot、生命周期 | `element/` | 分三层：`attribute-math` → `slot-chrome`/`viewer-attributes` → element；改前先读 §已知弱点 |
 | 宿主 UI、面板、URL 参数 | `apps/playground/src/` | 永远不是改 SDK 的理由 |
 
 **关键判断**：如果某个「查看器特性」让你想写 `if (isViewer)`，它应该落在
