@@ -1,6 +1,6 @@
 # scene-studio
 
-可嵌入网页的 3D 场景编辑器与模型查看器。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布。仓库当前版本为 `0.7.0`；npm 上最新发布版本为 `0.6.0`。
+可嵌入网页的 3D 场景编辑器与模型查看器。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布。仓库当前版本为 `0.7.0`，即 npm 上最新发布版本。
 
 **文档：** 简体中文（本页） · [English](README.md) · [技术架构与基准](docs/ARCHITECTURE.md) · [包快速上手](packages/scene-editor/README.zh-CN.md) · [API 参考](packages/scene-editor/API.md)
 
@@ -102,13 +102,13 @@
 
 ## 状态与路线图
 
-仓库内为 `0.7.0` alpha（尚未发布），npm `latest` 为 `0.6.0`。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
+`0.7.0` alpha 已发布，即 npm 当前的 `latest`。`1.0.0` 之前 API 仍可能调整，之后遵循 semver。
 
 - **`0.7.0`** — schema v3：真实 `parentId` 层级、`type: "primitive"`（8 种程序化几何）、对象级 `material` 覆盖、`view.lights.additional`；`addObject` / `removeObject` / `reparent` / `setMaterial` 全部可撤销，并复用加载时的 `validateHierarchy`。
 - **`0.6.0`** — 单行 glTF 预览（`src`）、自动取景、`progress`/`load` 生命周期、tone mapping / exposure、`visibility-change` 与按需开启的 `view-changing`。
-- **未发布的查看器能力**（元素属性 + 可选 runtime 方法，`view` schema 未动）：`camera-orbit` / `field-of-view` 与位姿缓动、`environment-image` 预设与 HDR URL、接触阴影、glTF 内嵌相机、morph target、播放传输与 `play`/`pause`/`loop`/`finished`、带法线的 hotspot、指针灵敏度、`loaded` / `modelIsVisible`。
-- **未发布的查看器性能**：占位几何/基础材质引用计数共享（5 000 个对象 11 MB 堆，各持一份为 26 MB）、资产内静态合批（200 个同材质 mesh → 1 个）、2 000 三角形以上按需加载 BVH 加速拾取（12.0 ms → 0.10 ms，独立 chunk）、单 mixer 多 clip 混播。
-- **未发布的接入易用性**：宿主侧「上传 → 编辑 → 导出」样板收进 SDK——`createSceneDocument` / `createDocumentFromAsset`、`createFileBundleUrl` + `el.loadFiles()`（`assetFormatHint` 让 `blob:` URL 正确解析格式）、按文档位姿（而非预览态）导出的 `el.exportDocument()`、`downloadBlob()` 与 `el.toBlob()`。视口覆盖层也已纯属性化：`display-mode`（观察着色，跨合批生效）与 `explode`（组件分解，不写文档），另有 `LIGHTING_PRESETS` 参考布光数据可直接导入。
+- **`0.7.0` 查看器能力**（元素属性 + 可选 runtime 方法，`view` schema 未动）：`camera-orbit` / `field-of-view` 与位姿缓动、`environment-image` 预设与 HDR URL、接触阴影、glTF 内嵌相机、morph target、播放传输与 `play`/`pause`/`loop`/`finished`、带法线的 hotspot、指针灵敏度、`loaded` / `modelIsVisible`。
+- **`0.7.0` 查看器性能**：占位几何/基础材质引用计数共享（5 000 个对象 11 MB 堆，各持一份为 26 MB）、资产内静态合批（200 个同材质 mesh → 1 个）、2 000 三角形以上按需加载 BVH 加速拾取（12.0 ms → 0.10 ms，独立 chunk）、单 mixer 多 clip 混播。
+- **`0.7.0` 接入易用性**：宿主侧「上传 → 编辑 → 导出」样板收进 SDK——`createSceneDocument` / `createDocumentFromAsset`、`createFileBundleUrl` + `el.loadFiles()`（`assetFormatHint` 让 `blob:` URL 正确解析格式）、按文档位姿（而非预览态）导出的 `el.exportDocument()`、`downloadBlob()` 与 `el.toBlob()`。视口覆盖层也已纯属性化：`display-mode`（观察着色，跨合批生效）与 `explode`（组件分解，不写文档），另有 `LIGHTING_PRESETS` 参考布光数据可直接导入。
 
 下一步见 [TODOS.md](TODOS.md)：查看器待补项按影响排序，另有编辑能力缺口与明确非目标（不做 CRDT 协作、插件面板槽位、按产品拆包）。
 

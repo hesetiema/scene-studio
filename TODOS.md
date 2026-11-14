@@ -1,6 +1,6 @@
 # TODOS
 
-仓库内 `0.7.0` alpha；npm `latest` 为 `0.6.0`。架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+`0.7.0` alpha 已发布，即 npm 当前的 `latest`。架构与基准见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 ## 一、已完成（`0.7.0`）
 

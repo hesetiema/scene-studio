@@ -147,8 +147,10 @@ stale `dist`.
 - **E2E:** Playwright. **Use `127.0.0.1`, never `localhost`** — the dev server binds IPv4 only.
 - **Visual baselines:** canvas-only, SwiftShader, 1% tolerance. Refresh with
   `pnpm test:e2e:visual --update-snapshots` and commit the PNGs.
-- **`@scenio` is the live scope** (`0.6.0` is published there). **Never run `npm publish` on your own
+- **`@scenio` is the live scope** (`0.7.0` is the current `latest`). **Never run `npm publish` on your own
   initiative** — it is irreversible and outward-facing; ask the human, who holds the credentials.
+  Granular tokens are staged-only now: `npm publish` needs npm >= 11 for `npm stage publish`, and the
+  final `npm stage approve` requires a human OTP, so a token alone can never ship a release.
   Version bumps go through `test:release`.
 
 ## Traps that have already cost time

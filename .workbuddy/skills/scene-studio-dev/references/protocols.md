@@ -70,7 +70,9 @@ pnpm test:pack     # npm pack → 干净消费者安装/类型检查/构建
 
 结构变更再加 `pnpm test:e2e` / `test:e2e:visual` / `test:perf`。
 版本号、`exports`、peer 范围、lockfile 变更 = **L3**，动手前先取批准。
-`@scenio` 是已在用的 scope（0.6.0 发在那儿）；`npm publish` 必须由人批准 + 提供凭据，agent 不自行执行。
+`@scenio` 是已在用的 scope（0.7.0 为当前 `latest`）；`npm publish` 必须由人批准 + 提供凭据，agent
+不自行执行。granular token 只能推 staging（`npm stage publish`，需 npm >= 11），最终
+`npm stage approve` 必须人工 OTP。
 
 ---
 

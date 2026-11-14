@@ -2,7 +2,7 @@
 
 Embeddable 3D scene editor and model viewer for the web. Published as
 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor).
-This repo tracks `0.7.0`; the latest version published to npm is `0.6.0`.
+This repo tracks `0.7.0`, the latest version published to npm.
 
 **Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Architecture & benchmarks](docs/ARCHITECTURE.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
 
@@ -135,7 +135,7 @@ the browser e2e suites target the studio, the minimal host page and the perf ben
 
 ## Status and roadmap
 
-`0.7.0` alpha (unreleased); npm `latest` is `0.6.0`. The API may still shift before `1.0.0`;
+`0.7.0` alpha is published and is the current npm `latest`. The API may still shift before `1.0.0`;
 after that, semver applies.
 
 - **`0.7.0`** — schema v3: real `parentId` hierarchy, `type: "primitive"` (8 procedural kinds),
@@ -143,15 +143,15 @@ after that, semver applies.
   `reparent` / `setMaterial`, validated by the same `validateHierarchy` used on load.
 - **`0.6.0`** — one-line glTF preview (`src`), auto-framing, `progress`/`load` lifecycle,
   tone mapping / exposure, `visibility-change` and opt-in `view-changing`.
-- **Unreleased viewer surface** (element attributes + optional runtime methods, `view` schema
+- **`0.7.0`, viewer surface** (element attributes + optional runtime methods, `view` schema
   untouched): `camera-orbit` / `field-of-view` with easing, `environment-image` presets and HDR URLs,
   contact shadows, embedded glTF cameras, morph targets, playback transport with `play` / `pause` /
   `loop` / `finished`, hotspots with normals, pointer sensitivities, `loaded` / `modelIsVisible`.
-- **Unreleased viewer performance** — refcounted placeholder resources (5 000 objects: 11 MB of heap
+- **`0.7.0`, viewer performance** — refcounted placeholder resources (5 000 objects: 11 MB of heap
   instead of 26 MB), per-asset static merge (200 same-material meshes → 1), BVH-accelerated picking
   above 2 000 triangles (12.0 ms → 0.10 ms, loaded on demand in its own chunk), and multi-clip
   blending on a single mixer.
-- **Unreleased integration ergonomics** — the host-side "upload → edit → export" boilerplate moved
+- **`0.7.0`, integration ergonomics** — the host-side "upload → edit → export" boilerplate moved
   into the SDK: `createSceneDocument` / `createDocumentFromAsset`, `createFileBundleUrl` +
   `el.loadFiles()` (with `assetFormatHint` so `blob:` URLs parse correctly), `el.exportDocument()`
   exporting document transforms rather than preview state, `downloadBlob()` and `el.toBlob()`.
