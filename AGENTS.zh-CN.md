@@ -165,9 +165,11 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
   `pnpm test:e2e:visual --update-snapshots` 刷新并提交 PNG。
 - **`@scenio` 是已在用的 scope**（`0.7.1` 为仓库版本；线上以 `npm view @scenio/scene-editor dist-tags`
   为准）。**绝不要自己执行 `npm publish`** —— 它不可
-  撤销且对外可见，必须先问持有凭据的人。granular token 现在只能推 staging：`npm publish` 需要
-  npm >= 11 才有 `npm stage publish`，而最后的 `npm stage approve` 必须要人工 OTP，所以光有 token
-  永远发布不出去。版本号变更走 `test:release`。
+  撤销且对外可见，必须先问持有凭据的人。发版本身是自动的：推一个与包版本号相同的 tag，
+  `publish.yml` 就会发布，认证走 **npm 信任发布（OIDC）**。仓库里没有任何 npm token，
+  也没有 OTP 人工步骤；信任关系在 npmjs.com 上绑定到「本仓库 + 该 workflow 文件名」。
+  绑定缺失时 workflow 会带提示失败，而不会退回 token —— 何况 granular token 也做不完这件事，
+  `npm stage approve` 需要人工 TOTP 码。版本号变更走 `test:release`。
 
 ---
 

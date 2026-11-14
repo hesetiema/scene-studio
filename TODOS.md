@@ -173,13 +173,21 @@
 - **插件面板槽位**：`install(context)` 已交付（命令、事件、选择器、disposer），槽位是没有真实需求时的猜测性 API。
 - **按产品拆包**：出现真实复用需求前，保持单包三入口（`.` / `./element` / `./three`）。
 
-## 六、发布流程（`0.7.0` 已按此走过一次）
+## 六、发布流程（推 tag → OIDC 自动发布）
 
 - scope `@scenio` 已在 npm 上；`latest` 指向哪个版本一律以 `npm view @scenio/scene-editor dist-tags`
   为准，不要在文档里写死（会漂）。文档格式为 **schema v3**（0.7.0 引入的 minor 变更）。
-- 发布是**两段式**：granular token 只能推 staging，直接 `npm publish` 会 403。流程为
-  `npm stage publish` → 等服务端 `validating` 转 `staged` → `npm stage approve <uuid> --otp`。
-  `stage` 子命令需 npm >= 11（用 `npx npm@latest`），approve 必须人工 OTP，token 再强也过不去。
-- **`0.7.1` 发版前要先改 `.github/workflows/publish.yml`**：它仍是旧的一步式 `npm publish --tag`，
-  在 granular token 下必定 403，tag 触发也一样。
+- **日常发版：改版本号 → 提交 → 推 tag**。`.github/workflows/publish.yml` 会跑
+  `test:release` / typecheck / 单测 / 构建，然后直接 `npm publish`。认证走 npm 的
+  **OIDC 信任发布**：仓库里没有任何 npm secret，也没有人工 OTP，provenance 自动生成。
+  要求 npm >= 11.5.1、node >= 22.14、GitHub 托管 runner（自托管暂不支持）。
+- **一次性配置**（npmjs.com → 包设置 → Trusted Publisher → GitHub Actions）：
+  owner `hesetiema` / repository `scene-studio` / workflow `publish.yml` / environment 留空，
+  并且**必须勾上 allowed action `npm publish`** —— 现在新建的信任发布默认只允许
+  `npm stage publish`，不勾就会变成一次等人工 OTP 的 staging，正是这套流程要消灭的那一步。
+  配完后把 Publishing access 设成「Require two-factor authentication and disallow tokens」，
+  这样只剩 OIDC 能发布。
+- **兜底（信任发布不可用时）**：granular token 只能推 staging ——
+  `npm stage publish` → `npm stage approve <uuid> --otp`，approve 必须人工 OTP，token 再强也过不去。
+  GitHub secret `NPM_TOKEN` 已于 2026-11-15 确认失效（`E401`），OIDC 跑通后应当删掉它。
 - 发布前必跑：`pnpm test` → `pnpm typecheck` → `pnpm build` → `pnpm test:release` → `pnpm test:pack`。

@@ -1,12 +1,23 @@
 name: Publish
 
-# Tag-driven release: pushing a tag that equals packages/scene-editor's version
-# stages the package on npm. Publishing is two-phase on purpose (2026-11): a
-# granular token can only push to the staging area, and `npm stage approve`
-# requires a human TOTP code — so this workflow stops after staging and writes
-# the approve command to the job summary. Prerelease versions (containing "-")
-# target the `next` tag; stable versions target `latest`. Requires the NPM_TOKEN
-# repository secret.
+# Tag-driven release: pushing a tag equal to packages/scene-editor's version
+# publishes to npm. There is no npm token in this repository -- npm trusts the
+# workflow itself through OIDC (trusted publishing), which also gets us a
+# provenance attestation for free. Prerelease versions (containing "-") target
+# the `next` tag; stable versions target `latest`.
+#
+# One-time setup on npmjs.com, package settings -> Trusted Publisher ->
+# GitHub Actions:
+#   owner hesetiema | repository scene-studio | workflow publish.yml
+#   environment (blank) | allowed actions: tick "npm publish"
+# That last box matters: a trusted publisher created today defaults to
+# `npm stage publish` only, so an unticked "npm publish" turns every release
+# into a staging run that then waits for a human OTP -- exactly the step this
+# workflow exists to remove.
+#
+# Requires npm >= 11.5.1 and node >= 22.14 (the workflow checks and upgrades
+# npm) on a GitHub-hosted runner; self-hosted runners are not supported by
+# trusted publishing yet.
 on:
   push:
     tags: ["0.*"]
@@ -19,6 +30,11 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      # The only thing that lets npm believe this is the trusted workflow.
+      # Scoped to this job so the rest of the release cannot mint an OIDC token.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,10 +48,11 @@ jobs:
       - name: Verify tag matches package version
         run: |
           PKG=$(node -p "require('./packages/scene-editor/package.json').version")
-          if [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "$PKG" != "${GITHUB_REF_NAME}" ]; then
             echo "::error::tag ${GITHUB_REF_NAME} != packages/scene-editor version ${PKG}"
             exit 1
           fi
+          echo "releasing ${PKG} from ${GITHUB_REF_TYPE} ${GITHUB_REF_NAME}"
       - name: Release metadata
         run: pnpm test:release
       - name: Typecheck
@@ -44,64 +61,50 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
-      - name: Stage for publish (approve is a human step — it needs an OTP)
+      - name: Ensure npm supports OIDC (>= 11.5.1)
+        run: |
+          NEED=11.5.1
+          HAVE=$(npm --version)
+          if [ "$(printf '%s\n%s\n' "$NEED" "$HAVE" | sort -V | head -1)" != "$NEED" ]; then
+            echo "npm $HAVE cannot do trusted publishing; upgrading"
+            npm install -g npm@^11
+          fi
+          echo "node $(node --version), npm $(npm --version)"
+      - name: Publish
         working-directory: packages/scene-editor
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
           case "$VERSION" in
             *-*) TAG="next" ;;
             *)   TAG="latest" ;;
           esac
-
-          # Carried into the failure annotation: the job log needs admin rights to
-          # read from outside the org, the annotation does not.
-          echo "node $(node --version), npm $(npm --version)"
-
-          # A token pasted from a file arrives with an invisible prefix: a trailing
-          # newline, or a UTF-8 BOM (efbbbf) if the file was saved on Windows. Both
-          # make the Authorization header illegal, and npm reports that as
-          # `*** is not a legal HTTP header value` -- redacted, so it names neither
-          # the secret nor the character. Strip whitespace and BOM, then say what is
-          # left if it still does not look like a header value.
-          TOKEN=$(printf '%s' "${NODE_AUTH_TOKEN:-}" | LC_ALL=C tr -d '[:space:]\357\273\277')
-          if [ -z "$TOKEN" ]; then
-            echo "::error::secret NPM_TOKEN is empty"
-            exit 1
-          fi
-          # Visible ASCII only. A full-width quote, a zero-width space or a stray
-          # control byte is still fatal, and the hex says which byte to delete
-          # without printing the token itself.
-          BAD=$(printf '%s' "$TOKEN" | LC_ALL=C tr -d '!-~')
-          if [ -n "$BAD" ]; then
-            HEX=$(printf '%s' "$BAD" | od -An -tx1 | tr -d ' \n')
-            echo "::error::secret NPM_TOKEN has ${#BAD} non-ASCII/control character(s) [${HEX}] in a ${#TOKEN}-char value; re-paste the token verbatim"
-            exit 1
-          fi
-          echo "token accepted: ${#TOKEN} chars"
-          npm config set //registry.npmjs.org/:_authToken "$TOKEN" --location=user
-
-          # `npm stage` shipped in npm 11 and node 24 bundles it. Fail loudly here
-          # rather than with "Unknown command" halfway through a release.
-          if ! npm stage --help >/dev/null 2>&1; then
-            echo "::error::npm $(npm --version) has no 'stage' subcommand (needs >= 11)"
-            exit 1
+          echo "publishing ${VERSION} -> ${TAG}"
+          # Only exported when the job holds id-token: write. If it is missing the
+          # publish below fails with ENEEDAUTH, so say why up front.
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "OIDC: request URL present"
+          else
+            echo "::warning::ACTIONS_ID_TOKEN_REQUEST_URL is unset -- this job cannot mint an OIDC token"
           fi
 
-          # Uploads the tarball to the staging area; nothing becomes public.
           set +e
           LOG=$(mktemp)
-          npm stage publish --access public --tag "$TAG" 2>&1 | tee "$LOG"
+          npm publish --access public --tag "$TAG" 2>&1 | tee "$LOG"
           STATUS=${PIPESTATUS[0]}
           set -e
 
           if [ "$STATUS" -ne 0 ]; then
-            # One line for the annotation (survives read-only API access) and the
-            # full tail for the job summary (what a human sees in the browser).
-            echo "::error::npm stage publish failed (exit $STATUS): $(grep -m3 -E 'npm (error|ERR)' "$LOG" | tr '\n' ' ' | cut -c1-700)"
+            # The annotation is the only channel readable without admin rights on
+            # the job log, so the cause goes there; the tail goes to the summary.
+            echo "::error::npm publish failed (exit $STATUS): $(grep -m3 -E 'npm (error|ERR)' "$LOG" | tr '\n' ' ' | cut -c1-700)"
+            if grep -qE 'E404|E403|not authorized|permission' "$LOG"; then
+              echo "::error::npm refused the workflow. Check the trusted publisher on npmjs.com: owner hesetiema, repo scene-studio, workflow publish.yml, and the \"npm publish\" allowed action ticked."
+            fi
+            if grep -qE 'ENEEDAUTH|need auth|not authenticated|E401' "$LOG"; then
+              echo "::error::OIDC was not used. Confirm job permissions include id-token: write and that the trusted publisher exists; a granular token is NOT a substitute (tokens are stage-only)."
+            fi
             {
-              echo "### Stage failed (exit ${STATUS})"
+              echo "### Publish failed (exit ${STATUS})"
               echo ""
               echo '```'
               tail -30 "$LOG"
@@ -111,17 +114,11 @@ jobs:
           fi
 
           {
-            echo "### Staged \`@scenio/scene-editor@${VERSION}\` for \`${TAG}\`"
+            echo "### Published \`@scenio/scene-editor@${VERSION}\` on \`${TAG}\`"
             echo ""
-            echo "Nothing is public yet. A granular token can stage but not publish,"
-            echo "and \`approve\` requires a 2FA code that CI does not hold."
-            echo ""
-            echo "Approve from a machine with the authenticator:"
+            echo "Authenticated by OIDC trusted publishing -- no npm token involved."
             echo ""
             echo '```'
-            echo "npx npm@latest stage list                       # copy the stage id"
-            echo "npx npm@latest stage approve <stage-id> --otp <code>"
+            echo "npm view @scenio/scene-editor dist-tags"
             echo '```'
-            echo ""
-            echo "Then confirm with \`npm view @scenio/scene-editor dist-tags\`."
           } >> "$GITHUB_STEP_SUMMARY"

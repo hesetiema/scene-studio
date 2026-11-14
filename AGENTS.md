@@ -158,8 +158,11 @@ stale `dist`.
 - **`@scenio` is the live scope** (`0.7.1` is the repo version; `npm view @scenio/scene-editor dist-tags`
   says what is actually live). **Never run `npm publish` on your own
   initiative** — it is irreversible and outward-facing; ask the human, who holds the credentials.
-  Granular tokens are staged-only now: `npm publish` needs npm >= 11 for `npm stage publish`, and the
-  final `npm stage approve` requires a human OTP, so a token alone can never ship a release.
+  Releases themselves are automated: push a tag equal to the package version and `publish.yml` publishes
+  it, authenticated by **npm trusted publishing (OIDC)**. There is no npm token in this repo and no OTP
+  step; the trust is bound on npmjs.com to this repo plus the workflow filename. If that binding is
+  missing the workflow fails with a hint rather than falling back to a token — and a granular token could
+  not finish the job anyway, since `npm stage approve` needs a human TOTP code.
   Version bumps go through `test:release`.
 
 ## Traps that have already cost time
