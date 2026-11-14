@@ -55,6 +55,10 @@ jobs:
             *)   TAG="latest" ;;
           esac
 
+          # Carried into the failure annotation: the job log needs admin rights to
+          # read from outside the org, the annotation does not.
+          echo "node $(node --version), npm $(npm --version)"
+
           # `npm stage` shipped in npm 11 and node 24 bundles it. Fail loudly here
           # rather than with "Unknown command" halfway through a release.
           if ! npm stage --help >/dev/null 2>&1; then
@@ -63,7 +67,25 @@ jobs:
           fi
 
           # Uploads the tarball to the staging area; nothing becomes public.
-          npm stage publish --access public --tag "$TAG"
+          set +e
+          LOG=$(mktemp)
+          npm stage publish --access public --tag "$TAG" 2>&1 | tee "$LOG"
+          STATUS=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$STATUS" -ne 0 ]; then
+            # One line for the annotation (survives read-only API access) and the
+            # full tail for the job summary (what a human sees in the browser).
+            echo "::error::npm stage publish failed (exit $STATUS): $(grep -m3 -E 'npm (error|ERR)' "$LOG" | tr '\n' ' ' | cut -c1-700)"
+            {
+              echo "### Stage failed (exit ${STATUS})"
+              echo ""
+              echo '```'
+              tail -30 "$LOG"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$STATUS"
+          fi
 
           {
             echo "### Staged \`@scenio/scene-editor@${VERSION}\` for \`${TAG}\`"
