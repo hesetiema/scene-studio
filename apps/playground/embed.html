@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>三行集成 · Scene Studio</title>
+    <meta
+      name="description"
+      content="Scene Studio 的最小嵌入形态：一个 <scene-editor src> 标签，加上进度条、海报、错误槽与热点。"
+    />
+    <style>
+      :root {
+        --bg: #0b0d10;
+        --panel: #14171c;
+        --line: #262b33;
+        --text: #dfe3e8;
+        --muted: #8b929c;
+        --accent: #4a9ec4;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+      }
+
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        flex-wrap: wrap;
+        padding: 14px 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      header a {
+        color: var(--muted);
+        text-decoration: none;
+        font-size: 12px;
+      }
+
+      header a:hover {
+        color: var(--accent);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 14px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+      }
+
+      header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        /* 显式行高：否则隐式 auto 行会被内容撑高，侧栏底部会被裁掉 */
+        grid-template-rows: minmax(0, 1fr);
+        gap: 0;
+        height: calc(100vh - 54px);
+        overflow: hidden;
+      }
+
+      .stage {
+        position: relative;
+        min-width: 0;
+        background: #0e1116;
+        border-right: 1px solid var(--line);
+      }
+
+      /* 唯一必需的样式：给元素一个盒子。其余（canvas / 槽位）由元素自己排版。 */
+      scene-editor {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .stage-hint {
+        position: absolute;
+        left: 16px;
+        bottom: 14px;
+        z-index: 2;
+        margin: 0;
+        padding: 5px 10px;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        background: rgba(12, 15, 20, 0.86);
+        color: var(--muted);
+        font-size: 11.5px;
+        pointer-events: none;
+      }
+
+      .stage-hint code {
+        font-family: var(--mono);
+        color: #9fc4d6;
+      }
+
+      /* ---- 槽位：海报 / 进度条 / 错误 / 热点 ---- */
+
+      .poster {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        background: #0e1116;
+        color: var(--muted);
+        font-size: 12.5px;
+        letter-spacing: 0.04em;
+      }
+
+      .progress {
+        height: 2px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .progress-fill {
+        width: 0;
+        height: 100%;
+        background: var(--accent);
+        transition: width 0.18s ease;
+      }
+
+      .error-slot {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        padding: 20px;
+        background: rgba(48, 22, 22, 0.94);
+        color: #e8b4b4;
+        font-size: 12.5px;
+        text-align: center;
+      }
+
+      .hotspot {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 2px 7px;
+        border: 1px solid #3f6f85;
+        border-radius: 10px;
+        background: rgba(10, 18, 24, 0.9);
+        color: #b6dcee;
+        font-size: 11px;
+        white-space: nowrap;
+        pointer-events: none;
+        transform: translate(-50%, -50%);
+      }
+
+      .hotspot::before {
+        content: "";
+        width: 5px;
+        height: 5px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      /* ---- 右栏 ---- */
+
+      aside {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        min-width: 0;
+        overflow: hidden;
+        background: var(--panel);
+      }
+
+      aside section {
+        min-height: 0;
+        padding: 12px 14px;
+      }
+
+      .log-section {
+        display: flex;
+        flex-direction: column;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .code-section {
+        border-top: 1px solid var(--line);
+      }
+
+      aside h2 {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      #log {
+        flex: 1;
+        min-height: 0;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        overflow-y: auto;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.75;
+        color: #9aa4b0;
+      }
+
+      #log li {
+        padding: 1px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        word-break: break-word;
+      }
+
+      #log li b {
+        color: var(--accent);
+        font-weight: 500;
+      }
+
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 3px;
+        background: #0e1116;
+        font-family: var(--mono);
+        font-size: 11px;
+        line-height: 1.7;
+        color: #c3cbd4;
+      }
+
+      pre .tag {
+        color: #7fb2c9;
+      }
+
+      pre .attr {
+        color: #c9a66b;
+      }
+
+      @media (max-width: 860px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+          grid-template-rows: minmax(320px, 60vh) auto;
+          height: auto;
+          overflow: visible;
+          min-height: calc(100vh - 54px);
+        }
+
+        aside {
+          grid-template-rows: auto auto;
+          overflow: visible;
+        }
+
+        #log {
+          max-height: 40vh;
+        }
+
+        .stage {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a href="/">← 回到工作台</a>
+      <h1>三行集成</h1>
+      <p>一个 <code>&lt;scene-editor src&gt;</code> 标签就是一个查看器：进度、海报、热点都由槽位接管。</p>
+    </header>
+
+    <main>
+      <section class="stage">
+        <!--
+          预览形态（model-viewer 兼容）：src 决定内容，camera-orbit / field-of-view
+          是「怎么看」而不是「文档里写了什么」，所以它们从不把场景标脏。
+        -->
+        <scene-editor
+          id="preview"
+          src="/assets/DamagedHelmet.glb"
+          alt="Damaged Helmet 示例模型"
+          camera-orbit="30deg 74deg auto"
+          field-of-view="38deg"
+          reveal="auto"
+        >
+          <div slot="poster" class="poster">正在准备渲染器…</div>
+          <div slot="progress-bar" class="progress"><div class="progress-fill" id="progress-fill"></div></div>
+          <div slot="error" class="error-slot"></div>
+        </scene-editor>
+
+        <p class="stage-hint">点击模型任意位置放置热点（<code>positionAndNormalFromPoint</code>）</p>
+      </section>
+
+      <aside>
+        <section class="log-section">
+          <h2>事件</h2>
+          <ul id="log"></ul>
+        </section>
+        <section class="code-section">
+          <h2>这段的全部代码</h2>
+          <pre><code><span class="tag">&lt;scene-editor</span>
+  <span class="attr">src</span>="/model.glb"
+  <span class="attr">camera-orbit</span>="30deg 74deg auto"
+  <span class="attr">field-of-view</span>="38deg"<span class="tag">&gt;</span>
+  <span class="tag">&lt;div slot</span>=<span class="attr">"progress-bar"</span><span class="tag">&gt;</span>…<span class="tag">&lt;/div&gt;</span>
+  <span class="tag">&lt;div slot</span>=<span class="attr">"hotspot-lens"</span>
+       <span class="attr">data-position</span>="0 1 0"<span class="tag">&gt;</span>…<span class="tag">&lt;/div&gt;</span>
+<span class="tag">&lt;/scene-editor&gt;</span></code></pre>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module" src="/src/embed-demo.ts"></script>
+  </body>
+</html>

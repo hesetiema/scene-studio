@@ -6,7 +6,7 @@ const pkg = (path: string) =>
 
 const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.url));
 
-/** Four HTML entries: the studio, the perf bench, the minimal host, and the AC demo. */
+/** Five HTML entries: the studio, the perf bench, the minimal host, the embed preview and the AC demo. */
 export default defineConfig({
   resolve: {
     // order matters: longer subpaths first (D4 entry map)
@@ -43,6 +43,7 @@ export default defineConfig({
         main: html("index.html"),
         perf: html("perf.html"),
         minimal: html("minimal.html"),
+        embed: html("embed.html"),
         ventDemo: html("vent-demo.html"),
       },
     },
