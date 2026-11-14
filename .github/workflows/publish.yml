@@ -68,8 +68,15 @@ jobs:
             echo "::error::secret NPM_TOKEN is empty"
             exit 1
           fi
-          if ! printf '%s' "$TOKEN" | grep -qE '^[A-Za-z0-9_.-]+$'; then
-            echo "::error::secret NPM_TOKEN cannot be an HTTP header value (length ${#TOKEN}); re-paste it verbatim, no quotes and no line breaks"
+          # Visible ASCII only. A full-width quote, a zero-width space or a stray
+          # control byte makes the Authorization header illegal, and npm reports
+          # that as `*** is not a legal HTTP header value` -- redacted, so it names
+          # neither the secret nor the character. Print the offending bytes as hex
+          # instead of the token itself.
+          BAD=$(printf '%s' "$TOKEN" | LC_ALL=C tr -d '!-~')
+          if [ -n "$BAD" ]; then
+            HEX=$(printf '%s' "$BAD" | od -An -tx1 | tr -d ' \n')
+            echo "::error::secret NPM_TOKEN has ${#BAD} non-ASCII/control character(s) [${HEX}] in a ${#TOKEN}-char value; re-paste the token verbatim"
             exit 1
           fi
           echo "token accepted: ${#TOKEN} chars"
