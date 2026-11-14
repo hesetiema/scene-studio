@@ -6,9 +6,10 @@ import { expect, test } from "@playwright/test";
  * reports `loaded`, owns no authoring chrome and turns no click into a
  * selection. Switching the same element to `mode="editor"` opts into editing.
  *
- * Setting `src` *after* `ready` is an internal regression probe, not a path any
- * documented example takes; it currently stalls at progress 0 (see TODOS.md),
- * so this spec deliberately sticks to the shape users actually copy.
+ * Setting `src` *after* `ready` is not a path any documented example takes: the
+ * attribute is read once at connect time, and a later write only logs a warning
+ * (dynamic `src` was removed, see TODOS.md), so this spec deliberately sticks to
+ * the shape users actually copy.
  */
 
 test("viewer example: attributes only; mode=editor enables selection", async ({ page }) => {

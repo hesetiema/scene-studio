@@ -172,8 +172,12 @@
 - **插件面板槽位**：`install(context)` 已交付（命令、事件、选择器、disposer），槽位是没有真实需求时的猜测性 API。
 - **按产品拆包**：出现真实复用需求前，保持单包三入口（`.` / `./element` / `./three`）。
 
-## 六、发布清单
+## 六、发布流程（`0.7.0` 已按此走过一次）
 
-- npm scope `@scenio` 为占位，首次发布前选定。
-- 发布会带 schema v3（文档格式 minor 变更）。
+- scope `@scenio` 已在 npm 上，`latest` 指向 `0.7.0`；文档格式为 **schema v3**（0.7.0 引入的 minor 变更）。
+- 发布是**两段式**：granular token 只能推 staging，直接 `npm publish` 会 403。流程为
+  `npm stage publish` → 等服务端 `validating` 转 `staged` → `npm stage approve <uuid> --otp`。
+  `stage` 子命令需 npm >= 11（用 `npx npm@latest`），approve 必须人工 OTP，token 再强也过不去。
+- **`0.7.1` 发版前要先改 `.github/workflows/publish.yml`**：它仍是旧的一步式 `npm publish --tag`，
+  在 granular token 下必定 403，tag 触发也一样。
 - 发布前必跑：`pnpm test` → `pnpm typecheck` → `pnpm build` → `pnpm test:release` → `pnpm test:pack`。
