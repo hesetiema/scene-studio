@@ -70,8 +70,8 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 
 破坏其中任何一条都是回归，不是重构。有对应检查的地方已标明。
 
-1. **依赖方向单向。** `core` ← `runtime` ← {`element`, `three`}。当前实测：**83 个文件、
-   263 条静态内部边、0 个循环** —— 循环数必须保持 0。唯一残留的反向边是
+1. **依赖方向单向。** `core` ← `runtime` ← {`element`, `three`}。当前实测：**79 个文件、
+   261 条静态内部边、0 个循环** —— 循环数必须保持 0。唯一残留的反向边是
    `core/commands/transform-command.ts` → `runtime/runtime-contract.ts` 的
    `import type { Transform }`（纯类型）；`Transform` 本质是文档概念，理应归 `core`。
 
@@ -108,6 +108,14 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 9. **一个包、三个入口**（`.`、`./element`、`./three`）。不拆包、不做插件面板槽位、
    不做 CRDT —— 三者都是 TODOS.md §5 里的明确非目标。公开面是刻意收窄的：只服务单一产品的
    领域加载代码放进 `apps/`，不要为它开新子路径。
+
+10. **渲染是按需的，所以每个改变画面的 setter 都要请求一帧。** `ThreeRuntime` 只在
+    `#render()` 里画（rAF 循环只在该 clip 播放时转）；会改变画布内容的 setter 必须以
+    `this.#render()` 收尾，`setMaterial` / `setMorphInfluence` / `setCameraByName` /
+    `applyViewState` 都是这么做的。`setVariant` 直到 2026-11 都没有：材质槽换对了，画布
+    却停在**上一个变体**的像素上，直到相机移动 —— 表现就是「切了没反应」，快速 A→B→C
+    时画面停在哪一次被画过的那次上。由 `e2e/variants.spec.ts` 按像素把关（不需要动相机），
+    因为断言 `mesh.material` 在坏构建上照样通过。
 
 ---
 

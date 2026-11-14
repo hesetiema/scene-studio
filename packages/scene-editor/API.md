@@ -38,7 +38,7 @@ const editor = createSceneEditor({ runtime }); // RuntimeContract required
 | `undo` / `redo` | `() => boolean` | Whether an action ran |
 | `requestSave` | `() => void` | Emits `save-request` with `{ reason: "manual", document, revision }` |
 | `getViewState` | `() => ViewState` | Live viewport view |
-| `setViewState` | `(view: ViewState) => void` | Record + apply a view; marks dirty, never undoable |
+| `setViewState` | `(view: ViewState) => void` | Record + apply a view; dirty while it differs from the saved one, never undoable |
 | `on(type, handler)` | returns `() => void` | Typed subscription; call the returned function to unsubscribe |
 | `use` / `unuse` | `(plugin) => void` / `(id: string) => void` | Same `install(context)` contract as the element; duplicate id throws |
 
@@ -53,6 +53,17 @@ means "absorbed" — the absorbed command's effect stays, its history entry does
 **`SceneEditorEventMap`** (all plain payloads, no CustomEvent): `selection-change` `{ids}` · `history-change` `{canUndo, canRedo, dirty, lastCommand?}` · `document-dirty` `{dirty}` (emitted only on false↔true crossings) · `save-request` `{reason: "manual", document, revision}` · `view-change` `{view: ViewState, source: "interaction" | "api" | "load"}` · `view-changing` `{view: ViewState}` (opt-in, high frequency) · `camera-change` `{position, target, fov}` (always on, camera-only) · `environment-change` `{environment, source: "api" | "load"}` (edge-triggered) · `progress` `{totalProgress, reason}` · `load` `{sceneId}` · `play` `{objectId, index, name}` · `pause` `{}` · `loop` `{count, name}` · `finished` `{objectId, name}` · `visibility-change` `{visible: boolean}` (**element-only** — the facade has no DOM and never emits it) · `model-visibility` `{visible: boolean}` (element-only; `loaded` × in-viewport × poster dismissed) · `error` `{code, message, cause?}`.
 
 `SceneEditorElementEventMap` = the map above, with `load` widened to `{sceneId, url: string | null}`, plus `scene-ready: null`. It is the typed source for `el.addEventListener(...)`.
+
+**`dirty` is a comparison, not a latch.** Command edits are dirty by undo depth, so undoing
+back to the saved point clears the flag by itself. A view edit has no undo step (it is
+recorded, not a command), so `setViewState()` compares the incoming view against the view in
+force at the last clean point (load / `markSaved` / `applyRemote`) and *lowers* the flag
+again when they match — otherwise a host that restores a saved pose (its own camera undo
+stack replaying `setViewState`) would keep claiming unsaved work on a document identical to
+the server's. Comparison is numeric with 6 decimals and key-order independent: the runtime
+re-derives the camera pose every frame, so a pose read back can differ in the last bits
+(`3.4191101533476864` vs `…878`) without anything having moved. The approximation always
+fails closed — a pose that differs by more than the quantum simply stays dirty.
 
 Also exported: `handleEditorKeyCommand(target, event)` — the raw key-mapping function, for hosts that keep their own controller.
 
@@ -222,6 +233,7 @@ interface RuntimeContract {
   /** Optional: `KHR_materials_variants` string table + current pick. */
   readonly variants?: string[];
   readonly variantName?: string | null;
+  /** Swap material slots and repaint immediately (on-demand rendering). */
   setVariant?(name: string | null): boolean;
   /** Optional: cameras authored in the asset. */
   readonly cameras?: string[];
@@ -305,7 +317,7 @@ Glue between an element and a runtime: owns history, selection, document snapsho
 | `executeCommand` / `undo` / `redo` / `markClean` / `markSaved` | as named | `markSaved(serverRevision)` adopts server revision and clears dirty |
 | `select` / `clearSelection` | `(ids) => void` / `() => void` | |
 | `canUndo` / `canRedo` / `dirty` / `selectedIds` / `revision` | getters | |
-| `getViewState` / `setViewState` / `getSceneId` | `(view?: ViewState)` / `() => ViewState` / `() => string \| null` | View state; `setViewState` marks dirty without a command |
+| `getViewState` / `setViewState` / `getSceneId` | `(view?: ViewState)` / `() => ViewState` / `() => string \| null` | View state; `setViewState` dirties without a command |
 | `handleRuntimeViewChange` | `(view: ViewState) => void` | Record a user-driven view change; wired from `runtime` `view-change` |
 | `destroy` | `() => void` | Flushes disposers |
 | `disposers` / `history` / `selection` / `runtime` | readonly fields | |
@@ -492,7 +504,7 @@ The base URL holds three's own payload layout — copying `node_modules/three/ex
 | `executeCommand(cmd)` | method | Escape hatch for custom `Command`s |
 | `undo()` / `redo()` | method | Also bound to keyboard (see `CAPTURED_COMBOS`) |
 | `requestSave()` | method | Dispatches `save-request` with current document + revision |
-| `getViewState()` / `setViewState(view)` | method | View state: live read / record + apply (dirty, not undoable) |
+| `getViewState()` / `setViewState(view)` | method | View state: live read / record + apply (dirty while it differs from the saved view, not undoable — see `dirty` above) |
 | `use(plugin)` / `unuse(id)` | method | Plugin install/uninstall; pre-connect `use` is queued; duplicate id throws |
 | `revision` / `dirty` / `selectedIds` | getters | |
 | `visible` | getter | Whether the element currently intersects the viewport; mirrors `visibility-change` without waiting for an event |
@@ -571,6 +583,8 @@ el.addEventListener("view-change", (event) => {
 });
 el.addEventListener("scene-ready", () => {});
 ```
+
+**`error` carries one carve-out.** A `conflict` (from `applyRemote`) is dispatched like any other error so hosts can branch on `code`, but it is **not** painted into the failure surface (`slot="error"` / the built-in overlay): a conflict is a decision point, and covering the model would hide the thing the user has to compare. Every other code still shows the message, because a blank canvas with one event is not a user interface.
 
 **`view-changing` is opt-in on purpose.** It fires on every damped camera frame; persisting or POSTing on it will melt the host. Use it only for live consumers (remote camera sync, recording, a numeric HUD) and keep `view-change` for persistence:
 
@@ -788,7 +802,11 @@ everything else (panels, HUD, toolbar, hotspot treatment) belongs to the host. S
 - `apps/playground/src/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
 - `apps/playground/src/viewer/viewer-controller.ts` — viewer state → engine updates (display / explode route to the SDK rigs, environment, animation)
 - `apps/playground/src/ui/studio-shell.ts` — composes HUD panels, hotkeys
+- `apps/playground/src/ui/panels/object-panel.ts` — object-graph editing: `addObject` / `removeObject` / `reparent` with DTOs, so each edit is one undo step
+- `apps/playground/src/ui/conflict-controller.ts` — turning a `conflict` into a decision: overwrite via `markSaved`, adopt via `applyRemote`, or defer
+- `apps/playground/src/ui/panels/variant-panel.ts` — `availableVariants` / `cameras` / `morphTargets` wiring, including the `setMorphInfluence` refusal case
 - `apps/playground/src/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot
+- `apps/playground/embed.html` + `src/embed-demo.ts` — the declarative surface (`src` / `camera-orbit` / `field-of-view` + slots) and click-to-hotspot via `positionAndNormalFromPoint` / `updateHotspot`
 - `apps/playground/src/vent-demo.ts` — BIM demo: one scene serving a white-massing overview and a
   plan-view floor plan, space outlines with state colours, equipment labels with collision folding.
   Its loaders live beside it in `apps/playground/src/bim/`.

@@ -17,23 +17,25 @@ pnpm --filter @scenio/playground typecheck
 | `src/bootstrap.ts` | Deterministic scene documents — built with the SDK's `createDocumentFromAsset` / `createSceneDocument` (the envelope is no longer hand-written) |
 | `src/assets/model-loader.ts` | Asset registry, lazy GLTF/Draco/Meshopt loading, custom file → `SceneDocument`; `.gltf` sidecar inlining delegates to the SDK's `createFileBundleUrl` |
 | `src/viewer/viewer-state.ts` | Single viewer state + store (`ViewerState`) backed by a valtio proxy (vanilla): panels patch it, the controller subscribes, `snapshot()` copies form the undo stack |
-| `src/viewer/history-coordinator.ts` | Unified undo/redo across viewer settings and document commands (most-recent-first), plus the capture-phase Ctrl+Z/Ctrl+Y binding |
+| `src/viewer/history-coordinator.ts` | Unified undo/redo across viewer settings, document commands and camera poses (most-recent-first), plus the capture-phase Ctrl+Z/Ctrl+Y binding |
 | `src/viewer/viewer-controller.ts` | State → engine: skeleton overlay, backdrop/grid, lighting preset + intensity/colour tuning, camera-follow light, animation transport. Display mode, explode, tone mapping, exposure and the turntable all go through the contract (`setDisplayMode` / `setExplode` / `setToneMapping` / `setExposure` / `setAutoRotate`), never a direct renderer or scene mutation |
 | `src/viewer/presets.ts` | Lighting, backdrop and grid presets — persisted through `view`, applied idempotently |
-| `src/camera/camera-controller.ts` | Frame / presets / fly-to. Preview frames go through `runtime.applyViewState()`; the flight easing is the SDK's `smoothViewTo()` (the document is still written once, after the fade settles). Clip planes and turntable are SDK-owned (`render()` / `setAutoRotate`) — no host-side rAF tickers |
+| `src/camera/camera-controller.ts` | Frame / presets / fly-to. Preview frames go through `runtime.applyViewState()`; the flight easing is the SDK's `smoothViewTo()` (the document is still written once, after the fade settles). Clip planes and turntable are SDK-owned (`render()` / `setAutoRotate`) — no host-side rAF tickers. A `commit: false` frame reports through `onProgrammaticView` so the undo stack can move its camera baseline without recording a step |
 | `src/ui/studio-shell.ts` | Composes panels, hotkeys, drag & drop; `onDocumentLoaded()` re-sync hook |
 | `src/ui/panel.ts` | `BasePanel`: listener collection + single destroy path for every HUD panel |
-| `src/ui/panels/*.ts` | Lighting, material, background, display, model, camera, transform, animation, document and chrome (panel collapse) panels (one concern each) |
-| `src/ui/welcome-screen.ts` | Minimal home screen: drop target + 选择文件 + inline sample links; the control panel, footer, save button and panel-restore icon stay hidden until a document with objects loads, and header home icon returns to it |
+| `src/ui/panels/*.ts` | Lighting, material, background, display, model, camera, transform, animation, document, chrome (panel collapse), **object** (add/duplicate/remove/reparent) and **variant** (KHR variants, asset cameras, morph targets) panels (one concern each) |
+| `src/ui/conflict-controller.ts` | The decision surface for a `conflict` error: shows the bar, offers 覆盖远端 / 采纳远端 / 稍后, and mirrors the split into the footer via `hud.setConflict()`. The only place that calls the host's `overwriteRemote` / `adoptRemote` |
+| `src/ui/welcome-screen.ts` | Home screen: one line of positioning (`@scenio/scene-editor` 演示宿主) + drop target + 选择文件 + annotated sample links + GitHub / npm / API links; the control panel, footer, save button and panel-restore icon stay hidden until a document with objects loads, and header home icon returns to it |
 | `src/ui/mode-switch.ts` | Top-bar 查看 / 编辑 switch: writes `el.mode`, mirrors `body[data-studio-mode]`, gates host-side editing hotkeys/save; no document writes |
 | `src/styles/mode.css` | Segmented mode switch styling + the viewer-only chrome rules (hide panel, footer, save and panel-restore) |
 | `src/ui/drop-zone.ts` | Window-level multi-file drop with depth-counted overlay |
 | `src/ui/material-controller.ts` | Selected-part material override (colour / opacity / metalness / roughness); snapshots originals for restore, never touches the document |
 | `src/ui/scene-export.ts` | Thin wrapper over the SDK's `el.exportDocument()` + `downloadBlob()` (GLB / OBJ, document transforms) + PNG snapshot via `el.toBlob()` |
-| `src/ui/hud-controller.ts` | Telemetry panel, selection inspector, dirty state, toasts, FPS meter |
+| `src/ui/hud-controller.ts` | Footer sync state (`已保存 rN` / `rN · 未保存改动` / `冲突 · 本地 rN / 远端 rM`), live camera readout, FPS meter, selection inspector, toasts |
 | `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element) |
 | `src/styles/{base,controls,hud,welcome,mode}.css` | HUD styling extracted from the 680-line inline `<style>` block, plus the home-screen and viewer/editor chrome rules |
 | `minimal.html` + `src/minimal.ts` | Smallest end-to-end integration (element + load + save loop), run synchronously on the bare URL |
+| `embed.html` + `src/embed-demo.ts` | The declarative surface, and nothing else: a single `<scene-editor src=… camera-orbit=… field-of-view=…>` tag with `poster` / `progress-bar` / `error` slots, plus a click-to-hotspot pass (`positionAndNormalFromPoint` → `slot="hotspot-*"` → `updateHotspot`). No panel, no document code — it exists to prove the embed story is three attributes deep |
 
 Additional entries: `perf.html` (performance bench — `?objects=5000&instancing=0` for the
 unbatched control; the report also carries a close-up pass that proves chunked batching still
@@ -69,16 +71,17 @@ to 编辑 restores the panels, footer, save/undo/redo and the transform gizmo.
 
 ## Regression surface
 
-`vite.config.ts` has four HTML entries (`index.html`, `perf.html`,
+`vite.config.ts` has five HTML entries (`index.html`, `embed.html`, `perf.html`,
 `minimal.html`, `vent-demo.html`). SDK-level coverage lives in `packages/scene-editor/test/`;
 browser-level regression lives in `e2e/*.spec.ts` against the studio, the
-minimal page and the perf bench. The former `?demo=` scenario pages and their
+minimal page, the embed page and the perf bench. The former `?demo=` scenario pages and their
 Playwright suites (`sdk-coverage.spec.ts` / `demos-adversarial.spec.ts`) have
 been removed — the SDK surfaces they exercised are covered by unit tests.
 
 ```bash
 pnpm --filter @scenio/playground dev
 # http://127.0.0.1:3000/                           studio (viewer-first)
+# http://127.0.0.1:3000/embed.html                 三行集成 / declarative embed
 # http://127.0.0.1:3000/minimal.html               smallest host integration
 # http://127.0.0.1:3000/perf.html?objects=5000     performance bench
 ```
@@ -97,6 +100,16 @@ repository (`Models/<Name>/LICENSE.md`). `tri-draco.glb` is a local test fixture
 compressed with `pnpm dlx @gltf-transform/cli draco` so `decoder-path` has a
 fixture that three cannot parse without a decoder.
 
+Three of them are there for a **capability**, not for their looks — the studio's
+样例 chips and the 变体 group only light up when the asset actually declares
+something:
+
+| Asset | Declares | Exercises |
+|---|---|---|
+| `MaterialsVariantsShoe.glb` | `KHR_materials_variants` (3 套) | `availableVariants` / `variantName` — three does not parse the extension, so the SDK reads it out of the glTF JSON (`collectMaterialVariants`) |
+| `MorphPrimitivesTest.glb` | 2 个静态 morph target，**0 条动画** | `morphTargets` / `setMorphInfluence` — a weight only sticks when no clip is driving that channel (an animated morph asset makes the slider read 被动画驱动) |
+| `Cameras.gltf` + `.bin` | 两个具名相机 | `cameras` / `camera-name` / `setCameraByName` |
+
 `public/decoders/` mirrors three's payload layout (`draco/gltf` + `basis`, copied
 from `three/examples/jsm/libs`) so `e2e/decoders.spec.ts` runs offline. It is not
 part of the SDK: a host points `decoder-path` at its own copy or at
@@ -107,7 +120,7 @@ part of the SDK: a host points `decoder-path` at its own copy or at
 | Parameter | Effect |
 |---|---|
 | *(none)* | Minimal home screen (drop target + sample links); nothing loads until the user acts |
-| `?model=<id>` | Jump straight to a sample: `damaged-helmet` / `boom-box` / `fox` / `water-bottle` / `milk-truck`. Opens in **viewer** mode |
+| `?model=<id>` | Jump straight to a sample: `damaged-helmet` / `boom-box` / `fox` / `water-bottle` / `milk-truck` / `variants-shoe` / `morph-targets` / `cameras`. Opens in **viewer** mode |
 | `?mode=editor` | Boot straight into the editor (gizmo + full panel chrome). Default is viewer; `?mode=viewer` is a no-op |
 | `?scene=default` | Deterministic `box-1 / box-2 / gem-1` fixture used by e2e |
 | `?select=<id>` | Load the fixture and select an object |
@@ -125,16 +138,29 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   view concerns; they patch `ViewerStore`. `ViewerController` diffs the slice and runs
   a single `update*()` (display, environment, render settings, animation). This is the
   three-gltf-viewer split: `state` → `Viewer#update*` → engine.
-- **Undo/redo has two stacks behind one pair of buttons.** Panel settings live in the
+- **Undo/redo has three stacks behind one pair of buttons.** Panel settings live in the
   valtio store, so `snapshot()` copies give them a history of their own (a continuous
   slider drag within 400ms collapses to one step; play/pause and turntable are
-  transient and skipped). Document commands stay in the SDK history.
+  transient and skipped). Document commands stay in the SDK history. Camera poses get
+  a third stack of their own: the SDK deliberately persists `view` without putting it
+  in the command stack (D22), but "I just orbited, Ctrl+Z should take me back" is too
+  strong an expectation to break, so the host samples `view-change` — one event per
+  gesture end, one per settled fly-to — and replays poses through `setViewState()`.
+  The auto-fit after a load and a document load both move the baseline instead of
+  recording a step, so the first undo returns to what the user actually saw. That fit is
+  **committed** (`frameScene(false)`, not a preview) and immediately re-based with
+  `markSaved()`: if only the runtime camera moved, the document would keep the fixture's
+  pose while the screen showed another, and the first camera undo would write the fitted
+  pose into the document — leaving "unsaved changes" on a scene nobody edited. Arrow-key / `+`-`-` orbit goes through `setCameraOrbit()` →
+  `applyViewState()` (by design no event, no dirty) and is therefore not undoable.
   `HistoryCoordinator` undoes whichever side changed last (timestamps), replays redo in
   reverse undo order, and owns Ctrl+Z/Ctrl+Y at the window capture phase so the
-  element's own handler never double-undoes. Text fields keep native undo. Undo/redo
-  are two icon buttons in the panel header — they apply to every group, so they must
-  not hide inside a collapsible group. The header's `?` button reveals the keyboard
-  map on hover/focus instead of printing it inside 文件与导出.
+  element's own handler never double-undoes. Text fields keep native undo. Editing
+  stays gated: document commands are skipped while `el.mode !== "editor"`, which is what
+  lets viewer mode keep undo for view-only changes. Undo/redo are two icon buttons in
+  the panel header — they apply to every group, so they must not hide inside a
+  collapsible group. The header's `?` button reveals the keyboard map on hover/focus
+  instead of printing it inside 文件与导出.
 - **Normalization sits inside an identity wrapper.** `instantiateAsset` overwrites the
   root transform with the document values, so the universal loader's center/scale has to
   live one level below the returned root — otherwise a 154-unit sample snaps back to raw
@@ -161,9 +187,10 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   drop" bookkeeping.
 - **Framing is model-driven; clip planes are the SDK's.** Sample assets are authored
   at very different scales, so a hard-coded camera distance cannot fit them: the
-  fit distance comes from the bounding sphere and the narrower FOV, and the
-  auto-fit on open only moves the camera (no `setViewState`), so a freshly
-  loaded scene stays "未修改". `near/far` are re-derived by the runtime on every
+  fit distance comes from the bounding sphere and the narrower FOV. The auto-fit
+  writes the pose into the document and then re-bases the clean point, so a freshly
+  loaded scene is both "未修改" and round-trip faithful — reopen it and the camera is
+  where you left it. `near/far` are re-derived by the runtime on every
   render from the camera→target distance and the content radius, so millimetre
   CAD and kilometre terrain both stay visible and a wheel zoom never clips the
   model — no host-side per-frame sync.
@@ -185,6 +212,52 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   the document and the undo stack — and a slider drag collapses into a single undo step
   (`SetMaterialCommand.mergeWith`). "主光跟随视角" is a rAF head-light that skips re-rendering
   while the camera is still.
+- **The footer is a sync status, not a telemetry dump.** It carried four items —
+  修订 / 状态 / 物体 / 相机透视 FOV — and three were dead weight: 修订 and 状态 are the
+  same question ("is my work on the server?"), 物体 could never change (the studio had no
+  `addObject` / `removeObject` / `reparent` caller), and 相机 透视 · FOV 48° was a **static
+  string in the HTML** that a preset click overwrote with a *different* format and never
+  refreshed afterwards. It is now two groups: one sync state that has three meaningful
+  values (`已保存 rN` — `revision` only moves on load / save / `applyRemote`; `rN · 未保存改动`
+  — the dirty flag; `冲突 · 本地 rN / 远端 rM` — the split, pushed by `ConflictController`),
+  and one live readout written from `getCameraOrbit()` + `getFieldOfView()` on a rAF tick.
+  `updateDirtyUI()` became `updateDocumentState()` because it now owns more than the dirty bit.
+  The middle state is trustworthy again in both directions: `dirty` used to be a latch for
+  view edits, so undoing an orbit left `未保存改动` on screen forever. It is now a comparison
+  against the saved pose (see the `dirty` note in `API.md`), which is what makes the host's
+  camera-undo stack able to end at 已保存 instead of at a permanently lit badge.
+- **Object-graph edits go through the commands, never the scene.** 复制 / 删除 / 加立方体 /
+  改父级 all call `addObject` / `removeObject` / `reparent` with DTOs, so each is one undo
+  step and the viewer rebuilds from the document. The id is re-minted (`uniqueId`) rather
+  than reused, and `subtreeIds()` blocks a reparent that would make a cycle — the element
+  would throw, but a dropdown that offers an impossible option is a worse UI than one that
+  does not.
+- **A conflict is a decision, not a failure.** `applyRemote()` throws synchronously (a
+  structured `SceneEditorError` with `detail = { base, incoming, local }`), which is why
+  `simulateRemoteChange()` wraps it in try/catch — `.catch()` sees nothing. The studio
+  then has to *do* something with it: 保留本地 writes `max(local, remote) + 1` to the host's
+  server copy and `markSaved()`s, 采用远端 calls `applyRemote` with the remote documents and
+  resets the camera baseline, 稍后 only hides the bar (the footer keeps saying 冲突 and the
+  next save asks again). The element deliberately paints **no error overlay** for
+  `code === "conflict"` (the `error` event still fires) — a merge decision must not look
+  like a broken document. Both halves are covered by unit tests.
+- **model-viewer parity is asset-driven.** The 变体 group stays hidden unless the loaded
+  asset declares at least one of the three surfaces, and the counts land in its summary
+  (`变体 · 3 套`) — all of them come from data, not from the editor.
+  `KHR_materials_variants` is **not** parsed by three's loader, so the SDK reads the glTF
+  JSON (`collectMaterialVariants`) in *both* asset loaders; the universal one used here
+  dropped it until 2026-11, which is why the shoe's 材质变体 list was empty.
+  `setMorphInfluence()` returns `false` when a clip drives that channel, and the panel
+  prints 被动画驱动 rather than silently ignoring the drag (the sample is therefore a
+  static-morph asset, zero animations). The swap itself is the runtime's job and it
+  **repaints on its own** — rendering is on demand, so `setVariant()` ends with a frame
+  request; without it the canvas kept the previous variant until the camera moved,
+  which looked like "the switch did nothing" on a touchpad and like a wrong model state
+  when switching quickly (`e2e/variants.spec.ts` asserts the pixels, not the materials).
+  Hotspots are the one piece not in the studio UI —
+  they belong to the embed surface, so `embed.html` owns them, and the slot protocol
+  requires `data-position` / `data-normal` to be present **before** `refreshSlots()`
+  registers the anchor.
 
 ## 通风感知 demo（vent-demo.html）与 BIM 资产接入
 
@@ -359,8 +432,11 @@ part of the SDK: a host points `decoder-path` at its own copy or at
    （楼层加载时把楼板材质整个换成 `MeshBasic`，贴图根本没机会上），
    无需复刻。
 3. 9 层几何 JSON 共 14MB（含设备/家具三类；单层最大约 2.7MB），按需加载但切层
-   不回收——全部逛一遍常驻内存约 400MB，后续可加 LRU 或把 position 量化成
-   Int16（体积减半）。
+   不回收。**曾经记作「全部逛一遍常驻约 400MB」，实测证伪**：base64 解码后
+   position + index + normal 合计 **15.4MB / 47 万顶点**，全量常驻也不到 16MB，
+   所以 LRU 与 Int16 量化（最多省 12MB）都不做。真要动之前先量
+   `renderer.info.memory` 与 heap；`revit-floor-loader` 的 `dispose()` 只释放自建
+   几何（材质由调用方传入、模块级共享），逐层释放本身是安全的。
 
 已关闭（2026-11）：**构件密度**——`ACVTSF/FFSCMF/FFSCAF` 三类已增量提取并合入
 9 层 JSON，demo 侧以 `#EDEDED` 设备/家具材质渲染，白块密度与真实页对拍一致。

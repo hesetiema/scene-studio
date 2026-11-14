@@ -5,8 +5,8 @@
 ## 一、已完成（`0.7.0`）
 
 > 以下为各阶段的历史实测记录，其中提到的 `instancing-perf`、`sdk-coverage`、`demos-adversarial`
-> 等 spec 已在测试裁剪时删除；当前规模：单测 380 用例 / 37 文件，e2e 11 用例 / 5 spec
-> （`critical-flows` / `viewer-mode` / `decoders` / `visual` / `perf`）。
+> 等 spec 已在测试裁剪时删除；当前规模：单测 463 用例 / 40 文件，e2e 12 用例 / 6 spec
+> （`critical-flows` / `viewer-mode` / `embed` / `decoders` / `visual` / `perf`）。
 
 - **Playground 首页「先查看、再编辑」**：首页虽然走 `loadDocument()`（SDK 默认推导 editor），但 `main.ts` 在元素升级前把 `mode` 钉成 `viewer`，首个 runtime 直接以 `interactive: false` 创建；顶栏新增 查看 / 编辑 分段开关（`src/ui/mode-switch.ts` + `src/styles/mode.css`），写入 `el.mode` 与 `body[data-studio-mode]`。查看态隐藏控制面板 / 状态栏 / 保存 / 恢复面板按钮，画布铺满；宿主侧 `G`/`R`/`S`、Ctrl+Z/Y 与 `save-request` 同步门禁，切回 viewer 由 SDK 清空选择，全程不写文档。`?mode=editor` 供 e2e / 视觉夹具显式进编辑态；回到首页复位为 viewer。`e2e/viewer-mode.spec.ts` 新增「默认 viewer → 切 editor → 切回清选择且不弄脏」用例，其余需要编辑态的夹具 URL 统一补 `mode=editor`。
 - **`?demo=` 场景体系已移除**：hub 索引与 host-api / document / headless / assets / viewer / compare 六个场景，连同 `src/scenarios/`（router + 场景模块 + markup 片段）、`src/styles/demo.css`、`e2e/sdk-coverage.spec.ts`(10) + `e2e/demos-adversarial.spec.ts`(15) 共 25 个用例、`e2e/support/demo-hooks.ts` 与 `e2e/manual-viewer-check.mjs` 全部删除。宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot）改由 `packages/scene-editor/test/` 的单测覆盖；`minimal.html` 回到单一职责——同步跑最小接入示例，Vite 仍为 3 个 HTML 入口，裸页不再加载任何场景代码。
@@ -149,6 +149,8 @@
 
 已对齐：色调映射默认值（预览 `neutral`）、`neutral` 环境预设、接触阴影算法、取景（`updateFraming()`）、`shadow-intensity` / `shadow-softness` 语义，以及「viewer 无编辑交互」这一条本身（model-viewer 也没有 gizmo 与点选）。
 
+声明式面也已对齐并有示例覆盖（2026-11）：`src` / `camera-orbit` / `field-of-view` / `reveal` + `poster`/`progress-bar`/`error` 槽位（`apps/playground/embed.html`），`variant-name` / `camera-name` / `morphTargets` / `setMorphInfluence`（studio 变体面板 + `MaterialsVariantsShoe` / `Cameras` / `MorphPrimitivesTest` 三份素材），以及 `positionAndNormalFromPoint` → `slot="hotspot-*"` → `updateHotspot` 回路。仍在缺口一侧的是 `data-surface` / `surfaceFromPoint()`（跟随蒙皮网格的热点，明确延后）。
+
 残留差距（均为取样/版本问题，非算法差异）：
 
 1. 两栏各自从加载完成起播，动画相位漂移 → 接触阴影形状不同。逐帧对比需共享时钟与 clip 相位。
@@ -160,7 +162,7 @@
 
 仍未排期：
 
-- 对象复制 / 克隆命令。
+- 对象复制 / 克隆命令（studio 用 `addObject` + 复制 DTO 在宿主侧做，SDK 没有 `cloneObject`）。
 - 多对象批量变换命令。
 - 把「默认相机 / morph 预设」持久化进文档（当前只在元素属性层，`view` schema 不需要改动就不该动）。
 

@@ -83,7 +83,7 @@ BIM / FBX / Revit 加载不属于 SDK：它只有一个消费者，0.7.0 起住�
 | 18 | **视口覆盖层（着色 / 分解）是包的 rig，且必须跨过合批这道缝** | 着色模式和分解视图是「每个宿主都会要、且写错不报错」的第三批样板：只改代理 mesh 的材质对 `InstancedMesh` 批次无效（xray 只对没合批的对象生效），只写 `obj.position` 不走 `markDirty` 则实例矩阵不刷新。收进包：`display-mode` / `explode` 属性 + `setDisplayMode()` / `setExplode()`（契约可选成员）+ `createDisplayRig` / `createExplodeRig`；着色共享一份覆盖材质（一次写入覆盖全批），分解经 `applyTransform` 落地；两者都是纯预览态，从不写文档 | 元素装载后 re-assert 属性时 `setExplode(0)` 曾触发基线全量重建（O(objects×bounds)），把 perf 页首帧从 2.4 s 推到 4.4 s——0→0 现在是无条件短路；色调映射的重编译交给了 three 自己的程序缓存键（r186 起包含 `toneMapping`），宿主侧的 `needsUpdate` 遍历是纯浪费 |
 | 19 | **光照预设是数据，不是行为** | `LIGHTING_PRESETS` 按文档 `view.lights` 的形状导出四套参考布光；应用路径仍是宿主的 `setViewState`（预设因此和其他灯光编辑一样持久化）。有自己审美的宿主定义同形状的表，包不提供注册机制 | 参考值而非真理：预设表不进撤销栈、不进 schema，纯粹省掉「每个宿主抄一遍 4 行光参数」 |
 | 20 | **首页「先查看、再编辑」是宿主的决定，不是 SDK 的第二套模式** | 宿主文档本来推导 `mode="editor"`，playground 在元素升级前把 `mode` 钉成 `viewer`，让首个 runtime 就以 `interactive: false` 建出来；顶栏开关只写 `el.mode` + `body[data-studio-mode]`，`mode.css` 负责收起控制面板 / 状态栏 / 保存。e2e 与视觉夹具用 `?mode=editor` 显式保留编辑态 | 隐藏面板会改变视口宽高比，SDK 的 `resize()` 只更新 `camera.aspect` 不重新取景；宽模型在切入编辑时可能略被裁切，按 `F` 重新取景即可。切换不写文档、不进撤销栈 |
-| 21 | **`?demo=` 场景体系整体移除，回归回到单测 + 主页面 e2e** | hub 索引与六个能力场景、`src/scenarios/`（router + 场景模块 + markup 片段）、`demo.css` 以及 25 个 e2e 用例全部删除；`minimal.html` 只保留同步执行的最小接入示例，Vite 仍为 3 个 HTML 入口，裸页不再携带场景片段字符串 | 宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot）改由 SDK 单测覆盖，浏览器侧只留首页 / minimal / perf 的 e2e；代价是声明式查看器属性失去真实浏览器里的端到端断言，只剩单测与契约测试 |
+| 21 | **`?demo=` 场景体系整体移除，回归回到单测 + 主页面 e2e** | hub 索引与六个能力场景、`src/scenarios/`（router + 场景模块 + markup 片段）、`demo.css` 以及 25 个 e2e 用例全部删除；`minimal.html` 只保留同步执行的最小接入示例，裸页不再携带场景片段字符串（入口此后仍会增长：`vent-demo.html` 是 BIM 双视图，`embed.html` 是纯声明式嵌入，见 `apps/playground/README.md`） | 宿主契约面（headless facade、多选命令、迁移/校验、`assetResolver` 信任边界、声明式属性与 hotspot）改由 SDK 单测覆盖，浏览器侧只留首页 / minimal / perf 的 e2e；声明式属性当时因此失去真实浏览器里的端到端断言，2026-11 由 `e2e/embed.spec.ts`（属性 → 运行时、progress→load→poster 顺序、viewer 不选中、hotspot 回路）补回 |
 
 
 ---
@@ -166,8 +166,8 @@ BIM / FBX / Revit 加载不属于 SDK：它只有一个消费者，0.7.0 起住�
 
 | 层 | 数量 | 耗时 |
 |---|---|---|
-| 单元测试（vitest） | **380 通过 / 37 文件**（用户可见契约；内部 rig / controller 用例已精简） | 22.2 s |
-| e2e（Playwright：critical / viewer / decoders / visual / perf） | 11 用例 / 5 个 spec（`playwright test --list` 实测；原 25 个 `?demo=` 场景用例与 playground 面板细节用例已移除，visual / perf 为独立项目） | CI 三个 job |
+| 单元测试（vitest） | **463 通过 / 40 文件**（用户可见契约；内部 rig / controller 用例已精简） | 21.9 s |
+| e2e（Playwright：critical / viewer / embed / decoders / visual / perf） | 12 用例 / 6 个 spec（`playwright test --list` 实测；原 25 个 `?demo=` 场景用例与 playground 面板细节用例已移除，visual / perf 为独立项目） | CI 三个 job |
 | 视觉基线 | 4 张 canvas-only 截图 | SwiftShader |
 | 性能门禁 | 本地 p95 ≤ 40 ms、首帧 ≤ 3 s（设计目标 2 s，见 5.2 末段）；CI（SwiftShader）≤ 500 ms / ≤ 15 s，unload-zero 精确断言 | — |
 

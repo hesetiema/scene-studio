@@ -70,7 +70,7 @@ don't hand-delete `node_modules` to get past it.
 Breaking one of these is a regression, not a refactor. Where a check exists, it's named.
 
 1. **Layer direction is one-way.** `core` ← `runtime` ← {`element`, `three`}. Measured today:
-   **83 files, 263 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
+   **79 files, 261 static internal edges, 0 cycles** — keep the cycle count at 0. The one remaining
    backwards edge is a *type-only* `import type { Transform }` from
    `core/commands/transform-command.ts` → `runtime/runtime-contract.ts`; `Transform` is a
    document-level concept and ideally belongs in `core`.
@@ -103,6 +103,14 @@ Breaking one of these is a regression, not a refactor. Where a check exists, it'
    panel slots, no CRDT — all three are explicit non-goals in TODOS.md §5. The public surface is
    closed on purpose: domain loading that serves one product goes in `apps/`, not behind a new
    subpath.
+10. **Rendering is on demand, so every pixel-changing setter asks for a frame.** `ThreeRuntime`
+    draws from `#render()` (the rAF loop only runs while a clip plays); a setter that alters what
+    the canvas shows must end with `this.#render()`, as `setMaterial`, `setMorphInfluence`,
+    `setCameraByName` and `applyViewState` do. `setVariant` did **not** until 2026-11: the material
+    slot swapped correctly while the canvas kept the *previous* variant's pixels until the camera
+    moved — it read as "the switch did nothing", and a quick A→B→C sequence showed whichever pick
+    was painted last. `e2e/variants.spec.ts` guards it on pixels (no camera interaction needed),
+    because a `mesh.material` assertion passes on the broken build.
 
 ## Adding a public export subpath — four places, all required
 
