@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { AssetError, AssetErrorCode } from "./asset-error";
 import { assetFormatHint } from "./format";
+import { collectMaterialVariants } from "./material-variants";
 import type { LoadedAsset } from "./asset-cache";
 
 export const UNIVERSAL_SUPPORTED_FORMATS = ["glb", "gltf", "obj", "stl"] as const;
@@ -149,6 +150,8 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
     const format = detectFormatFromUrl(url, assetId);
     let rootObject: THREE.Object3D;
     let animations: THREE.AnimationClip[] | undefined;
+    /** Kept for KHR_materials_variants: three parses geometry, we read the JSON. */
+    let gltfResult: unknown = null;
 
     try {
       if (format === "glb" || format === "gltf") {
@@ -156,6 +159,7 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
         const gltf = await loader.loadAsync(url);
         rootObject = gltf.scene;
         animations = gltf.animations;
+        gltfResult = gltf;
       } else if (format === "obj") {
         const { OBJLoader } = await import("three/examples/jsm/loaders/OBJLoader.js");
         const loader = new OBJLoader();
@@ -228,6 +232,11 @@ export function createUniversalAssetLoader(options: UniversalAssetLoaderOptions 
     if (animations && animations.length > 0) {
       asset.animations = animations;
     }
+    // Same parity as the resolver loader: this path also has to report
+    // KHR_materials_variants, or `<scene-editor src>` and a host-loaded GLB would
+    // disagree about what the asset declares.
+    const variants = await collectMaterialVariants(gltfResult);
+    if (variants) asset.variants = variants;
     return asset;
   };
 }

@@ -929,9 +929,16 @@ export class ThreeRuntime implements RuntimeContract {
    * Switch every mounted asset to `name` (`null` restores the defaults).
    * Returns whether any mounted asset declares it — unknown names are remembered
    * anyway, so a variant set before the asset finishes loading still applies.
+   *
+   * Rendering is on demand, so the swap has to ask for a frame: without this the
+   * canvas keeps the *previous* variant's pixels until the camera next moves,
+   * which reads as "the switch did nothing" and makes a quick A→B→C sequence
+   * show whichever pick happened to be painted last.
    */
   setVariant(name: string | null): boolean {
-    return this.#objects.setVariant(name);
+    const known = this.#objects.setVariant(name);
+    if (known) this.#render();
+    return known;
   }
 
   // -------------------------------------------------------------------------
