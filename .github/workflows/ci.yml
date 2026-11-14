@@ -59,7 +59,7 @@ jobs:
   # frame-time measurements. WebGPU eval is opt-in (RUN_WEBGPU_EVAL) and
   # self-skips without it.
   e2e:
-    name: e2e (critical-flows + perf)
+    name: e2e (chromium specs + perf)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -75,6 +75,13 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Critical flows
         run: pnpm test:e2e --project=chromium critical-flows.spec.ts
+      - name: "Declared surface + material variants"
+        # Both specs assert *relative* things (event order, a hotspot round trip,
+        # the colour difference between two frames on the same canvas), never a
+        # pinned RGB, so SwiftShader can run them. They lived only on developer
+        # machines until now, which meant the one regression they exist to catch
+        # -- a setter that forgets to ask for a frame -- could merge green.
+        run: pnpm test:e2e --project=chromium embed.spec.ts variants.spec.ts
       - name: "Perf gate (relaxed budgets for SwiftShader)"
         # Software rendering is ~10-50× slower than a real GPU; budgets stay
         # loose enough to only catch order-of-magnitude regressions, while the
