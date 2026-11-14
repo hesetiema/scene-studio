@@ -74,6 +74,33 @@ jobs:
           else
             echo "::warning::ACTIONS_ID_TOKEN_REQUEST_URL is unset -- this job cannot mint an OIDC token"
           fi
+      - name: Probe the OIDC exchange
+        # Read-only: ask GitHub for an id_token with npm's audience and see whether
+        # npm will exchange it. A 201 means the trusted publisher's claims match;
+        # anything else returns the reason that `npm publish` would otherwise hide
+        # behind a generic E404. Never print either token.
+        run: |
+          set +e
+          RAW=$(curl -sS -f -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=npm%3Aregistry.npmjs.org")
+          IDTOKEN=$(printf '%s' "$RAW" | node -e "
+            let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{
+              try { const j=JSON.parse(s); process.stdout.write(j.value || ''); } catch {}
+            });")
+          if [ -z "$IDTOKEN" ]; then
+            echo "::warning::probe: no GitHub id_token obtained (non-fatal diagnostic)"
+            exit 0
+          fi
+          BODY=$(mktemp)
+          CODE=$(curl -sS -o "$BODY" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${IDTOKEN}" \
+            -H 'Content-Type: application/json' \
+            "https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/@scenio%2fscene-editor")
+          if [ "$CODE" = "201" ]; then
+            echo "::notice::npm OIDC exchange: 201 -- trusted publisher claims match"
+          else
+            echo "::warning::npm OIDC exchange: ${CODE} -- $(head -c 300 "$BODY")"
+          fi
       - name: Publish
         working-directory: packages/scene-editor
         run: |
@@ -102,6 +129,13 @@ jobs:
             echo "::error::npm publish failed (exit $STATUS): ${ERRS:-no npm error lines, see the job summary}"
             OTHER=$(grep -viE '^npm (notice|error|ERR)' "$LOG" | tail -6 | tr '\n' ' ' | cut -c1-500)
             if [ -n "$OTHER" ]; then echo "::error::other output: $OTHER"; fi
+            DEBUGLOG=$(grep -oE '/[^[:space:]]*\.npm/_logs/[^[:space:]]+\.log' "$LOG" | tail -1)
+            if [ -n "$DEBUGLOG" ] && [ -f "$DEBUGLOG" ]; then
+              DBG=$(grep -iE 'oidc|exchange|provenance|trust' "$DEBUGLOG" \
+                | sed -E 's/[A-Za-z0-9_-]{40,}/<redacted>/g' \
+                | head -10 | tr '\n' ' ' | cut -c1-700)
+              if [ -n "$DBG" ]; then echo "::error::npm debug (oidc): $DBG"; fi
+            fi
             if grep -q "Signed provenance statement" "$LOG"; then
               echo "::warning::OIDC worked (provenance was signed). npm deliberately answers 404 for an unauthorised write: the trusted publisher likely has only \"npm stage publish\" allowed, or its repo/workflow/environment fields do not match the claims in the Release identity step."
             else
