@@ -1856,9 +1856,14 @@ export class SceneEditorElement extends HTMLElement {
     });
     editor.on("error", (payload) => {
       this.#slots.setLoading(false);
-      // The event alone left hosts with a blank canvas; the message is now
-      // also a visual state (`slot="error"`, or the built-in overlay).
-      this.#slots.showError(payload.message);
+      // A conflict is a decision point, not a failure: the host resolves it with
+      // its own UI, and a full-canvas message would cover the very model the
+      // user is comparing. Every other code still gets the visual state.
+      if (payload.code !== SceneErrorCode.Conflict) {
+        // The event alone left hosts with a blank canvas; the message is now
+        // also a visual state (`slot="error"`, or the built-in overlay).
+        this.#slots.showError(payload.message);
+      }
       // A preview owns exactly one asset: remember that this load produced
       // nothing, so the `load` that follows cannot announce success.
       if (this.#documentOwner === "src") this.#srcLoadFailed = true;

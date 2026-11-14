@@ -30,6 +30,12 @@ const STUDIO_VIEW = {
  * Built-in samples are the Khronos glTF sample assets served by
  * `KhronosGroup/GLTF-Sample-Viewer` (the models themselves live in
  * `KhronosGroup/glTF-Sample-Assets`), copied into `public/assets/`.
+ *
+ * Three of them exist for capability demos rather than looks: `MaterialsVariantsShoe`
+ * (KHR_materials_variants), `MorphPrimitivesTest` (morph targets, deliberately
+ * static so the weight slider is usable) and `Cameras`
+ * (two cameras authored in the asset). Without an asset that declares these, the
+ * corresponding switches would have nothing to act on.
  */
 export class ModelLoader {
   /** Universal asset registry for built-in and dynamically registered models */
@@ -39,6 +45,10 @@ export class ModelLoader {
     ["fox", "/assets/Fox.glb"],
     ["water-bottle", "/assets/WaterBottle.glb"],
     ["milk-truck", "/assets/CesiumMilkTruck.glb"],
+    // 三个「资产自带能力」的样本：没有它们，变体 / 形变 / 多相机的开关没有东西可演。
+    ["variants-shoe", "/assets/MaterialsVariantsShoe.glb"],
+    ["morph-targets", "/assets/MorphPrimitivesTest.glb"],
+    ["cameras", "/assets/Cameras.gltf"],
     [
       "gem",
       () =>
@@ -188,6 +198,30 @@ export class ModelLoader {
         doc,
         telemetryName: "Cesium Milk Truck（含动画）",
         telemetryFormat: "glTF / GLB（多部件 + 动画）",
+      };
+    }
+    if (value === "variants-shoe") {
+      const doc = createSingleModelDoc("variants-shoe", "Materials Variants Shoe");
+      return {
+        doc,
+        telemetryName: "Materials Variants Shoe",
+        telemetryFormat: "glTF / GLB + KHR_materials_variants",
+      };
+    }
+    if (value === "morph-targets") {
+      const doc = createSingleModelDoc("morph-targets", "Morph Primitives");
+      return {
+        doc,
+        telemetryName: "Morph Primitives（形变目标）",
+        telemetryFormat: "glTF / GLB（静态形变，无动画）",
+      };
+    }
+    if (value === "cameras") {
+      const doc = createSingleModelDoc("cameras", "Cameras");
+      return {
+        doc,
+        telemetryName: "Cameras（资产内置相机）",
+        telemetryFormat: "glTF（.gltf + .bin）",
       };
     }
     return null;

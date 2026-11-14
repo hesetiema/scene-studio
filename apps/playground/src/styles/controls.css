@@ -43,6 +43,19 @@
   color: #a6d5ec;
 }
 
+/* 次要出口：冲突条上的「稍后」，以及任何不该抢主按钮注意力的动作 */
+.btn-ghost {
+  border-color: transparent;
+  background: none;
+  color: #a3a3a3;
+}
+
+.btn-ghost:hover {
+  border-color: transparent;
+  background: #333;
+  color: var(--text-strong);
+}
+
 .btn-wide {
   width: 100%;
 }

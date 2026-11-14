@@ -18,6 +18,8 @@ import { DocumentPanel } from "./panels/document-panel";
 import { LightingPanel } from "./panels/lighting-panel";
 import { MaterialPanel } from "./panels/material-panel";
 import { ModelPanel } from "./panels/model-panel";
+import { ObjectPanel } from "./panels/object-panel";
+import { VariantPanel } from "./panels/variant-panel";
 import { TransformPanel } from "./panels/transform-panel";
 import type { Panel } from "./panel";
 
@@ -36,6 +38,8 @@ export interface StudioShellOptions {
   loadCustom: (source: string | File) => Promise<void>;
   /** Load a multi-file glTF bundle (glTF + buffers + textures). */
   loadFiles: (files: File[]) => Promise<void>;
+  /** 演练 `applyRemote`：模拟另一个客户端提交了新修订。 */
+  simulateRemote: () => Promise<void>;
 }
 
 const MODE_BY_SHORTCUT: Record<string, DisplayMode> = {
@@ -64,6 +68,8 @@ export class StudioShell {
   readonly display: DisplayPanel;
   readonly lighting: LightingPanel;
   readonly materialPanel: MaterialPanel;
+  readonly objectPanel: ObjectPanel;
+  readonly variantPanel: VariantPanel;
   readonly animation: AnimationPanel;
   readonly document: DocumentPanel;
   readonly chrome: ChromePanel;
@@ -91,6 +97,7 @@ export class StudioShell {
       camera: options.camera,
       hud: options.hud,
       store: options.store,
+      el: options.el,
     });
 
     this.background = new BackgroundPanel({ store: options.store });
@@ -103,6 +110,14 @@ export class StudioShell {
       material: this.material,
     });
 
+    this.objectPanel = new ObjectPanel({
+      el: options.el,
+      hud: options.hud,
+      camera: options.camera,
+    });
+
+    this.variantPanel = new VariantPanel({ el: options.el });
+
     this.animation = new AnimationPanel({
       store: options.store,
       viewer: options.viewer,
@@ -113,6 +128,7 @@ export class StudioShell {
       el: options.el,
       hud: options.hud,
       history: options.history,
+      simulateRemote: options.simulateRemote,
     });
 
     this.chrome = new ChromePanel();
@@ -126,6 +142,8 @@ export class StudioShell {
       this.display,
       this.lighting,
       this.materialPanel,
+      this.objectPanel,
+      this.variantPanel,
       this.animation,
       this.document,
       this.chrome,
@@ -155,10 +173,14 @@ export class StudioShell {
     this.#options.viewer.syncFromDocument();
     this.animation.refresh();
     this.materialPanel.refreshHint();
+    this.objectPanel.refresh();
+    this.variantPanel.refresh();
     this.background.sync(this.#options.store.state);
     this.lighting.sync(this.#options.store.state);
     this.display.sync(this.#options.store.state);
     this.cameraPanel.syncTurntable(this.#options.store.state.autoRotate);
+    // 新文档的 FOV 来自 view.camera；载入后的自动取景也不是任何一个预设。
+    this.cameraPanel.syncAfterLoad();
   }
 
   /** Reflect the loaded preset in the model `<select>` (custom files keep the last option). */

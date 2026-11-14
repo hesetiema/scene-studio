@@ -9,9 +9,11 @@ export interface DocumentPanelOptions {
   hud: HUDController;
   /** 统一撤销/重做（面板设置 + 文档命令）。 */
   history: HistoryCoordinator;
+  /** 演练 `applyRemote`：模拟另一个客户端提交了新修订。 */
+  simulateRemote: () => Promise<void>;
 }
 
-/** Save / history / snapshot / export actions. */
+/** Save / history / snapshot / export / remote-sync actions. */
 export class DocumentPanel extends BasePanel {
   readonly #options: DocumentPanelOptions;
 
@@ -26,6 +28,7 @@ export class DocumentPanel extends BasePanel {
     this.click("#btn-redo", () => this.#options.history.redo());
 
     this.click("#btn-snapshot", () => void this.#snapshot());
+    this.click("#btn-remote", () => void this.#options.simulateRemote());
 
     this.click("#btn-export-glb", () => void this.#export("glb"));
     this.click("#btn-export-obj", () => void this.#export("obj"));

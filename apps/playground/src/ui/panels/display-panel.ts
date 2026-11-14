@@ -43,6 +43,22 @@ export class DisplayPanel extends BasePanel {
       );
     }
 
+    // Contact shadow: presentation-only (attributes, not document), so it lives
+    // in the viewer store like exposure — one slider drag is one undo step.
+    const shadow = document.querySelector<HTMLInputElement>("#shadow-slider");
+    if (shadow) {
+      this.listen(shadow, "input", () =>
+        this.#store.patch({ shadowIntensity: Number(shadow.value) / 100 }),
+      );
+    }
+
+    const shadowSoft = document.querySelector<HTMLInputElement>("#shadow-soft-slider");
+    if (shadowSoft) {
+      this.listen(shadowSoft, "input", () =>
+        this.#store.patch({ shadowSoftness: Number(shadowSoft.value) / 100 }),
+      );
+    }
+
     this.#unsubscribe = this.#store.subscribe((next) => this.sync(next));
     this.sync(this.#store.state);
   }
@@ -62,6 +78,20 @@ export class DisplayPanel extends BasePanel {
     if (slider && document.activeElement !== slider) slider.value = String(Math.round(state.explode * 100));
     const label = document.querySelector<HTMLElement>("#explode-val");
     if (label) label.textContent = `${Math.round(state.explode * 100)}%`;
+
+    const shadow = document.querySelector<HTMLInputElement>("#shadow-slider");
+    if (shadow && document.activeElement !== shadow) {
+      shadow.value = String(Math.round(state.shadowIntensity * 100));
+    }
+    const shadowLabel = document.querySelector<HTMLElement>("#shadow-val");
+    if (shadowLabel) shadowLabel.textContent = `${Math.round(state.shadowIntensity * 100)}%`;
+
+    const shadowSoft = document.querySelector<HTMLInputElement>("#shadow-soft-slider");
+    if (shadowSoft && document.activeElement !== shadowSoft) {
+      shadowSoft.value = String(Math.round(state.shadowSoftness * 100));
+    }
+    const softLabel = document.querySelector<HTMLElement>("#shadow-soft-val");
+    if (softLabel) softLabel.textContent = `${Math.round(state.shadowSoftness * 100)}%`;
   }
 
   destroy(): void {

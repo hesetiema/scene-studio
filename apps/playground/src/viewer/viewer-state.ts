@@ -51,6 +51,10 @@ export interface ViewerState {
   followCamera: boolean;
   exposure: number;
   toneMapping: ToneMappingId;
+  /** 接触阴影强度 0..1（0 = 关闭，不写文档、不改基线外观）。 */
+  shadowIntensity: number;
+  /** 接触阴影柔和度 0..1。 */
+  shadowSoftness: number;
   autoRotate: boolean;
   animation: AnimationSelection;
 }
@@ -74,6 +78,9 @@ export const DEFAULT_VIEWER_STATE: ViewerState = {
   followCamera: false,
   exposure: 1,
   toneMapping: "none",
+  // 默认关闭：与 0.7.0 的画面一致（视觉基线依赖这一点），打开后才有贴地暗部。
+  shadowIntensity: 0,
+  shadowSoftness: 0.5,
   autoRotate: false,
   animation: { clipId: null, playing: false, speed: 1 },
 };

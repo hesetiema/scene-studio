@@ -635,6 +635,32 @@ describe("SceneEditorElement inbound remote updates (D17)", () => {
       SceneEditorError,
     );
   });
+
+  it("reports a conflict through the event but paints no failure overlay", async () => {
+    const { el } = makeElement();
+    await connected(el);
+    await el.loadDocument(doc);
+    el.applyTransform("box-1", doc.objects[0]!, {
+      position: [1, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+
+    const reported: { code: string; message: string }[] = [];
+    el.addEventListener("error", (event) => {
+      reported.push((event as CustomEvent<{ code: string; message: string }>).detail);
+    });
+
+    expect(() => el.applyRemote({ ...doc, revision: 1 }, { baseRevision: 0 })).toThrow(
+      SceneEditorError,
+    );
+
+    // The host still hears about it (it may want its own banner) …
+    expect(reported.map((detail) => detail.code)).toEqual([SceneErrorCode.Conflict]);
+    // … but a conflict must not cover the model with a developer-facing message:
+    // comparing the two versions is exactly what the user needs to do next.
+    expect(el.querySelector("[data-scene-editor-error]")).toBeNull();
+  });
 });
 
 describe("SceneEditorElement slots (model-viewer parity)", () => {

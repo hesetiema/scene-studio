@@ -5,7 +5,8 @@ import * as THREE from "three";
 
 /**
  * HUD controller: encapsulates all DOM updates for the right panel (telemetry,
- * dirty state, selection inspector), bottom toast, and FPS counter.
+ * sync state, selection inspector), bottom toast, FPS counter and the static
+ * build stamp.
  * Extracted from main.ts so main.ts only wires events.
  */
 export class HUDController {
@@ -15,24 +16,59 @@ export class HUDController {
   private frameCount = 0;
   private lastFpsTime = performance.now();
   private fpsRafId: number | null = null;
+  /** Unresolved save conflict, if any (`remote` = the server's revision). */
+  private conflict: { local: number; remote: number } | null = null;
 
   constructor(el: SceneEditorElement, getRuntime: () => ThreeRuntime | null) {
     this.el = el;
     this.getRuntime = getRuntime;
   }
 
-  /** Update bottom-bar revision / dirty / object count. */
-  updateDirtyUI(): void {
-    const revEl = document.querySelector("#rev-val");
-    const dirtyEl = document.querySelector("#dirty-val");
-    const objCountEl = document.querySelector("#obj-count-val");
+  /**
+   * Bottom-bar sync state. The revision alone is meaningless to a visitor, so
+   * the three states share one slot instead of two:
+   * `已保存 r3` / `r3 · 未保存改动` / `冲突 · 本地 r4 / 远端 r5`.
+   */
+  updateDocumentState(): void {
+    const syncEl = document.querySelector<HTMLElement>("#sync-val");
+    const objectsEl = document.querySelector("#stat-objects");
 
-    if (revEl) revEl.textContent = String(this.el.revision);
-    if (dirtyEl) {
-      dirtyEl.textContent = this.el.dirty ? "已修改" : "未修改";
-      (dirtyEl as HTMLElement).style.color = this.el.dirty ? "#e0b25c" : "#8fbfd8";
+    if (objectsEl) {
+      try {
+        objectsEl.textContent = String(this.el.getDocument().objects.length);
+      } catch {
+        objectsEl.textContent = "--";
+      }
     }
-    if (objCountEl) objCountEl.textContent = String(this.el.getDocument().objects.length);
+    if (!syncEl) return;
+
+    if (this.conflict) {
+      syncEl.textContent = `冲突 · 本地 r${this.conflict.local} / 远端 r${this.conflict.remote}`;
+      syncEl.className = "sync-conflict";
+      syncEl.title = "远端已有新版本：在「文件与导出」里选择保留本地、采用远端或载入远端后再改";
+      return;
+    }
+
+    const revision = this.el.revision;
+    const dirty = this.el.dirty;
+    syncEl.textContent = dirty ? `r${revision} · 未保存改动` : `已保存 r${revision}`;
+    syncEl.className = dirty ? "sync-dirty" : "sync-ok";
+    syncEl.title = dirty
+      ? "文档已改动，尚未写回宿主：Ctrl+S 保存"
+      : "文档与宿主保存的版本一致";
+  }
+
+  /**
+   * Mark (or clear, with `null`) an unresolved conflict. The remote revision is
+   * the server's; the local one is read live so a later edit cannot make the
+   * label lie about which version is on screen.
+   */
+  setConflict(remote: number | null): void {
+    this.conflict =
+      remote === null
+        ? null
+        : { local: this.el.revision, remote };
+    this.updateDocumentState();
   }
 
   /** Show a transient toast message (bottom center). */
@@ -119,6 +155,10 @@ export class HUDController {
   /** Start FPS & latency counter (top HUD). Call once during UI setup. */
   startFpsCounter(): void {
     const fpsEl = document.querySelector("#hud-perf-stat");
+    // Read the engine revision instead of hardcoding it in the markup: the
+    // footer claims a version, so it has to be the one actually running.
+    const revEl = document.querySelector("#three-rev");
+    if (revEl) revEl.textContent = `three r${THREE.REVISION}`;
 
     const tick = (now: number) => {
       this.frameCount++;

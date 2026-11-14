@@ -1,4 +1,11 @@
-﻿import { SCENE_EDITOR_VERSION, type SceneDocument } from "@scenio/scene-editor";
+﻿import {
+  SCENE_EDITOR_VERSION,
+  SceneEditorError,
+  SceneErrorCode,
+  type ConflictDocuments,
+  type SceneDocument,
+  type SceneObjectDTO,
+} from "@scenio/scene-editor";
 import { SceneEditorElement, defineSceneEditor } from "@scenio/scene-editor/element";
 import { ThreeRuntime, createSelectionHighlightPlugin } from "@scenio/scene-editor/three";
 import { ModelLoader } from "./assets/model-loader";
@@ -6,6 +13,7 @@ import { WelcomeScreen } from "./ui/welcome-screen";
 import { CameraController } from "./camera/camera-controller";
 import { HUDController } from "./ui/hud-controller";
 import { StudioShell } from "./ui/studio-shell";
+import { ConflictController } from "./ui/conflict-controller";
 import type { ModeSwitch, StudioMode } from "./ui/mode-switch";
 import { bindHistoryHotkeys, HistoryCoordinator } from "./viewer/history-coordinator";
 import { createViewerStore, type ViewerStore } from "./viewer/viewer-state";
@@ -79,8 +87,13 @@ const store = createViewerStore();
 const viewer = new ViewerController({ store, el, getRuntime });
 viewer.mount();
 
-/** 撤销/重做覆盖面板设置（valtio 快照）与文档命令（SDK 历史）。 */
+/** 撤销/重做覆盖面板设置（valtio 快照）、文档命令（SDK 历史）与相机位姿（宿主栈）。 */
 const history = new HistoryCoordinator(el, store);
+
+// 载入后的自动取景只挪相机、不写文档（`commit: false`），因此不会发 view-change。
+// 但它确实改变了用户看到的画面，所以要把视角栈的基线挪过去，否则第一笔撤销会
+// 跳回文档声明的旧机位。
+camera.onProgrammaticView = () => history.resetCameraBaseline();
 
 /** In-memory host store for e2e save/conflict flows (D18/D17). */
 const host = {
@@ -88,6 +101,31 @@ const host = {
   forceConflict: false,
   saves: 0,
 };
+
+/** 最近一次载入的名称/格式：采用远端版本时沿用，不要退回占位文案。 */
+const lastTelemetry = { name: "未载入模型", format: "—" };
+
+/**
+ * 冲突的宿主那一半：SDK 只抛出两边文档，谁来选由宿主决定。
+ * 「保留本地」把本地写回服务端，「采用远端」直接换成对方的文档。
+ */
+const conflicts = new ConflictController({
+  hud,
+  adoptRemote: (remote) => applyDocument(remote, lastTelemetry.name, lastTelemetry.format, false),
+  overwriteRemote: (local, remote) => {
+    // 服务端已经在 rN，本地再写上去就是 rN+1：修订号只能往前，不能回退。
+    const next: SceneDocument = {
+      ...structuredClone(local),
+      revision: Math.max(local.revision, remote.revision) + 1,
+    };
+    host.saves += 1;
+    host.serverDoc = structuredClone(next);
+    window.__savedDocs.push(structuredClone(next));
+    el.markSaved(next.revision);
+    hud.updateDocumentState();
+    return next.revision;
+  },
+});
 
 window.__editor = el;
 window.__host = host;
@@ -105,6 +143,7 @@ const shell = new StudioShell({
   loadPreset: loadModelByOption,
   loadCustom: loadCustomModel,
   loadFiles: loadFilesModel,
+  simulateRemote: simulateRemoteChange,
 });
 
 /** 空状态引导：未载入模型时覆盖视口，上传 / 选示例后自动隐藏。 */
@@ -124,7 +163,13 @@ async function applyDocument(
   frame: boolean,
   option?: string,
 ): Promise<void> {
+  // 新文档 = 旧的冲突已经被这次载入消化掉了。
+  conflicts.clear();
+
   await el.loadDocument(doc);
+
+  lastTelemetry.name = telemetryName;
+  lastTelemetry.format = telemetryFormat;
 
   shell.onDocumentLoaded();
   shell.selectModelOption(option ?? null);
@@ -132,11 +177,15 @@ async function applyDocument(
 
   if (frame) camera.frameScene(false);
 
+  // 载入 + 自动取景 = 新的基线：视角栈在这里归零，否则刚打开模型按 Ctrl+Z
+  // 会退回载入前的机位（那是上一份文档的位姿，对新模型没有意义）。
+  history.resetCameraBaseline();
+
   // 打开文档时的自动取景属于「载入」而不是用户编辑：把它作为新的干净基线，
   // 否则状态栏会在刚载入时就显示「已修改」。
   host.serverDoc = structuredClone(el.getDocument());
   el.markSaved(el.revision);
-  hud.updateDirtyUI();
+  hud.updateDocumentState();
 
   // 空文档 = 首次进入：显示上传引导；载入任何内容后收起。
   if (doc.objects.length === 0) welcome.show();
@@ -192,6 +241,71 @@ window.loadCustomModel = loadCustomModel;
 window.loadCustomFiles = loadFilesModel;
 
 // ---------------------------------------------------------------------------
+// Remote sync rehearsal (`applyRemote`)
+// ---------------------------------------------------------------------------
+
+/**
+ * 把服务端当成「另一个客户端刚提交过」：本地干净就快进，有未保存改动就报冲突。
+ * 这是 D17 的完整闭环 —— SDK 只抛结构化冲突，选择权在宿主（决策条）。
+ */
+async function simulateRemoteChange(): Promise<void> {
+  const base = host.serverDoc;
+  const remote = remoteWithNewPart(base);
+
+  try {
+    await el.applyRemote(remote, { baseRevision: base.revision });
+    // 元素自己换了文档（历史已清空、revision 已是远端值），所以不走 applyDocument。
+    host.serverDoc = structuredClone(remote);
+    shell.onDocumentLoaded();
+    history.resetCameraBaseline();
+    hud.updateDocumentState();
+    hud.showToast(`已快进到远端修订 ${remote.revision}`);
+  } catch (error) {
+    const docs = conflictOf(error);
+    if (docs) {
+      pushConflict(docs);
+      return;
+    }
+    hud.showToast(error instanceof Error ? `远端同步失败：${error.message}` : "远端同步失败");
+  }
+}
+
+/** 远端版本 = 当前服务端文档 + 一个可见的新部件 + 修订号 +1。 */
+function remoteWithNewPart(base: SceneDocument): SceneDocument {
+  const objects = base.objects.map((object) => structuredClone(object));
+  const revision = base.revision + 1;
+
+  let id = `remote-${revision}`;
+  for (let suffix = 2; objects.some((object) => object.id === id); suffix += 1) {
+    id = `remote-${revision}-${suffix}`;
+  }
+
+  const part: SceneObjectDTO = {
+    id,
+    type: "primitive",
+    name: "远端新增部件",
+    geometry: { kind: "box" },
+    position: [1.5, 0.4, 1],
+    rotation: [0, 0, 0],
+    scale: [0.8, 0.8, 0.8],
+  };
+
+  return {
+    ...structuredClone(base),
+    revision,
+    objects: [...objects, part],
+  };
+}
+
+/** `applyRemote` 抛的是 `SceneEditorError`，`detail` 里带着两边文档。 */
+function conflictOf(error: unknown): ConflictDocuments | null {
+  if (!(error instanceof SceneEditorError) || error.code !== SceneErrorCode.Conflict) return null;
+  const detail = error.detail as Partial<ConflictDocuments> | undefined;
+  if (!detail?.base || !detail.incoming || !detail.local) return null;
+  return detail as ConflictDocuments;
+}
+
+// ---------------------------------------------------------------------------
 // Host persistence + conflict surface (D17/D18)
 // ---------------------------------------------------------------------------
 
@@ -223,24 +337,24 @@ el.addEventListener("save-request", () => {
   host.serverDoc = structuredClone(next);
   window.__savedDocs.push(structuredClone(next));
   el.markSaved(next.revision);
-  hud.updateDirtyUI();
+  conflicts.clear();
+  hud.updateDocumentState();
   hud.showToast(`已保存 修订 ${next.revision}`);
 });
 
-function pushConflict(conflict: { base: SceneDocument; incoming: SceneDocument; local: SceneDocument }): void {
+function pushConflict(conflict: ConflictDocuments): void {
   window.__conflicts.push(conflict);
   el.dispatchEvent(new CustomEvent("save-conflict", { detail: conflict }));
+  // 决策条是宿主自己画的：SDK 只负责把两边文档交回来（D17）。
+  conflicts.show(conflict);
 }
 
-el.addEventListener("save-conflict", () => {
-  document.body.dataset.conflict = "true";
-  hud.showToast("检测到保存冲突，请先合并远端版本");
-});
-
-el.addEventListener("history-change", () => hud.updateDirtyUI());
+el.addEventListener("history-change", () => hud.updateDocumentState());
 el.addEventListener("selection-change", () => hud.updateSelectionUI());
 el.addEventListener("error", (event) => {
-  const detail = (event as unknown as CustomEvent<{ message?: string }>).detail;
+  const detail = (event as unknown as CustomEvent<{ code?: string; message?: string }>).detail;
+  // 冲突有专门的可操作出口（决策条），不再用一句英文 toast 重复一遍。
+  if (detail?.code === SceneErrorCode.Conflict) return;
   hud.showToast(detail?.message ?? "SDK 异常");
 });
 
@@ -251,6 +365,7 @@ el.addEventListener("error", (event) => {
 // Plugin demo: selection highlight (design §5, install(context)).
 el.use(createSelectionHighlightPlugin());
 shell.mount();
+conflicts.mount();
 welcome.mount();
 document.body.dataset.boot = "pending";
 
@@ -273,8 +388,15 @@ void el.ready.then(async () => {
   }
 
   // 首次加载后一次性适配视口：预设资产的尺度从毫米到数百米不等，
-  // 写死在文档里的相机距离无法保证模型完整可见（只移动相机，不改文档）。
-  camera.frameScene(false, false);
+  // 写死在文档里的相机距离无法保证模型完整可见。
+  //
+  // 这一步**要写回文档**（commit），而不是只挪运行时相机。只挪相机的话文档里的
+  // 机位和屏幕上的一直不一致，用户撤销一次视角就会把「自动取景的机位」写进文档，
+  // 而保存下来的仍是另一个机位 —— 于是撤销到底也回不到干净态（实测：文档 4.6/2.8/5.4，
+  // 屏幕 4.31/3.42/5.15）。写回 + 立刻 markSaved 之后两边一致，撤销回基线就是干净态。
+  camera.frameScene(false);
+  el.markSaved(el.revision);
+  host.serverDoc = structuredClone(el.getDocument());
 
   if (selectId) {
     el.selectObject(selectId);
@@ -285,7 +407,7 @@ void el.ready.then(async () => {
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
   document.body.dataset.boot = "ready";
-  hud.updateDirtyUI();
+  hud.updateDocumentState();
 });
 
 /** e2e hooks: `?select=box-1&move=1,0.5,0&rot=0,0,0&scale=1,1,1`. */
@@ -318,5 +440,6 @@ window.__history = history;
 window.__mode = shell.modeSwitch;
 
 // 宿主接管 Ctrl+Z / Ctrl+Y：焦点在视口内时也不会和元素内置的撤销重复执行。
-// 查看态不接编辑快捷键，与元素自身的 mode 门禁保持一致。
-bindHistoryHotkeys(history, window, () => shell.modeSwitch.mode === "editor");
+// 查看态同样接管——视角与观看设置的撤销不改文档；「文档命令只在编辑态可撤」
+// 这条门禁在 HistoryCoordinator 内部判断，所以这里不再传模式开关。
+bindHistoryHotkeys(history, window);

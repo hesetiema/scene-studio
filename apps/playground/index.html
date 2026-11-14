@@ -3,15 +3,15 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>场景查看器 · Scene Studio</title>
+    <title>场景工作台 · Scene Studio</title>
     <meta
       name="description"
-      content="基于 WebGL / WebGPU 的 3D 场景查看器：模型加载、着色模式、光照、相机与动画控制。"
+      content="Scene Studio 场景工作台：@scenio/scene-editor 的演示宿主。可嵌入的 3D 场景编辑器——文档模型、变换与材质命令、撤销重做、宿主保存与冲突处理。"
     />
-    <meta property="og:title" content="场景查看器 · Scene Studio" />
+    <meta property="og:title" content="场景工作台 · Scene Studio" />
     <meta
       property="og:description"
-      content="基于 WebGL / WebGPU 的 3D 场景查看器：模型加载、着色模式、光照、相机与动画控制。"
+      content="Scene Studio 场景工作台：@scenio/scene-editor 的演示宿主。可嵌入的 3D 场景编辑器——文档模型、变换与材质命令、撤销重做、宿主保存与冲突处理。"
     />
     <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles/controls.css" />
@@ -24,8 +24,9 @@
       <!-- 顶部栏：标题 + 模型来源 + 保存 -->
       <header class="app-header">
         <div class="app-title">
-          <span class="app-name">场景查看器</span>
-          <span class="app-version" id="version-badge">v0.5.0</span>
+          <span class="app-name">场景工作台</span>
+          <span class="app-sub">Scene Studio · 可嵌入 3D 场景编辑器</span>
+          <span class="app-version" id="version-badge"></span>
         </div>
 
         <div class="header-actions">
@@ -70,6 +71,9 @@
             <option value="fox">Fox（骨骼动画）</option>
             <option value="water-bottle">Water Bottle（PBR 玻璃瓶）</option>
             <option value="milk-truck">Cesium Milk Truck（多部件 + 动画）</option>
+            <option value="variants-shoe">Materials Variants Shoe（材质变体）</option>
+            <option value="morph-targets">Morph Primitives（形变目标）</option>
+            <option value="cameras">Cameras（资产内置相机）</option>
           </select>
           <button
             id="btn-upload"
@@ -121,6 +125,23 @@
 
           <div id="toast" class="toast"></div>
 
+          <!-- 冲突处理条：本地有改动、远端又前进了才出现（D17/D18） -->
+          <div id="conflict-bar" class="conflict-bar" hidden>
+            <span class="conflict-mark" aria-hidden="true">!</span>
+            <span class="conflict-text" id="conflict-text">远端已有新版本</span>
+            <span class="conflict-actions">
+              <button id="conflict-overwrite" class="btn" title="用本地版本覆盖远端（修订号 +1）">
+                保留本地
+              </button>
+              <button id="conflict-adopt" class="btn" title="放弃本地改动，载入远端版本">
+                采用远端
+              </button>
+              <button id="conflict-later" class="btn btn-ghost" title="先放着，之后再保存还会提示">
+                稍后
+              </button>
+            </span>
+          </div>
+
           <div id="drop-overlay" class="drop-overlay">
             <div class="drop-title">松开即可载入模型</div>
             <div class="drop-subtitle">
@@ -130,7 +151,12 @@
 
           <!-- 首页：极简投放区。载入模型后隐藏，点顶栏首页图标可回来。 -->
           <div id="welcome" class="welcome" hidden>
-            <div class="welcome-drop">拖入 glTF 2.0 文件或文件夹</div>
+            <p class="welcome-lead">
+              <span class="clause"><strong>@scenio/scene-editor</strong> 的演示宿主：载入模型即可查看，</span>
+              <span class="clause">切到「编辑」可选中部件、改变换与材质、撤销重做。</span>
+            </p>
+
+            <div class="welcome-drop">拖入 .glb / .gltf 或 .obj / .stl</div>
 
             <button id="welcome-upload" class="welcome-choose">
               <svg viewBox="0 0 16 16" aria-hidden="true">
@@ -143,11 +169,47 @@
 
             <p class="welcome-samples">
               <span class="welcome-samples-label">或查看示例</span>
-              <button class="sample-chip" data-model="damaged-helmet">Damaged Helmet</button>
-              <button class="sample-chip" data-model="boom-box">Boom Box</button>
-              <button class="sample-chip" data-model="fox">Fox</button>
-              <button class="sample-chip" data-model="water-bottle">Water Bottle</button>
-              <button class="sample-chip" data-model="milk-truck">Milk Truck</button>
+              <button class="sample-chip" data-model="damaged-helmet" title="PBR 材质与自发光贴图">
+                Damaged Helmet
+              </button>
+              <button class="sample-chip" data-model="boom-box" title="自发光材质，检验色调映射">
+                Boom Box
+              </button>
+              <button class="sample-chip" data-model="fox" title="骨骼动画，三段片段可切换">
+                Fox
+              </button>
+              <button class="sample-chip" data-model="water-bottle" title="玻璃与折射的 PBR 材质">
+                Water Bottle
+              </button>
+              <button class="sample-chip" data-model="milk-truck" title="多部件 + 车轮动画，可试部件分解">
+                Milk Truck
+              </button>
+              <button class="sample-chip" data-model="variants-shoe" title="KHR_materials_variants：三套材质可切换">
+                Variants Shoe
+              </button>
+              <button class="sample-chip" data-model="morph-targets" title="形变目标（morph targets），可拖动权重">
+                Morph Primitives
+              </button>
+              <button class="sample-chip" data-model="cameras" title="资产内置两个相机，可切换观察">
+                Cameras
+              </button>
+            </p>
+
+            <p class="welcome-links">
+              <a href="https://github.com/hesetiema/scene-studio" target="_blank" rel="noreferrer">GitHub</a>
+              <span>·</span>
+              <a href="https://www.npmjs.com/package/@scenio/scene-editor" target="_blank" rel="noreferrer"
+                >npm</a
+              >
+              <span>·</span>
+              <a
+                href="https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md"
+                target="_blank"
+                rel="noreferrer"
+                >API 文档</a
+              >
+              <span>·</span>
+              <a href="/embed.html" title="纯声明式嵌入：一个标签 + 三个属性，没有面板代码">嵌入示例</a>
             </p>
           </div>
         </section>
@@ -447,6 +509,25 @@
                     自动环绕
                   </button>
                 </div>
+
+                <div class="row row-slider">
+                  <span
+                    class="row-label"
+                    title="垂直视野角度：越小像长焦、透视越弱，越大像广角。写入文档，可撤销"
+                    >视野 FOV</span
+                  >
+                  <span class="row-value pill" id="fov-val">48°</span>
+                </div>
+                <input
+                  id="fov-slider"
+                  class="range"
+                  type="range"
+                  min="15"
+                  max="100"
+                  step="1"
+                  value="48"
+                  title="拖动调整视野角度"
+                />
               </div>
             </details>
 
@@ -480,6 +561,38 @@
                   >
                   <input type="checkbox" id="toggle-skeleton" class="check" />
                 </label>
+
+                <div class="row row-slider">
+                  <span class="row-label" title="接触阴影：模型与地面接触处的暗部，只影响观看，不写文档"
+                    >接触阴影</span
+                  >
+                  <span class="row-value pill" id="shadow-val">0%</span>
+                </div>
+                <input
+                  id="shadow-slider"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="0"
+                  title="拖动调整接触阴影强度"
+                />
+
+                <div class="row row-slider">
+                  <span class="row-label" title="阴影的模糊程度：越大越柔和，贴地高度也越高">阴影柔和</span>
+                  <span class="row-value pill" id="shadow-soft-val">50%</span>
+                </div>
+                <input
+                  id="shadow-soft-slider"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="50"
+                  title="拖动调整阴影柔和度"
+                />
               </div>
             </details>
 
@@ -619,7 +732,7 @@
               </div>
             </details>
 
-            <details class="group" id="group-model">
+            <details class="group" id="group-model" open>
               <summary class="group-title" title="当前模型的部件、统计信息与选中对象">
                 模型
               </summary>
@@ -631,6 +744,10 @@
                 <div class="row">
                   <span class="row-label" title="模型来源格式，程序化表示由代码生成">格式</span>
                   <span class="row-value" id="stat-format">GLTF / GLB</span>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="文档里的对象数量：增删都会进撤销栈">部件</span>
+                  <span class="row-value" id="stat-objects">--</span>
                 </div>
                 <div class="row">
                   <span class="row-label" title="模型包含的网格（mesh）数量">网格</span>
@@ -661,6 +778,26 @@
                   <span class="row-value mono" id="inspect-rot">[0°, 0°, 0°]</span>
                 </div>
 
+                <div class="btn-row">
+                  <button id="btn-duplicate" class="btn" title="复制选中部件（addObject，可撤销）">
+                    复制
+                  </button>
+                  <button id="btn-delete" class="btn" title="删除选中部件及其子级（removeObject，可撤销）">
+                    删除
+                  </button>
+                  <button id="btn-add-box" class="btn" title="新增程序化立方体（primitive 对象，可撤销）">
+                    + 立方体
+                  </button>
+                </div>
+                <label class="row">
+                  <span class="row-label" title="把选中部件挂到另一个对象下面（reparent），层级会一起变换"
+                    >父级</span
+                  >
+                  <select id="parent-select" class="select" title="选择父级对象">
+                    <option value="">场景根</option>
+                  </select>
+                </label>
+
                 <div class="row row-slider">
                   <span
                     class="row-label"
@@ -678,6 +815,47 @@
                   value="0"
                   title="拖动预览各部件分离效果"
                 />
+              </div>
+            </details>
+
+            <details class="group" id="group-variant">
+              <summary
+                class="group-title"
+                id="summary-variant"
+                title="资产自己声明的几种看法：材质变体、内置相机与形变通道"
+              >
+                变体
+              </summary>
+              <div class="group-body">
+                <div class="row">
+                  <span class="row-label" title="KHR_materials_variants：同一份几何的多套材质">材质变体</span>
+                  <select id="variant-select" class="select" title="切换资产声明的材质变体"></select>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="资产内置相机（glTF node.camera），环绕操作仍然可用"
+                    >内置相机</span
+                  >
+                  <select id="asset-camera-select" class="select" title="透过资产里的相机观察"></select>
+                </div>
+                <div class="row">
+                  <span class="row-label" title="形变目标（morph targets）：同一网格的几套顶点偏移">形变目标</span>
+                  <select id="morph-select" class="select" title="选择要调整的形变通道"></select>
+                </div>
+                <div class="row row-slider">
+                  <span class="row-label" title="权重 0 = 原始形状；受动画驱动的通道会被冻结">权重</span>
+                  <span class="row-value pill" id="morph-val">0%</span>
+                </div>
+                <input
+                  id="morph-slider"
+                  class="range"
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value="0"
+                  title="拖动调整形变权重"
+                />
+                <p class="hint hint-inline" id="variant-hint">当前模型没有声明变体</p>
               </div>
             </details>
 
@@ -708,27 +886,34 @@
                     导出 OBJ
                   </button>
                 </div>
+                <div class="btn-row">
+                  <button
+                    id="btn-remote"
+                    class="btn"
+                    title="模拟另一个客户端提交了新修订（applyRemote）：本地干净时直接快进，有未保存改动则弹出冲突"
+                  >
+                    模拟远端提交
+                  </button>
+                </div>
               </div>
             </details>
           </div>
         </aside>
       </main>
 
-      <!-- 底部状态栏 -->
+      <!-- 底部状态栏：左 = 文档同步状态 + 当前视角（都是实时读数），右 = 渲染性能 -->
       <footer class="app-footer">
         <div class="status-group">
-          <span>修订 <strong id="rev-val">0</strong></span>
+          <span id="sync-val" class="sync-ok" title="文档与宿主的同步状态：修订号是上次保存的版本">
+            已保存 r0
+          </span>
           <span class="sep">·</span>
-          <span>状态 <strong id="dirty-val">未修改</strong></span>
-          <span class="sep">·</span>
-          <span>物体 <strong id="obj-count-val">3</strong></span>
-          <span class="sep">·</span>
-          <span id="hud-cam-stat">相机 透视 · FOV 48°</span>
+          <span id="hud-cam-stat" title="当前观察角度、视野角度与相机距离">视角 --</span>
         </div>
         <div class="status-group">
           <span id="hud-perf-stat">FPS -- · --ms</span>
           <span class="sep">·</span>
-          <span>three.js r186</span>
+          <span id="three-rev">three --</span>
         </div>
       </footer>
     </div>

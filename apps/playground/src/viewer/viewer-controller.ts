@@ -154,6 +154,13 @@ export class ViewerController {
       this.#applyRenderSettings(next);
     }
 
+    if (
+      next.shadowIntensity !== prev.shadowIntensity ||
+      next.shadowSoftness !== prev.shadowSoftness
+    ) {
+      this.#applyShadow(next);
+    }
+
     if (next.autoRotate !== prev.autoRotate) this.#applyTurntable(next.autoRotate);
 
     if (
@@ -170,6 +177,23 @@ export class ViewerController {
     // function and the relink; exposure/tone mapping stay preview state.
     this.#getRuntime()?.setToneMapping(state.toneMapping);
     this.#getRuntime()?.setExposure(state.exposure);
+  }
+
+  /**
+   * Contact shadow is the SDK contact-shadow attribute pair: presentation only,
+   * never written to the document, re-asserted by the element after every load.
+   * At 0 the attributes are *removed* rather than set to "0", so a host that
+   * never touches the slider keeps the pre-0.7 look (and pays no shadow pass).
+   */
+  #applyShadow(state: ViewerState): void {
+    const el = this.#el;
+    if (state.shadowIntensity <= 0) {
+      el.removeAttribute("shadow-intensity");
+      el.removeAttribute("shadow-softness");
+      return;
+    }
+    el.setAttribute("shadow-intensity", state.shadowIntensity.toFixed(2));
+    el.setAttribute("shadow-softness", state.shadowSoftness.toFixed(2));
   }
 
   /**

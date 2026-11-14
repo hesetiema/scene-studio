@@ -27,6 +27,22 @@
   color: #e6e6e6;
 }
 
+/* 品牌副标：顶栏只放一行定位，别再往下堆能力清单 */
+.app-sub {
+  font-size: 10.5px;
+  color: #7d7d7d;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 860px) {
+  .app-sub {
+    display: none;
+  }
+}
+
 .app-version {
   font-family: var(--font-mono);
   font-size: 10px;
@@ -260,8 +276,22 @@ kbd {
 .group-body {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 2px 12px 10px;
+  /* 行距是给「输入控件」留的：下拉框本身 28px 高、带边框，2px 的间隔会让两个框
+     看起来粘成一条。分组内的纯文本行（位置 / 旋转）本来只有 22px，8px 也不算散。 */
+  gap: 8px;
+  padding: 4px 12px 12px;
+}
+
+/* 变体组的三行是同一类控件：等宽才像一列，否则「资产默认 / 文档视角 / 无」三个
+   框的右边缘对齐、左边缘却参差。 */
+#group-variant .select {
+  width: 110px;
+}
+
+/* 滑杆属于它上面那一行（权重 / 粗糙度 / 透明），不是独立一行：把它往标签拉近，
+   行距就分成「同一控制的 4px」和「换一组控制的 12px」两档。 */
+.group-body > .range {
+  margin-top: -4px;
 }
 
 /* 行：左标签 / 右数值 */

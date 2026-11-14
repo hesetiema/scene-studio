@@ -44,6 +44,15 @@ export class CameraController {
   readonly #el: SceneEditorElement;
   readonly #getRuntime: () => ThreeRuntime | null;
 
+  /**
+   * 非提交式取景（`commit: false`）落地后的回调。
+   *
+   * 这条路径刻意不写文档，所以宿主看不到 `view-change`；但它确实挪了相机。
+   * 撤销栈需要知道「当前机位换了基线」，否则第一次撤销会跳回文档里声明的旧机位，
+   * 而不是用户操作前看到的那一帧。接入点是历史协调器的 `resetCameraBaseline()`。
+   */
+  onProgrammaticView: (() => void) | null = null;
+
   /** Pending "flight settled → commit" timer (`setTimeout` id). */
   #settleTimer: number | null = null;
   #boundsCache: BoundingInfo | null = null;
@@ -83,6 +92,11 @@ export class CameraController {
     if (commit) {
       this.#settleTimer = window.setTimeout(
         () => this.#commit(),
+        Math.ceil(duration * 2.5),
+      );
+    } else {
+      this.#settleTimer = window.setTimeout(
+        () => this.onProgrammaticView?.(),
         Math.ceil(duration * 2.5),
       );
     }
@@ -151,6 +165,7 @@ export class CameraController {
       },
     });
     if (commit) this.#commit();
+    else this.onProgrammaticView?.();
   }
 
   #preview(view: ViewState): void {

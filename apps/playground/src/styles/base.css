@@ -122,6 +122,19 @@ scene-editor {
   color: #4a4a4a;
 }
 
+/* 文档同步状态：一致 / 有未保存改动 / 与远端冲突。颜色是唯一提示，所以三项必须可区分 */
+.sync-ok {
+  color: var(--muted);
+}
+
+.sync-dirty {
+  color: #e0b25c;
+}
+
+.sync-conflict {
+  color: #e08a8a;
+}
+
 /* ---------------------------------------------------------------- 提示浮层 */
 
 .toast {
@@ -144,4 +157,60 @@ scene-editor {
 
 .toast.visible {
   opacity: 1;
+}
+
+/* ---------------------------------------------------------------- 冲突条 */
+
+/* 顶部居中的一次性决策条：只在本地的改动和远端撞上时出现，
+   三个出口分别对应「覆盖远端 / 接受远端 / 推迟」。 */
+.conflict-bar {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(680px, calc(100% - 32px));
+  padding: 6px 8px 6px 10px;
+  border: 1px solid #6d5227;
+  border-radius: 4px;
+  background: rgba(42, 33, 18, 0.96);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  color: #e8d5a8;
+  font-size: 12px;
+  z-index: 25;
+}
+
+.conflict-bar[hidden] {
+  display: none;
+}
+
+.conflict-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #b8862f;
+  color: #1b1509;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.conflict-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conflict-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
 }
