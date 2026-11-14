@@ -79,7 +79,8 @@ export function outlinePlaneGeometry(
   return geometry;
 }
 
-/** Planar centre of an outline (first ring vertices averaged), in raw units. */export function outlinePlanCentroid(
+/** Planar centre of an outline (first ring vertices averaged), in raw units. */
+export function outlinePlanCentroid(
   outline: OutlineJson | string | undefined | null,
 ): [number, number] | null {
   const parsed = parseOutline(outline);

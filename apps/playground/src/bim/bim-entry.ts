@@ -1,7 +1,8 @@
-// BIM integration entry (optional): EffectTool-style Scene.json + binary FBX
-// scene assets and BIM outline geometry. Structural only — the loader and the
-// geometry helpers carry no materials, units, colours, or camera policy; the
-// consumer supplies those through hooks (see API.md §BIM and the vent demo).
+// BIM integration entry for the vent demo — app-level code, deliberately kept
+// out of the SDK: EffectTool-style Scene.json + binary FBX scene assets and
+// BIM outline geometry. Structural only — the loader and the geometry helpers
+// carry no materials, units, colours, or camera policy; vent-demo supplies
+// those through the loaders' hooks.
 // Presentation-layer only — nothing here writes to the scene document.
 export {
   parseOutline,

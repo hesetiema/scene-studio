@@ -43,8 +43,8 @@ what keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB), and
 模型层：07 单场景承担双视图（建筑=半透明白色楼板堆叠等轴测 / 楼层=近正交顶视
 平面图）+ 空间双几何 + 房间轮廓线 + 设备图标图元 + AABB 碰撞聚合 + 包围盒取景，
 无面板/无筛选；**数据与 BIM 几何不入库**（`public/data/vent/`、`public/bim/`，
-本地采样，缺文件时页面显示准备提示），SDK `./bim` 入口只做结构、样式全由 demo 侧
-钩子设定，见文末「通风感知 demo」一节).
+本地采样，缺文件时页面显示准备提示），装载器只做结构（`src/bim/`，应用级而非 SDK）、
+样式全由 demo 侧钩子设定，见文末「通风感知 demo」一节).
 
 ## Viewer-first workflow
 
@@ -274,8 +274,10 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   显示为「项目 / 商业 / F7 F6 F4 F3 B1 B2 B3 / 金街 F5 / 全部建筑」；底部不显示
   调试状态行。
 
-**BIM 自定义资产（Scene.json + FBX）：`@scenio/scene-editor/bim` 只做结构，不做视觉。**
-入口导出纯结构装载器与纯几何工具，一切样式/单位/相机策略由消费者（本 demo）设定：
+**BIM 自定义资产（Scene.json + FBX）：`src/bim/` 只做结构，不做视觉。**
+它曾以 `@scenio/scene-editor/bim` 的形式发布，0.7.0 起搬进本 app——消费者只有这一个，
+放进 SDK 只会把一个产品格式变成全包的依赖。入口导出纯结构装载器与纯几何工具，
+一切样式/单位/相机策略由消费者（本 demo）设定：
 
 - `loadBimScene({ baseUrl, sceneName, resolveMaterial?, onMesh?, resolveFloorKey? })`
   拉 `Scene.json`/`Materials.json`/`Models/*.fbx`（标准 Kaydara 二进制，`FBXLoader`

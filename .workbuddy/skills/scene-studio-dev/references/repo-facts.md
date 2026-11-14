@@ -14,14 +14,13 @@
 | element | `src/element/` | 3 465 | 仅懒加载 | 自定义元素：属性、slot、生命周期、模式、错误态、a11y |
 | three | `src/three/` | 7 611 | 是 | `ThreeRuntime`（1 361）+ `assembly.ts`（装配/连线）+ `viewer/` 20 个单职责模块（10 个 `create*Rig`）+ `viewer/instancing/`（fingerprint / chunks / layout） |
 | assets | `src/assets/` | 1 249 | 是 | 缓存（引用计数）、加载器、变体、解码器懒装配 |
-| bim | `src/bim/` | 770 | 是 | Revit 楼层、FBX、轮廓网格、单位换算 |
 | plugins | `src/plugins/` | 38 | 否 | 插件契约 |
 
-实测（`scripts/check-boundaries.mjs`）：**83 文件 / 263 条静态内部边 / 0 循环 / 0 违规**。
+实测（`scripts/check-boundaries.mjs`）：**78 文件 / 258 条静态内部边 / 0 循环 / 0 违规**。
 另有 18 条**被许可的懒引用**（`import()` 形式的 three addon：DRACO/KTX2/Meshopt/GLTF/OBJ/STL/
 HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态依赖图。
 
-> 硬约束：**`three` 的静态 import 只允许出现在 `three/`、`assets/`、`bim/`**。
+> 硬约束：**`three` 的静态 import 只允许出现在 `three/`、`assets/`**。
 > `element/` 只能懒加载（`lazyGltfLoader()` 是范例）。
 > `core/` 与 `runtime/` 完全不碰 three —— 单测跑在 `environment: "node"`，一碰就整套起不来。
 
@@ -41,7 +40,8 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
    永不自动合并。
 7. **`src` 只在连接时读一次**，之后修改是刻意空操作（一次 `console.warn`）。已按产品决策移除，别恢复。
 8. **包不附带 CSS**，元素是 light DOM 无样式，尺寸由宿主负责。不要重新引入 `:host`。
-9. **一个包四个入口**（`.`、`./element`、`./three`、`./bim`）。不拆包、无插件面板槽位、无 CRDT。
+9. **一个包三个入口**（`.`、`./element`、`./three`）。不拆包、无插件面板槽位、无 CRDT。
+   只服务单一产品的领域加载代码放 `apps/`，不为它开新子路径。
 
 ## 3. 新增公开 exports 子路径：四处缺一不可
 
@@ -51,7 +51,8 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
 4. `scripts/pack-smoke.mjs` → `required`
 
 第 4 处注意：`tsc` 保留 `src/` 目录结构，vite 会把 js 拍平 ——
-`src/bim/bim-entry.ts` → `dist/bim-entry.js` + `dist/bim/bim-entry.d.ts`。
+设在 `src/three/index.ts` 的入口会产出 `dist/three-entry.js` + `dist/three/entry.d.ts`，
+别按命名类推，直接看 `dist/` 真实产物。
 漏第 4 处只在 CI 的 `test:pack` 报错；漏第 3 处则 playground 类型检查解析到过期 `dist`。
 
 ## 4. 已经付过代价的坑
@@ -97,8 +98,10 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
   **结论：不拆。** 它不在每帧路径上（`sync` 在 instancing 里，store 只在装载/命令时被调用），
   而每个可外置的簇只有 12–100 行（最大是 mounting ≈100 行），外置却要 3–5 个成员的 host
   接口（变体簇就要 `objects`/`assets`/`overrides`/`variantName` 四个共享状态），收益为负。
-- `src/bim/` 是单产品领域代码占公开子路径，消费者只有 `apps/playground/src/vent-demo.ts`。
-  最该外迁的一块，但在「不拆包」前提下可接受。
+- `apps/playground/src/bim/`（770 行：Revit 楼层、FBX、轮廓网格、单位换算）原本是 SDK 的公开
+  `./bim` 入口，消费者只有 `apps/playground/src/vent-demo.ts`。0.7.0 起搬出包（公开面=三个入口）。
+  它不在 npm 包里、没有单测，只靠 playground 的 `tsc --noEmit` + `vite build` 兜着；
+  契约说明随代码走：`apps/playground/src/bim/README.md`。
 - **没有任何 import 边界门禁**（这正是 `scripts/check-boundaries.mjs` 存在的原因）。
   把它接进 CI 是性价比最高的质量改进；接法属 L1，改 CI 属 L3。
 

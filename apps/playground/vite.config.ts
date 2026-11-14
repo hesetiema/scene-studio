@@ -13,7 +13,6 @@ export default defineConfig({
     alias: [
       { find: "@scenio/scene-editor/element", replacement: pkg("element-entry.ts") },
       { find: "@scenio/scene-editor/three", replacement: pkg("three-entry.ts") },
-      { find: "@scenio/scene-editor/bim", replacement: pkg("bim/bim-entry.ts") },
       { find: "@scenio/scene-editor", replacement: pkg("index.ts") },
     ],
   },

@@ -4,7 +4,7 @@
 // Enforces the invariants that today are upheld by discipline alone
 // (see references/repo-facts.md, 不变式 1-3):
 //
-//   B1  only three/, assets/ and bim/ may *statically* import three.
+//   B1  only three/ and assets/ may *statically* import three.
 //       element/ may reference three only through a lazy `import()` or a
 //       type-position `import()` — never a static `import ... from`.
 //       (lazyGltfLoader() in element/ is the sanctioned example.)
@@ -35,7 +35,7 @@ const layerOf = (p) => rel(p).split("/")[0];
 
 // Layers allowed a STATIC three import. element/ is intentionally absent:
 // it must stay lazy so the element entry does not pull three at module scope.
-const THREE_STATIC_ALLOWED = new Set(["three", "assets", "bim"]);
+const THREE_STATIC_ALLOWED = new Set(["three", "assets"]);
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -120,7 +120,7 @@ for (const file of files) {
         violations.push({
           rule: "B1",
           where: `${rel(file)}:${line}`,
-          detail: `layer "${layer}/" has a ${kind} import of "${spec}". Only three/, assets/, bim/ may import three statically; element/ must stay lazy (import()).`,
+          detail: `layer "${layer}/" has a ${kind} import of "${spec}". Only three/ and assets/ may import three statically; element/ must stay lazy (import()).`,
         });
       }
     }

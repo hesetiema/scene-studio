@@ -34,9 +34,10 @@ A viewer is **not** a second code path: it synthesizes a one-object document (`c
 and drives the same load/select/history pipeline. The difference is one field, `mode`.
 
 `packages/scene-editor` is the published SDK. `apps/playground` is a consumer — it imports **only**
-through the package name (`@scenio/scene-editor{,/element,/three,/bim}`, wired in
+through the package name (`@scenio/scene-editor{,/element,/three}`, wired in
 `apps/playground/tsconfig.json` → `paths`). Never reach into `../../packages/.../src` from the app;
-that seam is what makes the package boundary real.
+that seam is what makes the package boundary real. App-level code that is *not* part of the SDK
+lives under `apps/playground/src/` (`bim/` loading, the vent demo, the perf bench).
 
 ## Commands
 
@@ -76,15 +77,15 @@ Breaking one of these is a regression, not a refactor. Where a check exists, it'
 2. **`core/` and `runtime/` must not import `three`.** The unit suite runs in vitest
    `environment: "node"` with `FakeRuntime`, no GPU and no DOM — a `three` import in `core` breaks
    the whole suite. That failure *is* the alarm, so don't "fix" it by adding a DOM environment.
-3. **`three` gets imported statically in exactly three places:** `src/three/*` (the adapter),
-   `src/assets/*` (decoder assembly + glTF loader), `src/bim/*` (FBX/Revit loading). It is a
+3. **`three` gets imported statically in exactly two places:** `src/three/*` (the adapter) and
+   `src/assets/*` (decoder assembly + glTF loader). It is a
    **peer** dependency, externalized in `vite.config.ts` — never bundle it, never add it to
    `core`/`runtime`. `element/` sits right at the edge: it must reach three only through a lazy
    `import()` (see `lazyGltfLoader()`), never a static `import … from`, so the element entry does not
    pull three at module scope. 18 such lazy addon edges exist today and are sanctioned.
-   > `docs/ARCHITECTURE.md` §2 still claims "three imports only appear under `src/three/`". That
-   > sentence is stale: 7 files under `assets/` (3) and `bim/` (4) import three statically today.
-   > Rule 3 above is the accurate one; fix the doc rather than the code when you touch it.
+   > BIM loading used to live here as `src/bim/` (4 files importing three) and pulled the whole SDK
+   > into an FBX/Revit dependency for one consumer. It now lives in `apps/playground/src/bim/`.
+   > Rule 3 above is enforced by `scripts/check-boundaries.mjs` (B1).
 4. **`RuntimeContract` is the only rendering seam.** New runtime capability → new **optional**
    member on the interface (plus a fallback in `FakeRuntime`). A required member breaks every
    custom runtime and every test at once.
@@ -98,8 +99,10 @@ Breaking one of these is a regression, not a refactor. Where a check exists, it'
    This was removed on purpose — see TODOS.md §1, "动态 `src` 能力已移除". Do not restore it.
 8. **The package ships no CSS and no stylesheet export.** The element is an unstyled custom
    element; sizing is the host's job. Don't reintroduce `:host` rules — the element uses light DOM.
-9. **One package, four entries** (`.`, `./element`, `./three`, `./bim`). No package split, no plugin
-   panel slots, no CRDT — all three are explicit non-goals in TODOS.md §5.
+9. **One package, three entries** (`.`, `./element`, `./three`). No package split, no plugin
+   panel slots, no CRDT — all three are explicit non-goals in TODOS.md §5. The public surface is
+   closed on purpose: domain loading that serves one product goes in `apps/`, not behind a new
+   subpath.
 
 ## Adding a public export subpath — four places, all required
 
@@ -108,7 +111,8 @@ Breaking one of these is a regression, not a refactor. Where a check exists, it'
 3. `apps/playground/tsconfig.json` → `compilerOptions.paths`
 4. `scripts/pack-smoke.mjs` → `required` array — needs `dist/<name>.js` **and** the `.d.ts` path as
    `tsc` actually emits it. `tsc` preserves the `src/` directory structure, vite flattens the JS
-   filename: `src/bim/bim-entry.ts` → `dist/bim-entry.js` + `dist/bim/bim-entry.d.ts`.
+   filename: an entry at `src/three/index.ts` would ship `dist/three-entry.js` +
+   `dist/three/entry.d.ts`. Check the real `dist/` tree instead of assuming the two match.
 
 Miss #4 and `test:pack` fails only in CI; miss #3 and the playground typecheck resolves against
 stale `dist`.
@@ -125,6 +129,7 @@ stale `dist`.
 | Asset loading, decoder assembly | `assets/` | |
 | Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/`; creation order and cross-rig wiring in `three/assembly.ts` |
 | DOM attributes, slots, lifecycle, a11y | `element/` | Element + `slot-chrome` + `viewer-attributes` + `attribute-math` + three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
+| BIM / FBX / Revit loading, outline geometry | `apps/playground/src/bim/` | App-level on purpose: one consumer (`vent-demo.ts`), zero SDK surface |
 | Host UI, panels, URL params | `apps/playground/src/` | Never a reason to touch the SDK |
 
 ## Conventions
@@ -201,10 +206,11 @@ stale `dist`.
   `render-loop`, `framing`, `shared-resources`. The batcher's three moving parts sit beside it in
   `three/viewer/instancing/`: `fingerprint.ts` (what counts as the same content, what may batch),
   `chunks.ts` (one `InstancedMesh`: slots, growth, disposal), `layout.ts` (pure spatial ordering).
-- `src/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion) is
-  domain-specific loading code for one product living inside a general-purpose SDK, exposed as a
-  public `./bim` entry with exactly one consumer (`apps/playground/src/vent-demo.ts`). Acceptable
-  under "no package split", but it is the first thing that would move out.
+- `apps/playground/src/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion)
+  is domain-specific loading code for one product. It used to sit in the SDK behind a public `./bim`
+  entry with exactly one consumer; 0.7.0 moved it here so the published surface is three entries.
+  It is **not** part of the tarball, has **no unit tests**, and is verified by the playground
+  `tsc --noEmit` + `vite build` only. Do not re-export it from the package.
 - **No import-boundary check is wired into the repo.** Invariants 1–3 are enforced by discipline and
   by the node-environment unit suite, nothing else — a `three` import added to `core/` passes
   `pnpm typecheck` and only fails as a confusing test-environment error. A ~150-line checker exists

@@ -1,6 +1,6 @@
 ---
 name: scene-studio-dev
-description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D 场景编辑器 SDK，纯 TS 多层包 + playground 宿主）内做任何改动的强制流程。用于：修改 packages/scene-editor 的 core/runtime/element/three/assets/bim 任一层、改 apps/playground、新增查看器或编辑器能力、修 bug、跑测试门禁、发版、审查改动、判断"这个改动该不该动手"。提供风险分级与停手判断、验收标准模板、分层落点选择、按改动类型匹配的验证命令、证据输出格式，以及可执行的 import 边界检查脚本。触发词：scene-studio、scene-editor、scenio、模块化体检、边界检查、跑门禁。
+description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D 场景编辑器 SDK，纯 TS 多层包 + playground 宿主）内做任何改动的强制流程。用于：修改 packages/scene-editor 的 core/runtime/element/three/assets 任一层、改 apps/playground（含 apps/playground/src/bim）、新增查看器或编辑器能力、修 bug、跑测试门禁、发版、审查改动、判断"这个改动该不该动手"。提供风险分级与停手判断、验收标准模板、分层落点选择、按改动类型匹配的验证命令、证据输出格式，以及可执行的 import 边界检查脚本。触发词：scene-studio、scene-editor、scenio、模块化体检、边界检查、跑门禁。
 ---
 
 # scene-studio 开发流程
@@ -41,7 +41,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 - `SceneDocument` schema 变更 / `view` 加字段（= 文档格式升版 + 迁移 + fixture 重写）
 - `RuntimeContract` 加必选成员（一次性打断所有自定义运行时与全部单测）
 - `package.json` 的 `exports` / 版本号 / peer 依赖范围 / `pnpm-lock.yaml`
-- 删除或重命名任何 `export` 符号（`index.ts`、`element-entry.ts`、`three-entry.ts`、`bim-entry.ts`）
+- 删除或重命名任何 `export` 符号（`index.ts`、`element-entry.ts`、`three-entry.ts`）
 - `core/events/errors.ts` 的错误码集合
 - `.github/workflows/*`、`vite.config.ts` 的 entry / external
 - 提交 `apps/playground/public/data/` 或 `public/bim/` 下任何文件（内部标识泄露）
@@ -136,7 +136,8 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 
 ## 常用事实速查
 
-- 入口四个：`.`（core）、`./element`、`./three`、`./bim`；`three` 是 peer，不打包，不进 core/runtime。
+- 入口三个：`.`（core）、`./element`、`./three`；`three` 是 peer，不打包，不进 core/runtime。
+  BIM 加载不属于 SDK，在 `apps/playground/src/bim/`（应用级、无单测）。
 - 双形态单内核：查看器 = 合成单对象文档 + `mode="viewer"`，不是第二码路。
 - SDK 不做宿主 I/O：`save-request` → 宿主 PUT → `markSaved(revision)`；冲突不自动合并。
 - `src` 只读一次（连接时）；后改是刻意的空操作。

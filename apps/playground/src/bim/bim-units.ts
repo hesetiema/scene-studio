@@ -1,8 +1,8 @@
 /**
  * EffectTool-style BIM outline / location parsing — pure, unit-agnostic.
  *
- * The SDK deliberately encodes no unit system and no axis convention beyond
- * what the *format* itself defines:
+ * Nothing here encodes a unit system or an axis convention beyond what the
+ * *format* itself defines:
  * - `outline` is a planar polygon set: blocks → rings → points (`X`, `Y`).
  *   `outlineToShapes` scales it by a caller-supplied factor (default `1`) so the
  *   consumer decides whether that is millimetres, feet, or metres.

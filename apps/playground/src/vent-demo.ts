@@ -30,9 +30,9 @@
  *     useLegacyLights 口径，数字不可照抄）；不开阴影贴图——楼板不吃光，
  *     墙体自阴影只会把整层压灰。
  *
- * SDK 边界：`@scenio/scene-editor/bim` 只给结构（loadBimScene 双场景、
+ * 装载器边界：`./bim/` 只给结构（loadBimScene 双场景、
  * outline 几何、bimLocation 解析）；材质、单位、色板、图元、碰撞、相机
- * 全部由本消费者设定。
+ * 全部由本消费者设定。这些装载器不再属于 SDK（见 `src/bim/README.md`）。
  *
  * 数据：`public/data/vent/*.json`（运行环境采样，**不入库**，缺失时显示准备提示）。
  * 几何：`public/bim/07_building_relation/`、`public/bim/revit/`（同样不入库）。
@@ -54,7 +54,7 @@ import {
   type BimSceneHandle,
   type OutlineJson,
   type RevitFloorHandle,
-} from "@scenio/scene-editor/bim";
+} from "./bim/bim-entry";
 import * as THREE from "three";
 
 defineSceneEditor();

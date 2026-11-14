@@ -33,8 +33,9 @@
 加载/选择/历史链路。差别只有一个字段：`mode`。
 
 `packages/scene-editor` 是发布的 SDK；`apps/playground` 是消费者——它**只**通过包名
-（`@scenio/scene-editor{,/element,/three,/bim}`，由 `apps/playground/tsconfig.json` 的 `paths` 接线）
+（`@scenio/scene-editor{,/element,/three}`，由 `apps/playground/tsconfig.json` 的 `paths` 接线）
 引用 SDK。**永远不要**从 app 里伸手进 `../../packages/.../src`；那条缝就是包边界成立的前提。
+不属于 SDK 的应用级代码放在 `apps/playground/src/` 下（`bim/` 加载、vent demo、perf bench）。
 
 ---
 
@@ -78,15 +79,15 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
    `FakeRuntime` 下，没有 GPU 也没有 DOM —— `core` 里出现 `three` 会让整套测试起不来。
    **那个失败本身就是告警**，不要靠换成 DOM 环境来「修好」它。
 
-3. **`three` 只在这三处被静态 import：** `src/three/*`（适配层）、`src/assets/*`（解码器装配 +
-   glTF 加载）、`src/bim/*`（FBX/Revit 加载）。它是 **peer** 依赖，在 `vite.config.ts` 里
+3. **`three` 只在这两处被静态 import：** `src/three/*`（适配层）、`src/assets/*`（解码器装配 +
+   glTF 加载）。它是 **peer** 依赖，在 `vite.config.ts` 里
    external —— 永不打包进产物，永不加进 `core`/`runtime`。`element/` 正好卡在边界上：它只能
    通过懒加载 `import()` 触达 three（范例如 `lazyGltfLoader()`），绝不能用静态
    `import … from`，否则 element 入口会在模块作用域就把 three 拖进来。当前存在 18 条这类
    被许可的懒加载 addon 引用。
-   > `docs/ARCHITECTURE.md` §2 仍写着「`three` 的 import 只出现在 `src/three/` 下」。
-   > 这句已过期：当前 `assets/` 有 3 个文件、`bim/` 有 4 个文件静态 import three。
-   > 以上第 3 条才是准确表述；下次改到那儿时**改文档，不要改代码**。
+   > BIM 加载原本在 `src/bim/`（4 个文件静态 import three），为了一个消费者把整个 SDK 拖进
+   > FBX/Revit 依赖。0.7.0 起它迁到 `apps/playground/src/bim/`。第 3 条由
+   > `scripts/check-boundaries.mjs`（B1）实际把关。
 
 4. **`RuntimeContract` 是唯一的渲染接缝。** 新增运行时能力 → 在接口上加**可选**成员
    （并在 `FakeRuntime` 里给兜底实现）。加必选成员会一次性打断所有自定义运行时和所有测试。
@@ -104,8 +105,9 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 8. **包不附带任何 CSS，也没有样式表导出。** 元素是无样式自定义元素，尺寸是宿主的责任。
    不要重新引入 `:host` 规则 —— 元素用的是 light DOM。
 
-9. **一个包、四个入口**（`.`、`./element`、`./three`、`./bim`）。不拆包、不做插件面板槽位、
-   不做 CRDT —— 三者都是 TODOS.md §5 里的明确非目标。
+9. **一个包、三个入口**（`.`、`./element`、`./three`）。不拆包、不做插件面板槽位、
+   不做 CRDT —— 三者都是 TODOS.md §5 里的明确非目标。公开面是刻意收窄的：只服务单一产品的
+   领域加载代码放进 `apps/`，不要为它开新子路径。
 
 ---
 
@@ -116,7 +118,8 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
 3. `apps/playground/tsconfig.json` → `compilerOptions.paths`
 4. `scripts/pack-smoke.mjs` → `required` 数组 —— 需要 `dist/<name>.js` **以及** `tsc`
    实际产出的 `.d.ts` 路径。`tsc` 保留 `src/` 目录结构，vite 会把 js 文件名拍平：
-   `src/bim/bim-entry.ts` → `dist/bim-entry.js` + `dist/bim/bim-entry.d.ts`。
+   设在 `src/three/index.ts` 的入口会产出 `dist/three-entry.js` + `dist/three/entry.d.ts`。
+   别按命名类推，直接看 `dist/` 真实产物。
 
 漏第 4 处只在 CI 的 `test:pack` 报错；漏第 3 处则 playground 的类型检查会解析到过期的 `dist`。
 
@@ -207,9 +210,11 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
   `render-loop`、`framing`、`shared-resources`。合批器的三个部件在旁边的 `three/viewer/instancing/`：
   `fingerprint.ts`（什么算同内容、什么允许合批）、`chunks.ts`（单个 `InstancedMesh` 的槽位/扩容/销毁）、
   `layout.ts`（纯函数空间排序）。
-- `src/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一产品**的领域加载代码，
-  却住在通用 SDK 里，还占了一个公开的 `./bim` 子路径，而它的消费者只有一个
-  （`apps/playground/src/vent-demo.ts`）。在「不拆包」前提下可接受，但它是最该搬出去的一块。
+- `apps/playground/src/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一
+  产品**的领域加载代码。它原本住在 SDK 里、占一个公开的 `./bim` 子路径，消费者只有
+  `apps/playground/src/vent-demo.ts`；0.7.0 把它搬到这里，公开面收敛成三个入口。它**不在**
+  npm 包里、**没有**单测，只靠 playground 的 `tsc --noEmit` 与 `vite build` 兜着。
+  不要把它的任何符号重新导出成包入口。
 - **仓库里没有任何 import 边界门禁。** 不变式 1–3 只靠自觉，以及 node 环境的单测兜着 ——
   往 `core/` 里加一个 `three` import 能通过 `pnpm typecheck`，最后只表现为一个莫名其妙的
   测试环境报错。仓库外已有一个约 150 行的检查脚本（遍历 `src/`、区分静态/懒加载/纯类型

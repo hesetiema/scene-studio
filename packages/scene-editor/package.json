@@ -34,10 +34,6 @@
     "./element": {
       "types": "./dist/element-entry.d.ts",
       "import": "./dist/element-entry.js"
-    },
-    "./bim": {
-      "types": "./dist/bim/bim-entry.d.ts",
-      "import": "./dist/bim-entry.js"
     }
   },
   "files": [
