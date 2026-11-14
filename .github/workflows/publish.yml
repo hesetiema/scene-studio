@@ -1,8 +1,12 @@
 name: Publish
 
 # Tag-driven release: pushing a tag that equals packages/scene-editor's version
-# publishes to npm. Prerelease versions (containing "-") go to the `next` tag;
-# stable versions go to `latest`. Requires the NPM_TOKEN repository secret.
+# stages the package on npm. Publishing is two-phase on purpose (2026-11): a
+# granular token can only push to the staging area, and `npm stage approve`
+# requires a human TOTP code — so this workflow stops after staging and writes
+# the approve command to the job summary. Prerelease versions (containing "-")
+# target the `next` tag; stable versions target `latest`. Requires the NPM_TOKEN
+# repository secret.
 on:
   push:
     tags: ["0.*"]
@@ -40,7 +44,7 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
-      - name: Publish
+      - name: Stage for publish (approve is a human step — it needs an OTP)
         working-directory: packages/scene-editor
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -50,4 +54,29 @@ jobs:
             *-*) TAG="next" ;;
             *)   TAG="latest" ;;
           esac
-          npm publish --access public --tag "$TAG"
+
+          # `npm stage` shipped in npm 11 and node 24 bundles it. Fail loudly here
+          # rather than with "Unknown command" halfway through a release.
+          if ! npm stage --help >/dev/null 2>&1; then
+            echo "::error::npm $(npm --version) has no 'stage' subcommand (needs >= 11)"
+            exit 1
+          fi
+
+          # Uploads the tarball to the staging area; nothing becomes public.
+          npm stage publish --access public --tag "$TAG"
+
+          {
+            echo "### Staged \`@scenio/scene-editor@${VERSION}\` for \`${TAG}\`"
+            echo ""
+            echo "Nothing is public yet. A granular token can stage but not publish,"
+            echo "and \`approve\` requires a 2FA code that CI does not hold."
+            echo ""
+            echo "Approve from a machine with the authenticator:"
+            echo ""
+            echo '```'
+            echo "npx npm@latest stage list                       # copy the stage id"
+            echo "npx npm@latest stage approve <stage-id> --otp <code>"
+            echo '```'
+            echo ""
+            echo "Then confirm with \`npm view @scenio/scene-editor dist-tags\`."
+          } >> "$GITHUB_STEP_SUMMARY"
