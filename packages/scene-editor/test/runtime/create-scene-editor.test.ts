@@ -215,6 +215,84 @@ describe("createSceneEditor — events", () => {
   });
 });
 
+describe("createSceneEditor — view dirty is a comparison, not a latch (D22)", () => {
+  /** The pose a host would capture for its own camera-undo stack. */
+  const withCameraAt = (view: ReturnType<typeof createDefaultViewState>, x: number) => ({
+    ...view,
+    camera: { ...view.camera, position: [x, view.camera.position[1], view.camera.position[2]] as [number, number, number] },
+  });
+
+  it("dirties on a view change and cleans again when the saved pose comes back", async () => {
+    const { editor, fake } = setup();
+    await editor.loadDocument(doc);
+    const saved = editor.getViewState();
+    expect(editor.dirty).toBe(false);
+
+    fake.simulateViewChange(withCameraAt(saved, 9));
+    expect(editor.dirty).toBe(true);
+
+    // What the host's camera stack does on undo: replay the captured pose.
+    editor.setViewState(saved);
+    expect(editor.dirty).toBe(false);
+  });
+
+  it("ignores key order — a rebuilt snapshot is the same view", async () => {
+    const { editor } = setup();
+    await editor.loadDocument(doc);
+    const saved = editor.getViewState();
+
+    editor.setViewState(withCameraAt(saved, 4));
+    expect(editor.dirty).toBe(true);
+
+    const rebuilt = {
+      environment: { ...saved.environment },
+      lights: {
+        directional: { ...saved.lights.directional },
+        ambient: { ...saved.lights.ambient },
+      },
+      camera: { position: saved.camera.position, target: saved.camera.target, fov: saved.camera.fov },
+    } as typeof saved;
+    editor.setViewState(rebuilt);
+    expect(editor.dirty).toBe(false);
+  });
+
+  it("stays dirty while the view still differs", async () => {
+    const { editor } = setup();
+    await editor.loadDocument(doc);
+    const saved = editor.getViewState();
+
+    editor.setViewState(withCameraAt(saved, 4));
+    editor.setViewState(withCameraAt(saved, 5));
+    expect(editor.dirty).toBe(true);
+  });
+
+  it("markSaved re-anchors: the pose in force at save time is the clean one", async () => {
+    const { editor } = setup();
+    await editor.loadDocument(doc);
+    const first = editor.getViewState();
+
+    const second = withCameraAt(first, 7);
+    editor.setViewState(second);
+    editor.markSaved(1);
+    expect(editor.dirty).toBe(false);
+
+    // Undoing back to the *pre-save* pose is a change, not a return.
+    editor.setViewState(first);
+    expect(editor.dirty).toBe(true);
+
+    editor.setViewState(second);
+    expect(editor.dirty).toBe(false);
+  });
+
+  it("a view the runtime re-applies on load does not dirty the document", async () => {
+    const { editor, fake } = setup();
+    // A runtime that echoes applyViewState as a view-change (the auto-fit path).
+    fake.viewChangeOnApply = true;
+    await editor.loadDocument(doc);
+    expect(editor.dirty).toBe(false);
+  });
+});
+
 describe("createSceneEditor — plugins", () => {
   it("installs with context: on, editor API, addDisposer; unuse runs teardown", async () => {
     const { editor, fake } = setup();

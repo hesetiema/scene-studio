@@ -44,11 +44,25 @@ export class CommandHistory {
     return this.#externalDirty || this.#undoStack.length !== this.#cleanIndex;
   }
 
+  /**
+   * Raise or lower the "changed outside the command stack" flag (view edits, D22).
+   *
+   * Deliberately not a one-way latch: a view change has no undo step, so the only
+   * way a host can take it back is by restoring the saved pose itself. Latching
+   * on the first write made `dirty` a lie after such an undo — the footer kept
+   * reporting unsaved work on a document identical to the server's copy. Clearing
+   * is safe because it is the caller's comparison that decides, and a false
+   * negative just leaves the document dirty.
+   */
+  setExternalDirty(dirty: boolean): void {
+    if (this.#externalDirty === dirty) return;
+    this.#externalDirty = dirty;
+    this.#notify();
+  }
+
   /** Mark dirty from a non-command change (camera/lights/environment, D22). */
   markDirty(): void {
-    if (this.#externalDirty) return;
-    this.#externalDirty = true;
-    this.#notify();
+    this.setExternalDirty(true);
   }
 
   execute(command: Command): void {

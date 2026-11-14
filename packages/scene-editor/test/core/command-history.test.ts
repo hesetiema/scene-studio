@@ -127,4 +127,33 @@ describe("CommandHistory view dirty (D22)", () => {
     history.markDirty();
     expect(onChange).toHaveBeenCalledTimes(1);
   });
+
+  it("setExternalDirty lowers the flag again — a view change is not a one-way latch", () => {
+    const history = new CommandHistory();
+    history.setExternalDirty(true);
+    expect(history.dirty).toBe(true);
+    history.setExternalDirty(false);
+    expect(history.dirty).toBe(false);
+    expect(history.canUndo).toBe(false);
+  });
+
+  it("setExternalDirty notifies on each crossing only", () => {
+    const onChange = vi.fn();
+    const history = new CommandHistory(onChange);
+    history.setExternalDirty(true);
+    history.setExternalDirty(true);
+    history.setExternalDirty(false);
+    history.setExternalDirty(false);
+    expect(onChange).toHaveBeenCalledTimes(2);
+  });
+
+  it("a lowered view flag does not hide a pending command", () => {
+    const history = new CommandHistory();
+    history.execute({ label: "a", execute: () => {}, undo: () => {} });
+    history.setExternalDirty(true);
+    expect(history.dirty).toBe(true);
+    history.setExternalDirty(false);
+    // The view is back to the saved one, but the command still is not.
+    expect(history.dirty).toBe(true);
+  });
 });

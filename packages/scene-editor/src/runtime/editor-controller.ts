@@ -9,6 +9,7 @@ import { DisposerStack } from "./disposer-stack";
 import { SelectionManager } from "./selection-manager";
 import type { RuntimeContract, RuntimeEventMap, Transform } from "./runtime-contract";
 import { parseSceneDocument } from "../core/document/parse";
+import { viewFingerprint } from "../core/document/view-fingerprint";
 import { validateHierarchy } from "../core/document/hierarchy";
 import { SceneEditorError, SceneErrorCode } from "../core/events/errors";
 import { createConflictError } from "../core/events/conflict";
@@ -60,6 +61,16 @@ export class EditorController {
 
   #doc: SceneDocument | null = null;
   #baseRevision = 0;
+  /**
+   * Fingerprint of `#doc.view` at the last clean point (load / save / remote swap).
+   *
+   * View edits are dirty but never undoable (D22), so `dirty` cannot be derived
+   * from the undo depth alone: a host that restores a saved pose has undone the
+   * change with no command to show for it. Comparing against this snapshot — and
+   * clearing the flag when they match again — is what keeps the "unsaved" badge
+   * honest instead of latching on the first orbit.
+   */
+  #cleanView: string | null = null;
   /**
    * Loads are serialized: `loadDocument` clears and repopulates the scene, so
    * overlapping calls used to interleave `clear()` with another call's async
@@ -162,14 +173,24 @@ export class EditorController {
     }
     this.#doc = { ...this.#doc, view: structuredClone(view) };
     this.runtime.applyViewState(view);
-    this.history.markDirty();
+    this.#syncViewDirty(view);
   }
 
   /** Runtime reported a user interaction — record it and mark dirty (D22). */
   handleRuntimeViewChange(view: ViewState): void {
     if (!this.#doc) return;
     this.#doc = { ...this.#doc, view: structuredClone(view) };
-    this.history.markDirty();
+    this.#syncViewDirty(view);
+  }
+
+  /** Dirty while (and only while) the view differs from the saved one (D22). */
+  #syncViewDirty(view: ViewState): void {
+    this.history.setExternalDirty(this.#cleanView !== viewFingerprint(view));
+  }
+
+  /** Anchor the clean point at the view the host has just been handed. */
+  #anchorCleanView(): void {
+    this.#cleanView = this.#doc ? viewFingerprint(this.#doc.view) : null;
   }
 
   /** Host confirmed save: adopt server revision and clear dirty (D17/D18). */
@@ -179,6 +200,7 @@ export class EditorController {
     }
     this.#baseRevision = serverRevision;
     this.history.markClean();
+    this.#anchorCleanView();
   }
 
   /**
@@ -224,6 +246,7 @@ export class EditorController {
     this.#doc = structuredClone(remote);
     this.#baseRevision = remote.revision;
     this.history.clear();
+    this.#anchorCleanView();
     this.selection.clear();
     if (sceneChanged) this.runtime.applyViewState(remote.view);
   }
@@ -335,6 +358,7 @@ export class EditorController {
 
   markClean(): void {
     this.history.markClean();
+    this.#anchorCleanView();
   }
 
   select(ids: string[]): void {
@@ -364,6 +388,7 @@ export class EditorController {
     this.#doc = structuredClone(doc);
     this.#baseRevision = doc.revision;
     this.history.clear();
+    this.#anchorCleanView();
     this.selection.clear();
     if (sceneChanged) this.runtime.applyViewState(doc.view);
   }
