@@ -61,15 +61,19 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
-      - name: Ensure npm supports OIDC (>= 11.5.1)
+      - name: Release identity
+        # Job logs need admin rights to read from outside; annotations do not.
+        # These are the exact claims npm matches against the trusted publisher,
+        # so a mismatch is diagnosable without anyone opening the Actions page.
         run: |
-          NEED=11.5.1
-          HAVE=$(npm --version)
-          if [ "$(printf '%s\n%s\n' "$NEED" "$HAVE" | sort -V | head -1)" != "$NEED" ]; then
-            echo "npm $HAVE cannot do trusted publishing; upgrading"
-            npm install -g npm@^11
+          echo "::notice::node $(node --version), runner npm $(npm --version)"
+          echo "::notice::publishing with $(npx --yes npm@11 --version)"
+          echo "::notice::repo=${GITHUB_REPOSITORY} workflow_ref=${GITHUB_WORKFLOW_REF} ref=${GITHUB_REF} ref_type=${GITHUB_REF_TYPE} runner=${RUNNER_ENVIRONMENT}"
+          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::notice::OIDC request URL present (id-token: write granted)"
+          else
+            echo "::warning::ACTIONS_ID_TOKEN_REQUEST_URL is unset -- this job cannot mint an OIDC token"
           fi
-          echo "node $(node --version), npm $(npm --version)"
       - name: Publish
         working-directory: packages/scene-editor
         run: |
@@ -79,24 +83,25 @@ jobs:
             *)   TAG="latest" ;;
           esac
           echo "publishing ${VERSION} -> ${TAG}"
-          # Only exported when the job holds id-token: write. If it is missing the
-          # publish below fails with ENEEDAUTH, so say why up front.
-          if [ -n "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
-            echo "OIDC: request URL present"
-          else
-            echo "::warning::ACTIONS_ID_TOKEN_REQUEST_URL is unset -- this job cannot mint an OIDC token"
-          fi
-
+          # Run npm through npx rather than a global upgrade: setup-node prepends
+          # its own PATH, so `npm install -g npm@11` can appear to succeed while
+          # `npm publish` still uses the older bundled binary -- which signs the
+          # provenance and then fails the PUT with a misleading E404.
           set +e
           LOG=$(mktemp)
-          npm publish --access public --tag "$TAG" 2>&1 | tee "$LOG"
+          npx --yes npm@11 publish --access public --tag "$TAG" --registry=https://registry.npmjs.org/ 2>&1 | tee "$LOG"
           STATUS=${PIPESTATUS[0]}
           set -e
 
           if [ "$STATUS" -ne 0 ]; then
             # The annotation is the only channel readable without admin rights on
             # the job log, so the cause goes there; the tail goes to the summary.
-            echo "::error::npm publish failed (exit $STATUS): $(grep -m3 -E 'npm (error|ERR)' "$LOG" | tr '\n' ' ' | cut -c1-700)"
+            echo "::error::npm publish failed (exit $STATUS): $(grep -m8 -E 'npm (error|ERR|notice)' "$LOG" | tr '\n' ' ' | cut -c1-900)"
+            if grep -q "Signed provenance statement" "$LOG"; then
+              echo "::warning::OIDC worked (provenance was signed). npm deliberately answers 404 for an unauthorised write: the trusted publisher likely has only \"npm stage publish\" allowed, or its repo/workflow/environment fields do not match the claims in the Release identity step."
+            else
+              echo "::warning::No provenance line: the OIDC exchange did not happen. Check the publishing npm version and id-token: write permission."
+            fi
             if grep -qE 'E404|E403|not authorized|permission' "$LOG"; then
               echo "::error::npm refused the workflow. Check the trusted publisher on npmjs.com: owner hesetiema, repo scene-studio, workflow publish.yml, and the \"npm publish\" allowed action ticked."
             fi
