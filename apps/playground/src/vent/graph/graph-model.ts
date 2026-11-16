@@ -36,6 +36,11 @@ export class GraphModel {
   visible = true;
   iconRect: Rect | null = null;
   textRect: Rect | null = null;
+  /**
+   * 文字的垂直避让量（px，负值向上）。碰撞求解在图标压字时给出，每帧归零后重算；
+   * 媒体把它应用到实际节点上，默认实现是 `marginTop`。
+   */
+  textOffsetY = 0;
   /** 碰撞求解结果；媒体据此隐藏对应部分。 */
   iconHidden = false;
   textHidden = false;

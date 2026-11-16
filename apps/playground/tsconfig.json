@@ -11,5 +11,5 @@
       "@scenio/scene-editor/three": ["../../packages/scene-editor/src/three-entry.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "test", "vite.config.ts", "vitest.config.ts"]
 }

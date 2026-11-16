@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:pages": "vite build --mode pages",
     "preview": "vite preview",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -15,7 +16,8 @@
     "@types/three": "^0.186.0",
     "three": "^0.186.0",
     "typescript": "^5.9.3",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
   },
   "dependencies": {
     "valtio": "^2.3.2"

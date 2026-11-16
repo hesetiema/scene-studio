@@ -119,6 +119,8 @@ export class GraphScene implements MediaSceneLike {
       m.visible = this.#project(m.world, width, height, out);
       m.screen.x = out.x;
       m.screen.y = out.y;
+      // 避让量每帧从基线重算：输入不变则结果不变，不会逐帧漂移。
+      m.textOffsetY = 0;
     }
 
     for (const m of this.#models) {
@@ -163,7 +165,7 @@ export class GraphScene implements MediaSceneLike {
     const tw = Math.max(this.#measureText(m.label), this.#measureText(m.detail));
     return {
       icon: null,
-      text: { x: x - tw / 2 - 2.5, y: y - 38, w: tw + 5, h: 38 },
+      text: { x: x - tw / 2 - 2.5, y: y - 38 + m.textOffsetY, w: tw + 5, h: 38 },
     };
   }
 }

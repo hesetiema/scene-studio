@@ -109,6 +109,9 @@ export const spaceDomMedia: MediaFactory<GraphModel> = (model) => {
       lux.textContent = m.detail;
       root.dataset.lux = m.detail;
       name.textContent = m.label;
+      // 碰撞给出的垂直避让量（见 collision.ts）：图标压住房间名时挪一行，
+      // 而不是把整块文字藏掉。margin 只叠加位移，不动 CSS 里的 translate 锚点。
+      root.style.marginTop = m.textOffsetY ? `${m.textOffsetY}px` : "";
       root.classList.toggle("selected", m.hasState("selected"));
       root.classList.toggle("hidden", !m.visible || m.textHidden);
     },
