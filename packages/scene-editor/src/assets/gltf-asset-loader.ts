@@ -1,4 +1,4 @@
-import { AssetError, AssetErrorCode } from "./asset-error";
+import { AssetError, AssetErrorCode, describeAsset } from "./asset-error";
 import { assetFormatHint } from "./format";
 import type { AssetLoadContext, AssetLoadProgress, LoadedAsset } from "./asset-cache";
 
@@ -76,7 +76,7 @@ export function loadGltfScene(
  *
  * `GLTFLoader` says "THREE.GLTFLoader: No DRACOLoader instance provided." and
  * that string used to be dropped on the floor: the element only paints the
- * `AssetError` message, which is "Failed to load asset: <id>". A blank canvas
+ * `AssetError` message, which is "Failed to load asset: <address>". A blank canvas
  * with no explanation was the whole complaint behind `decoder-path`.
  *
  * Returns `null` for failures that have nothing to do with decoders, so the
@@ -128,7 +128,7 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
     if (ext !== "glb" && ext !== "gltf") {
       throw new AssetError(
         AssetErrorCode.UnsupportedFormat,
-        `Unsupported asset format: ${ext ?? "(none)"} (supported: ${SUPPORTED_ASSET_FORMATS.join(", ")})`,
+        `Unsupported asset format: ${ext ?? "(none)"} for ${describeAsset(assetId, url)} (supported: ${SUPPORTED_ASSET_FORMATS.join(", ")})`,
         { detail: { assetId, url, ext } },
       );
     }
@@ -141,7 +141,7 @@ export function createGltfAssetLoader(options: GltfAssetLoaderOptions) {
       const hint = decoderHint(cause);
       throw new AssetError(
         AssetErrorCode.LoadFailed,
-        `Failed to load glTF asset: ${assetId}${hint ? ` — ${hint}` : ""}`,
+        `Failed to load asset: ${describeAsset(assetId, url)}${hint ? ` — ${hint}` : ""}`,
         {
           cause,
           detail: { assetId, url },

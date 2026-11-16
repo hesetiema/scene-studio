@@ -1,0 +1,73 @@
+name: Pages
+
+# Publishes the playground's public surface to GitHub Pages: the studio only
+# (`vite build --mode pages`). perf / minimal / embed / vent-demo / demos stay in
+# the repo for CI and local use, but they are not what a stranger should land on
+# -- see the comment above the input map in apps/playground/vite.config.ts.
+#
+# One-time setup: repository Settings -> Pages -> Source = "GitHub Actions".
+# The project page is served from https://<owner>.github.io/<repo>/, which is why
+# the pages build carries `base: "/scene-studio/"`.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "build (pages surface)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install (lockfile)
+        run: pnpm install --frozen-lockfile
+      - name: Build the public surface
+        run: pnpm --filter @scenio/playground build:pages
+      # Fails loudly if the pages build ever starts emitting a page that should
+      # not be public, or carries the local data snapshot / thumbnails along.
+      # Cheaper than reasoning about it during review.
+      - name: Guard the surface (index.html only, no local data)
+        run: |
+          set -euo pipefail
+          cd apps/playground/dist
+          pages=$(find . -maxdepth 1 -name '*.html' -printf '%f\n' | sort)
+          echo "published html: ${pages//$'\n'/ }"
+          [ "$pages" = "index.html" ] || { echo "::error::pages build emitted more than index.html: $pages"; exit 1; }
+          for dir in data bim demos; do
+            if [ -d "$dir" ]; then
+              echo "::error::pages build carried a local-only dir: $dir"
+              exit 1
+            fi
+          done
+          du -sh .
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/playground/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      # deploy-pages authenticates to the Pages service with an OIDC token.
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -13,11 +13,12 @@
       property="og:description"
       content="Scene Studio 场景工作台：@scenio/scene-editor 的演示宿主。可嵌入的 3D 场景编辑器——文档模型、变换与材质命令、撤销重做、宿主保存与冲突处理。"
     />
-    <link rel="stylesheet" href="/src/styles/base.css" />
-    <link rel="stylesheet" href="/src/styles/controls.css" />
-    <link rel="stylesheet" href="/src/styles/hud.css" />
-    <link rel="stylesheet" href="/src/styles/welcome.css" />
-    <link rel="stylesheet" href="/src/styles/mode.css" />
+    <link rel="icon" href="./favicon.ico" />
+    <link rel="stylesheet" href="/src/studio/styles/base.css" />
+    <link rel="stylesheet" href="/src/studio/styles/controls.css" />
+    <link rel="stylesheet" href="/src/studio/styles/hud.css" />
+    <link rel="stylesheet" href="/src/studio/styles/welcome.css" />
+    <link rel="stylesheet" href="/src/studio/styles/mode.css" />
   </head>
   <body data-welcome="true" data-studio-mode="viewer">
     <div class="app">
@@ -208,8 +209,17 @@
                 rel="noreferrer"
                 >API 文档</a
               >
-              <span>·</span>
-              <a href="/embed.html" title="纯声明式嵌入：一个标签 + 三个属性，没有面板代码">嵌入示例</a>
+              <span class="local-link">·</span>
+              <a
+                class="local-link"
+                href="./demos.html"
+                title="本地示例总入口：工作台、嵌入、最小宿主、性能基准、通风感知"
+                >全部示例</a
+              >
+              <span class="local-link">·</span>
+              <a class="local-link" href="./embed.html" title="纯声明式嵌入：一个标签 + 三个属性，没有面板代码"
+                >嵌入示例</a
+              >
             </p>
           </div>
         </section>
@@ -918,6 +928,6 @@
       </footer>
     </div>
 
-    <script type="module" src="/src/main.ts"></script>
+    <script type="module" src="/src/studio/main.ts"></script>
   </body>
 </html>

@@ -1,0 +1,513 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>示例 · Scene Studio Playground</title>
+    <meta
+      name="description"
+      content="Scene Studio playground 入口：两个能看的示例（工作台、通风感知），两段该读的接入代码（声明式嵌入、最小宿主）。"
+    />
+    <style>
+      :root {
+        color-scheme: dark;
+
+        --bg: #101010;
+        --header-bg: #262626;
+        --panel-bg: #1b1b1b;
+        --panel-2: #232323;
+        --line: #303030;
+
+        --text: #d7d7d7;
+        --text-strong: #f0f0f0;
+        --muted: #8a8a8a;
+        --accent: #56a8d6;
+
+        --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+          sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
+        font-size: 13px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .page {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 0 24px 64px;
+      }
+
+      /* --------------------------------------------------------------- 页头 */
+      .site-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+        padding: 22px 0 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .brand-name {
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--text-strong);
+        letter-spacing: 0.2px;
+      }
+
+      .brand-sub {
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .site-nav {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .site-nav a:hover {
+        color: var(--accent);
+      }
+
+      .site-nav .dot {
+        color: #4a4a4a;
+      }
+
+      /* --------------------------------------------------------------- 导语 */
+      .lede {
+        margin: 28px 0 30px;
+        max-width: 76ch;
+      }
+
+      .lede h1 {
+        margin: 0 0 10px;
+        font-size: 20px;
+        font-weight: 600;
+        color: var(--text-strong);
+        letter-spacing: 0.2px;
+      }
+
+      .lede p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .lede strong {
+        color: var(--text);
+        font-weight: 600;
+      }
+
+      .lede code,
+      .ref-desc code {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: #22282d;
+        color: #b9c8d4;
+      }
+
+      /* --------------------------------------------------------------- 分节 */
+      .section {
+        margin-top: 34px;
+      }
+
+      .section:first-of-type {
+        margin-top: 0;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        margin: 0 0 14px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-strong);
+      }
+
+      .section-title .count {
+        font-size: 11.5px;
+        font-weight: 400;
+        color: var(--muted);
+      }
+
+      /* ----------------------------------------------------------- 示例卡片 */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+      }
+
+      /* 示例只有两张：窄屏直接单列，不要留下空列，也别把卡片挤成窄条 */
+      @media (max-width: 960px) {
+        .grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+      }
+
+      .card {
+        display: flex;
+        flex-direction: column;
+        background: var(--panel-bg);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        overflow: hidden;
+        transition:
+          border-color 0.15s ease,
+          transform 0.15s ease,
+          box-shadow 0.15s ease;
+      }
+
+      .card:hover {
+        border-color: #4a5a66;
+        transform: translateY(-2px);
+        box-shadow: 0 10px 28px rgb(0 0 0 / 0.45);
+      }
+
+      .card:focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+      }
+
+      .thumb {
+        display: block;
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        object-fit: cover;
+        object-position: top center;
+        background: var(--panel-2);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .card-body {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 14px 16px 16px;
+        flex: 1;
+      }
+
+      .card-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .card-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-strong);
+      }
+
+      .tag {
+        padding: 1px 7px;
+        border: 1px solid #3a4550;
+        border-radius: 999px;
+        font-size: 11px;
+        line-height: 1.6;
+        color: #93a5b3;
+        background: #20262c;
+        white-space: nowrap;
+      }
+
+      .tag-warn {
+        border-color: #5a4a2a;
+        color: #d3b071;
+        background: #241f16;
+      }
+
+      .card-desc {
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+        flex: 1;
+      }
+
+      .card-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 2px;
+        padding-top: 10px;
+        border-top: 1px dashed #2b2b2b;
+      }
+
+      .card-path {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: #7f8b96;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .card-open {
+        flex: none;
+        font-size: 12px;
+        color: var(--accent);
+      }
+
+      .card:hover .card-open {
+        color: #7cc2e8;
+      }
+
+      /* --------------------------------------------------- 参考 / 工具 行 */
+      .rows {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 8px 18px;
+        padding: 14px 16px;
+        background: #15181b;
+        border: 1px solid var(--line);
+        border-left: 2px solid #3c4b57;
+        border-radius: 8px;
+      }
+
+      .row-main {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .row-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      .row-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text-strong);
+      }
+
+      .ref-desc {
+        margin: 0;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
+      .row-links {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex: none;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+
+      .row-links a {
+        color: var(--accent);
+      }
+
+      .row-links a:hover {
+        color: #7cc2e8;
+      }
+
+      .row-links .muted-link {
+        color: var(--muted);
+      }
+
+      .row-links .muted-link:hover {
+        color: var(--text);
+      }
+
+      @media (max-width: 720px) {        .row {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .row-links {
+          justify-content: flex-start;
+          padding-top: 2px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="site-header">
+        <div class="brand">
+          <span class="brand-name">场景工作台 · 示例</span>
+          <span class="brand-sub">Scene Studio Playground</span>
+        </div>
+        <nav class="site-nav">
+          <a href="/">工作台</a>
+          <span class="dot">·</span>
+          <a href="https://github.com/hesetiema/scene-studio" target="_blank" rel="noreferrer"
+            >GitHub</a
+          >
+          <span class="dot">·</span>
+          <a href="https://www.npmjs.com/package/@scenio/scene-editor" target="_blank" rel="noreferrer"
+            >npm</a
+          >
+          <span class="dot">·</span>
+          <a
+            href="https://github.com/hesetiema/scene-studio/blob/main/packages/scene-editor/API.md"
+            target="_blank"
+            rel="noreferrer"
+            >API 文档</a
+          >
+        </nav>
+      </header>
+
+      <section class="lede">
+        <h1>两个能看的示例，两段该读的代码</h1>
+        <p>
+          想知道 <strong>@scenio/scene-editor</strong> 能做什么，看下面的示例；想知道怎么接进自己的页面，
+          直接读那两段源码。它们各自都有能跑的页面，但<strong>价值在代码不在画面</strong>，所以这里不放截图。
+        </p>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">示例 <span class="count">打开就能操作</span></h2>
+        <div class="grid">
+          <a class="card" href="/">
+            <img
+              class="thumb"
+              src="/demos/studio.jpg"
+              alt="工作台截图：Damaged Helmet 模型与右侧控制面板"
+              loading="lazy"
+            />
+            <div class="card-body">
+              <div class="card-head">
+                <span class="card-title">工作台</span>
+                <span class="tag">editor</span>
+                <span class="tag">完整宿主</span>
+              </div>
+              <p class="card-desc">
+                查看 / 编辑双模式、右侧控制面板、变换手柄、撤销重做（面板设置 / 文档命令 / 相机位姿三套栈）、
+                宿主保存与冲突决策，内置 8 个 Khronos 示例模型可切换。
+              </p>
+              <div class="card-foot">
+                <span class="card-path">/</span>
+                <span class="card-open">打开 →</span>
+              </div>
+            </div>
+          </a>
+
+          <a class="card" href="/vent-demo.html">
+            <img
+              class="thumb"
+              src="/demos/vent.jpg"
+              alt="通风感知 demo 截图：建筑楼层等轴测视图与空间状态色块"
+              loading="lazy"
+            />
+            <div class="card-body">
+              <div class="card-head">
+                <span class="card-title">通风感知</span>
+                <span class="tag">BIM</span>
+                <span class="tag-warn">需本地数据</span>
+              </div>
+              <p class="card-desc">
+                双视图 BIM 模型层：建筑视图是半透明楼板堆叠的等轴测白模，楼层视图换成 Revit 轻量化几何，
+                叠加空间状态色、设备图标图元与 AABB 碰撞聚合。
+              </p>
+              <div class="card-foot">
+                <span class="card-path">/vent-demo.html</span>
+                <span class="card-open">打开 →</span>
+              </div>
+            </div>
+          </a>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">
+          接入参考 <span class="count">代码是文档，页面只是它的运行结果</span>
+        </h2>
+        <div class="rows">
+          <div class="row">
+            <div class="row-main">
+              <div class="row-head">
+                <span class="row-title">声明式嵌入</span>
+                <span class="tag">viewer</span>
+                <span class="tag">107 行</span>
+              </div>
+              <p class="ref-desc">
+                三个属性把模型放进页面：<code>&lt;scene-editor src camera-orbit field-of-view&gt;</code>。
+                页面里剩下的代码只是把 <code>progress</code> / <code>load</code> 事件打到日志、把一次点击落成
+                热点——没有面板，也没有文档代码。
+              </p>
+            </div>
+            <div class="row-links">
+              <a
+                href="https://github.com/hesetiema/scene-studio/blob/main/apps/playground/src/embed/main.ts"
+                target="_blank"
+                rel="noreferrer"
+                >读源码</a
+              >
+              <a href="/embed.html" class="muted-link">运行</a>
+            </div>
+          </div>
+
+          <div class="row">
+            <div class="row-main">
+              <div class="row-head">
+                <span class="row-title">最小宿主</span>
+                <span class="tag">integration</span>
+                <span class="tag">161 行</span>
+              </div>
+              <p class="ref-desc">
+                手写一份合法文档 → <code>loadDocument</code> → <code>save-request</code> 回写 →
+                <code>markSaved</code> 的最小闭环。要自己接 SDK 时，从这一份开始抄比从工作台读起快得多。
+              </p>
+            </div>
+            <div class="row-links">
+              <a
+                href="https://github.com/hesetiema/scene-studio/blob/main/apps/playground/src/minimal/main.ts"
+                target="_blank"
+                rel="noreferrer"
+                >读源码</a
+              >
+              <a href="/minimal.html" class="muted-link">运行</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

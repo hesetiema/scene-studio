@@ -37,18 +37,25 @@ const STUDIO_VIEW = {
  * (two cameras authored in the asset). Without an asset that declares these, the
  * corresponding switches would have nothing to act on.
  */
+/**
+ * 样本资产在 `public/assets/`。Pages 构建部署在子路径下（`/scene-studio/`），
+ * 而 vite 只改写 HTML 与构建期引用，模块里的字符串它不管 —— 所以这里必须走
+ * `BASE_URL`。dev 下它就是 `/`，行为与写死绝对路径一致。
+ */
+const asset = (file: string) => `${import.meta.env.BASE_URL}assets/${file}`;
+
 export class ModelLoader {
   /** Universal asset registry for built-in and dynamically registered models */
   private readonly registry = new Map<string, string | AssetFactory>([
-    ["damaged-helmet", "/assets/DamagedHelmet.glb"],
-    ["boom-box", "/assets/BoomBox.glb"],
-    ["fox", "/assets/Fox.glb"],
-    ["water-bottle", "/assets/WaterBottle.glb"],
-    ["milk-truck", "/assets/CesiumMilkTruck.glb"],
+    ["damaged-helmet", asset("DamagedHelmet.glb")],
+    ["boom-box", asset("BoomBox.glb")],
+    ["fox", asset("Fox.glb")],
+    ["water-bottle", asset("WaterBottle.glb")],
+    ["milk-truck", asset("CesiumMilkTruck.glb")],
     // 三个「资产自带能力」的样本：没有它们，变体 / 形变 / 多相机的开关没有东西可演。
-    ["variants-shoe", "/assets/MaterialsVariantsShoe.glb"],
-    ["morph-targets", "/assets/MorphPrimitivesTest.glb"],
-    ["cameras", "/assets/Cameras.gltf"],
+    ["variants-shoe", asset("MaterialsVariantsShoe.glb")],
+    ["morph-targets", asset("MorphPrimitivesTest.glb")],
+    ["cameras", asset("Cameras.gltf")],
     [
       "gem",
       () =>

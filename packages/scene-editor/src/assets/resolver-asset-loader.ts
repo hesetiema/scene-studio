@@ -1,4 +1,4 @@
-import { AssetError, AssetErrorCode } from "./asset-error";
+import { AssetError, AssetErrorCode, describeAsset } from "./asset-error";
 import { assetFormatHint } from "./format";
 import type { AssetLoadContext, LoadedAsset } from "./asset-cache";
 import {
@@ -69,7 +69,7 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
     if (ext !== "glb" && ext !== "gltf") {
       throw new AssetError(
         AssetErrorCode.UnsupportedFormat,
-        `Unsupported asset format: ${ext ?? "(none)"} for ${assetId}`,
+        `Unsupported asset format: ${ext ?? "(none)"} for ${describeAsset(assetId, url)}`,
         { detail: { assetId, url, ext } },
       );
     }
@@ -88,7 +88,7 @@ export function createResolverAssetLoader(options: ResolverAssetLoaderOptions) {
       const hint = decoderHint(cause);
       throw new AssetError(
         AssetErrorCode.LoadFailed,
-        `Failed to load asset: ${assetId}${hint ? ` — ${hint}` : ""}`,
+        `Failed to load asset: ${describeAsset(assetId, url)}${hint ? ` — ${hint}` : ""}`,
         {
           cause,
           detail: { assetId, url },

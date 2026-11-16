@@ -211,7 +211,7 @@ slot 名：`slot="poster"` / `slot="progress-bar"` / `slot="error"` / `slot="hot
   `AssetErrorCode`：`asset-not-found`、`asset-resolve-failed`、`asset-load-failed`、
   `asset-unsupported-format`、`asset-disposed`。
 - **BIM / 建筑加载不在这个包里**：Revit 楼层几何、FBX 场景清单与 outline 工具住在 playground
-  （`apps/playground/src/bim/`），因为它们只服务一个产品。包面保持单一、与格式无关：任何能给出
+  （`apps/playground/src/vent/bim/`），因为它们只服务一个产品。包面保持单一、与格式无关：任何能给出
   URL 的 glTF/OBJ/STL 资产都走常规资产管线。
 
 ### 入口

@@ -369,6 +369,10 @@ conflicts.mount();
 welcome.mount();
 document.body.dataset.boot = "pending";
 
+// 公开站（`vite build --mode pages`）只发布工作台，指向 demo 页的入口链接由
+// welcome.css 的 `html[data-surface="public"]` 规则隐藏。本地与 CI 不受影响。
+if (import.meta.env.MODE === "pages") document.documentElement.dataset.surface = "public";
+
 void el.ready.then(async () => {
   const params = bootParams;
   const selectId = params.get("select");
@@ -379,10 +383,16 @@ void el.ready.then(async () => {
   // first visit never downloads a model the user did not ask for.
   const useFixture = params.get("scene") === "default" || selectId !== null;
 
+  // 公开站（GitHub Pages）例外：陌生人的第一屏就是全部产品印象，空视口在这里
+  // 什么都证明不了，所以默认载入一个样本。可发现性不受损——顶栏的
+  // 「选择示例模型…」列着全部样本，首页图标也能回到欢迎屏。
+  const autoModel = import.meta.env.MODE === "pages" ? "damaged-helmet" : null;
+  const model = requestedModel ?? autoModel;
+
   if (useFixture) {
     await applyDocument(defaultMultiDoc, "几何体组合场景", "默认场景", false);
-  } else if (requestedModel && modelLoader.createModelDocByOption(requestedModel)) {
-    await loadModelByOption(requestedModel);
+  } else if (model && modelLoader.createModelDocByOption(model)) {
+    await loadModelByOption(model);
   } else {
     await applyDocument(emptyDoc, "未载入模型", "—", false);
   }

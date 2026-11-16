@@ -173,3 +173,9 @@ body[data-welcome="true"] #btn-show-panel {
   outline: 1px solid var(--accent);
   outline-offset: 2px;
 }
+
+/* 公开站（GitHub Pages）只发布工作台，指向 demo 页的链接连同分隔点一起隐藏；
+   本地与 e2e 的构建不设这个属性，链接照旧。见 vite.config.ts 的 `--mode pages`。 */
+html[data-surface="public"] .local-link {
+  display: none;
+}

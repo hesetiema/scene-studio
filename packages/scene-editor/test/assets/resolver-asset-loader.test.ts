@@ -177,6 +177,7 @@ describe("createResolverAssetLoader (AssetResolver contract)", () => {
       },
     });
 
-    await expect(load("gone")).rejects.toThrow(/^Failed to load asset: gone$/);
+    // The resolved address is what failed, so it is what the message names.
+    await expect(load("gone")).rejects.toThrow(/^Failed to load asset: \/a\/gone\.glb$/);
   });
 });

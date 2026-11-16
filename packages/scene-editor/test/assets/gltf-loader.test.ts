@@ -90,4 +90,32 @@ describe("createGltfAssetLoader (D16)", () => {
       expect((err as AssetError).code).toBe(AssetErrorCode.LoadFailed);
     }
   });
+
+  it("names the URL a failed load tried, not the internal src id", async () => {
+    // `src` resolves to the placeholder id `__src__`; painting that in the error
+    // slot tells the reader nothing about which URL 404'd.
+    const load = createGltfAssetLoader({
+      resolveUrl: () => "https://cdn.example.com/robot.glb",
+      gltfLoader: stubLoader({
+        loadAsync: vi.fn(async () => {
+          throw new Error("404 Not Found");
+        }),
+      }),
+    });
+
+    await expect(load("__src__")).rejects.toThrow(
+      /^Failed to load asset: https:\/\/cdn\.example\.com\/robot\.glb$/,
+    );
+  });
+
+  it("names the rejected address when the format is unsupported", async () => {
+    const load = createGltfAssetLoader({
+      resolveUrl: () => "https://cdn.example.com/download",
+      gltfLoader: stubLoader(),
+    });
+
+    await expect(load("__src__")).rejects.toThrow(
+      /^Unsupported asset format: \(none\) for https:\/\/cdn\.example\.com\/download \(supported: glb, gltf\)$/,
+    );
+  });
 });

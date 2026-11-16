@@ -226,7 +226,7 @@ undoable. Full field-level signatures are in [API.md](API.md#document-schema-zod
   `AssetErrorCode`: `asset-not-found`, `asset-resolve-failed`, `asset-load-failed`,
   `asset-unsupported-format`, `asset-disposed`.
 - **BIM / architecture loading is not here.** Revit floor geometry, FBX scene listings and outline
-  helpers live in the playground (`apps/playground/src/bim/`), because they serve one product. The
+  helpers live in the playground (`apps/playground/src/vent/bim/`), because they serve one product. The
   package keeps a single, format-agnostic surface: any glTF/OBJ/STL asset you can point at loads
   through the normal asset pipeline.
 

@@ -47,7 +47,7 @@
 三入口：`.`（core）、`./element`、`./three`（SDK 不附带样式，元素布局由宿主负责）。约束是硬的：
 **`three` 的静态 import 只出现在 `src/three/`、`src/assets/` 下**；`element/` 只经
 动态 import 触碰 addon；core 与 runtime 不感知渲染器（`scripts/check-boundaries.mjs` 的 B1/B2）。
-BIM / FBX / Revit 加载不属于 SDK：它只有一个消费者，0.7.0 起住在 `apps/playground/src/bim/`。
+BIM / FBX / Revit 加载不属于 SDK：它只有一个消费者，0.7.0 起住在 `apps/playground/src/vent/bim/`。
 
 | 层 | 目录 | 规模 |
 |---|---|---|

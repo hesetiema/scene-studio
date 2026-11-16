@@ -137,7 +137,7 @@ description: scene-studio 仓库（@scenio/scene-editor —— 可嵌入的 3D �
 ## 常用事实速查
 
 - 入口三个：`.`（core）、`./element`、`./three`；`three` 是 peer，不打包，不进 core/runtime。
-  BIM 加载不属于 SDK，在 `apps/playground/src/bim/`（应用级、无单测）。
+  BIM 加载不属于 SDK，在 `apps/playground/src/vent/bim/`（应用级、无单测）。
 - 双形态单内核：查看器 = 合成单对象文档 + `mode="viewer"`，不是第二码路。
 - SDK 不做宿主 I/O：`save-request` → 宿主 PUT → `markSaved(revision)`；冲突不自动合并。
 - `src` 只读一次（连接时）；后改是刻意的空操作。

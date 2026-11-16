@@ -98,10 +98,10 @@ HDR/EXR 加载器、OBJ/GLTF 导出器、OrbitControls）。这些不进静态�
   **结论：不拆。** 它不在每帧路径上（`sync` 在 instancing 里，store 只在装载/命令时被调用），
   而每个可外置的簇只有 12–100 行（最大是 mounting ≈100 行），外置却要 3–5 个成员的 host
   接口（变体簇就要 `objects`/`assets`/`overrides`/`variantName` 四个共享状态），收益为负。
-- `apps/playground/src/bim/`（770 行：Revit 楼层、FBX、轮廓网格、单位换算）原本是 SDK 的公开
-  `./bim` 入口，消费者只有 `apps/playground/src/vent-demo.ts`。0.7.0 起搬出包（公开面=三个入口）。
+- `apps/playground/src/vent/bim/`（770 行：Revit 楼层、FBX、轮廓网格、单位换算）原本是 SDK 的公开
+  `./bim` 入口，消费者只有 `apps/playground/src/vent/main.ts`。0.7.0 起搬出包（公开面=三个入口）。
   它不在 npm 包里、没有单测，只靠 playground 的 `tsc --noEmit` + `vite build` 兜着；
-  契约说明随代码走：`apps/playground/src/bim/README.md`。
+  契约说明随代码走：`apps/playground/src/vent/bim/README.md`。
 - **import 边界门禁已接入**：`pnpm test:boundaries`（`scripts/check-boundaries.mjs`），
   在 CI 的 `pack-smoke` job 里跑。基线 78 文件 / 258 边 / 0 循环 / 0 违规。
 

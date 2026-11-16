@@ -86,7 +86,7 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
    `import … from`，否则 element 入口会在模块作用域就把 three 拖进来。当前存在 18 条这类
    被许可的懒加载 addon 引用。
    > BIM 加载原本在 `src/bim/`（4 个文件静态 import three），为了一个消费者把整个 SDK 拖进
-   > FBX/Revit 依赖。0.7.0 起它迁到 `apps/playground/src/bim/`。第 3 条由
+   > FBX/Revit 依赖。0.7.0 起它迁到 `apps/playground/src/vent/bim/`。第 3 条由
    > `scripts/check-boundaries.mjs`（B1）实际把关。
 
 4. **`RuntimeContract` 是唯一的渲染接缝。** 新增运行时能力 → 在接口上加**可选**成员
@@ -227,9 +227,9 @@ lockfile 旧、pnpm 想整目录清空重建。非交互 shell 下请绕过 pnpm
   `render-loop`、`framing`、`shared-resources`。合批器的三个部件在旁边的 `three/viewer/instancing/`：
   `fingerprint.ts`（什么算同内容、什么允许合批）、`chunks.ts`（单个 `InstancedMesh` 的槽位/扩容/销毁）、
   `layout.ts`（纯函数空间排序）。
-- `apps/playground/src/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一
+- `apps/playground/src/vent/bim/`（770 行：Revit 楼层加载、FBX、轮廓网格、单位换算）是**服务于单一
   产品**的领域加载代码。它原本住在 SDK 里、占一个公开的 `./bim` 子路径，消费者只有
-  `apps/playground/src/vent-demo.ts`；0.7.0 把它搬到这里，公开面收敛成三个入口。它**不在**
+  `apps/playground/src/vent/main.ts`；0.7.0 把它搬到这里，公开面收敛成三个入口。它**不在**
   npm 包里、**没有**单测，只靠 playground 的 `tsc --noEmit` 与 `vite build` 兜着。
   不要把它的任何符号重新导出成包入口。
 - **不变式 1–3 由 `scripts/check-boundaries.mjs` 把关**（`pnpm test:boundaries`），已接进

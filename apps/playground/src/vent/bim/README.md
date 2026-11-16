@@ -4,7 +4,7 @@ This folder used to be `packages/scene-editor/src/bim/`, published as the SDK's 
 `@scenio/scene-editor/bim` entry. It had exactly one consumer, so 0.7.0 moved it out of the
 package: the SDK now ships three entries (`.`, `./element`, `./three`) and nothing format-specific.
 
-`vent-demo.ts` imports it as `./bim/bim-entry`. The module is **not** in the npm tarball and has no
+`../main.ts` imports it as `./bim/bim-entry`. The module is **not** in the npm tarball and has no
 unit tests — `tsc --noEmit` plus `vite build` in `apps/playground` are its only automated checks.
 
 ## Contract

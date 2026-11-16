@@ -473,6 +473,9 @@ export class SlotChrome {
       color: "#f2f4f8",
       background: "rgba(10, 14, 22, 0.82)",
       textAlign: "center",
+      // Failure messages now name the URL that 404'd, and a URL is one long
+      // token: without this it overflows the host box instead of wrapping.
+      overflowWrap: "anywhere",
       zIndex: "4",
       pointerEvents: "none",
     });

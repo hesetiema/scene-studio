@@ -9,44 +9,91 @@ pnpm --filter @scenio/playground dev      # http://127.0.0.1:3000
 pnpm --filter @scenio/playground typecheck
 ```
 
+## Directory layout
+
+`src/` mirrors the pages: **one directory per HTML entry**, and the pages share nothing but the
+SDK. A module belongs to the page that uses it, so adding a page means adding a directory — not
+threading a new top-level folder through the others.
+
+```text
+apps/playground/
+  index.html      studio（产品本身，唯一对外发布的一页）
+  vent-demo.html  通风感知 demo
+  embed.html      声明式接入参考
+  minimal.html    最小宿主
+  perf.html       性能仪器（CI）
+  demos.html      本地示例索引
+
+  src/
+    studio/   ← index.html
+      main.ts        合成根：runtime 工厂、文档启动、保存/冲突、e2e 钩子
+      bootstrap.ts   确定性场景文档
+      assets/        资产注册表 + 懒加载 GLTF/Draco/Meshopt
+      camera/        取景 / 预设 / 飞向
+      interaction/   快捷键
+      styles/        HUD、欢迎屏、查看/编辑模式样式
+      ui/            shell、panels/、HUD、冲突条、拖放、导出
+      viewer/        视图状态与 store、撤销栈、预设、状态 → 引擎
+    vent/     ← vent-demo.html
+      main.ts        页面：双视图、图元层装配、包围盒取景、相机
+      bim/           结构装载（应用级，不进 SDK）
+      graph/         与框架无关的图元 / 聚合 / 碰撞层
+    embed/    ← embed.html      main.ts
+    minimal/  ← minimal.html    main.ts
+    perf/     ← perf.html       main.ts
+
+  public/       静态资源（assets、demos 缩略图入库；data、bim 不入库）
+  scripts/      缩略图重拍脚本
+```
+
+The HTML files stay at the package root because **their filenames are URLs**, and those URLs are
+the contract the e2e suite, the perf report and the visual baselines drive (`/`, `/embed.html`,
+`/minimal.html`, `/perf.html`, `/vent-demo.html`). Filing them under `pages/` would rename every
+fixture for no structural gain; the entry module is one line inside each page's directory instead.
+
 ## Module map
+
+### `src/studio/` — the studio page
 
 | Path | Responsibility |
 |---|---|
-| `src/main.ts` | Composition root: runtime factory, document boot, host save/conflict store, viewer store/controller, `window.__*` e2e hooks |
-| `src/bootstrap.ts` | Deterministic scene documents — built with the SDK's `createDocumentFromAsset` / `createSceneDocument` (the envelope is no longer hand-written) |
-| `src/assets/model-loader.ts` | Asset registry, lazy GLTF/Draco/Meshopt loading, custom file → `SceneDocument`; `.gltf` sidecar inlining delegates to the SDK's `createFileBundleUrl` |
-| `src/viewer/viewer-state.ts` | Single viewer state + store (`ViewerState`) backed by a valtio proxy (vanilla): panels patch it, the controller subscribes, `snapshot()` copies form the undo stack |
-| `src/viewer/history-coordinator.ts` | Unified undo/redo across viewer settings, document commands and camera poses (most-recent-first), plus the capture-phase Ctrl+Z/Ctrl+Y binding |
-| `src/viewer/viewer-controller.ts` | State → engine: skeleton overlay, backdrop/grid, lighting preset + intensity/colour tuning, camera-follow light, animation transport. Display mode, explode, tone mapping, exposure and the turntable all go through the contract (`setDisplayMode` / `setExplode` / `setToneMapping` / `setExposure` / `setAutoRotate`), never a direct renderer or scene mutation |
-| `src/viewer/presets.ts` | Lighting, backdrop and grid presets — persisted through `view`, applied idempotently |
-| `src/camera/camera-controller.ts` | Frame / presets / fly-to. Preview frames go through `runtime.applyViewState()`; the flight easing is the SDK's `smoothViewTo()` (the document is still written once, after the fade settles). Clip planes and turntable are SDK-owned (`render()` / `setAutoRotate`) — no host-side rAF tickers. A `commit: false` frame reports through `onProgrammaticView` so the undo stack can move its camera baseline without recording a step |
-| `src/ui/studio-shell.ts` | Composes panels, hotkeys, drag & drop; `onDocumentLoaded()` re-sync hook |
-| `src/ui/panel.ts` | `BasePanel`: listener collection + single destroy path for every HUD panel |
-| `src/ui/panels/*.ts` | Lighting, material, background, display, model, camera, transform, animation, document, chrome (panel collapse), **object** (add/duplicate/remove/reparent) and **variant** (KHR variants, asset cameras, morph targets) panels (one concern each) |
-| `src/ui/conflict-controller.ts` | The decision surface for a `conflict` error: shows the bar, offers 覆盖远端 / 采纳远端 / 稍后, and mirrors the split into the footer via `hud.setConflict()`. The only place that calls the host's `overwriteRemote` / `adoptRemote` |
-| `src/ui/welcome-screen.ts` | Home screen: one line of positioning (`@scenio/scene-editor` 演示宿主) + drop target + 选择文件 + annotated sample links + GitHub / npm / API links; the control panel, footer, save button and panel-restore icon stay hidden until a document with objects loads, and header home icon returns to it |
-| `src/ui/mode-switch.ts` | Top-bar 查看 / 编辑 switch: writes `el.mode`, mirrors `body[data-studio-mode]`, gates host-side editing hotkeys/save; no document writes |
-| `src/styles/mode.css` | Segmented mode switch styling + the viewer-only chrome rules (hide panel, footer, save and panel-restore) |
-| `src/ui/drop-zone.ts` | Window-level multi-file drop with depth-counted overlay |
-| `src/ui/material-controller.ts` | Selected-part material override (colour / opacity / metalness / roughness); snapshots originals for restore, never touches the document |
-| `src/ui/scene-export.ts` | Thin wrapper over the SDK's `el.exportDocument()` + `downloadBlob()` (GLB / OBJ, document transforms) + PNG snapshot via `el.toBlob()` |
-| `src/ui/hud-controller.ts` | Footer sync state (`已保存 rN` / `rN · 未保存改动` / `冲突 · 本地 rN / 远端 rM`), live camera readout, FPS meter, selection inspector, toasts |
-| `src/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element) |
-| `src/styles/{base,controls,hud,welcome,mode}.css` | HUD styling extracted from the 680-line inline `<style>` block, plus the home-screen and viewer/editor chrome rules |
-| `minimal.html` + `src/minimal.ts` | Smallest end-to-end integration (element + load + save loop), run synchronously on the bare URL |
-| `embed.html` + `src/embed-demo.ts` | The declarative surface, and nothing else: a single `<scene-editor src=… camera-orbit=… field-of-view=…>` tag with `poster` / `progress-bar` / `error` slots, plus a click-to-hotspot pass (`positionAndNormalFromPoint` → `slot="hotspot-*"` → `updateHotspot`). No panel, no document code — it exists to prove the embed story is three attributes deep |
+| `src/studio/main.ts` | Composition root: runtime factory, document boot, host save/conflict store, viewer store/controller, `window.__*` e2e hooks |
+| `src/studio/bootstrap.ts` | Deterministic scene documents — built with the SDK's `createDocumentFromAsset` / `createSceneDocument` (the envelope is no longer hand-written) |
+| `src/studio/assets/model-loader.ts` | Asset registry, lazy GLTF/Draco/Meshopt loading, custom file → `SceneDocument`; `.gltf` sidecar inlining delegates to the SDK's `createFileBundleUrl` |
+| `src/studio/viewer/viewer-state.ts` | Single viewer state + store (`ViewerState`) backed by a valtio proxy (vanilla): panels patch it, the controller subscribes, `snapshot()` copies form the undo stack |
+| `src/studio/viewer/history-coordinator.ts` | Unified undo/redo across viewer settings, document commands and camera poses (most-recent-first), plus the capture-phase Ctrl+Z/Ctrl+Y binding |
+| `src/studio/viewer/viewer-controller.ts` | State → engine: skeleton overlay, backdrop/grid, lighting preset + intensity/colour tuning, camera-follow light, animation transport. Display mode, explode, tone mapping, exposure and the turntable all go through the contract (`setDisplayMode` / `setExplode` / `setToneMapping` / `setExposure` / `setAutoRotate`), never a direct renderer or scene mutation |
+| `src/studio/viewer/presets.ts` | Lighting, backdrop and grid presets — persisted through `view`, applied idempotently |
+| `src/studio/camera/camera-controller.ts` | Frame / presets / fly-to. Preview frames go through `runtime.applyViewState()`; the flight easing is the SDK's `smoothViewTo()` (the document is still written once, after the fade settles). Clip planes and turntable are SDK-owned (`render()` / `setAutoRotate`) — no host-side rAF tickers. A `commit: false` frame reports through `onProgrammaticView` so the undo stack can move its camera baseline without recording a step |
+| `src/studio/ui/studio-shell.ts` | Composes panels, hotkeys, drag & drop; `onDocumentLoaded()` re-sync hook |
+| `src/studio/ui/panel.ts` | `BasePanel`: listener collection + single destroy path for every HUD panel |
+| `src/studio/ui/panels/*.ts` | Lighting, material, background, display, model, camera, transform, animation, document, chrome (panel collapse), **object** (add/duplicate/remove/reparent) and **variant** (KHR variants, asset cameras, morph targets) panels (one concern each) |
+| `src/studio/ui/conflict-controller.ts` | The decision surface for a `conflict` error: shows the bar, offers 覆盖远端 / 采纳远端 / 稍后, and mirrors the split into the footer via `hud.setConflict()`. The only place that calls the host's `overwriteRemote` / `adoptRemote` |
+| `src/studio/ui/welcome-screen.ts` | Home screen: one line of positioning (`@scenio/scene-editor` 演示宿主) + drop target + 选择文件 + annotated sample links + GitHub / npm / API links; the control panel, footer, save button and panel-restore icon stay hidden until a document with objects loads, and header home icon returns to it |
+| `src/studio/ui/mode-switch.ts` | Top-bar 查看 / 编辑 switch: writes `el.mode`, mirrors `body[data-studio-mode]`, gates host-side editing hotkeys/save; no document writes |
+| `src/studio/ui/drop-zone.ts` | Window-level multi-file drop with depth-counted overlay |
+| `src/studio/ui/material-controller.ts` | Selected-part material override (colour / opacity / metalness / roughness); snapshots originals for restore, never touches the document |
+| `src/studio/ui/scene-export.ts` | Thin wrapper over the SDK's `el.exportDocument()` + `downloadBlob()` (GLB / OBJ, document transforms) + PNG snapshot via `el.toBlob()` |
+| `src/studio/ui/hud-controller.ts` | Footer sync state (`已保存 rN` / `rN · 未保存改动` / `冲突 · 本地 rN / 远端 rM`), live camera readout, FPS meter, selection inspector, toasts |
+| `src/studio/interaction/hotkeys.ts` | Declarative single-key shortcuts (modifier combos belong to the element) |
+| `src/studio/styles/{base,controls,hud,welcome,mode}.css` | HUD styling extracted from the 680-line inline `<style>` block, plus the home-screen and viewer/editor chrome rules. `mode.css` also owns the segmented switch and the viewer-only chrome rules (hide panel, footer, save and panel-restore) |
 
-Additional entries: `perf.html` (performance bench — `?objects=5000&instancing=0` for the
-unbatched control; the report also carries a close-up pass that proves chunked batching still
-culls, and the shared-resource pool size as `sharedResources` / `sharedGeo`+`sharedMat`, which is
-what keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB), and
-`vent-demo.html` (`src/vent-demo.ts` — 通风感知**纯模型视图**，对齐参考产品的
-模型层：07 单场景承担双视图（建筑=半透明白色楼板堆叠等轴测 / 楼层=近正交顶视
-平面图）+ 空间双几何 + 房间轮廓线 + 设备图标图元 + AABB 碰撞聚合 + 包围盒取景，
-无面板/无筛选；**数据与 BIM 几何不入库**（`public/data/vent/`、`public/bim/`，
-本地采样，缺文件时页面显示准备提示），装载器只做结构（`src/bim/`，应用级而非 SDK）、
-样式全由 demo 侧钩子设定，见文末「通风感知 demo」一节).
+### `src/vent/` — the BIM demo
+
+| Path | Responsibility |
+|---|---|
+| `src/vent/main.ts` | The page: dual view (white massing ↔ floor plan), space double geometry, room outlines, equipment icons, AABB collision folding, bbox framing, camera. No panel, no filter |
+| `src/vent/bim/` | Structure loaders (`Scene.json` + revit floor geometry) — app-level, not SDK. Reads `public/data/vent/` + `public/bim/`, both gitignored; a missing snapshot renders the 准备提示 card |
+| `src/vent/graph/` | The icon layer, framework-agnostic: aggregation chains, quadtree collision, DOM media overlay, state styles |
+
+### Standalone entries
+
+| Path | Responsibility |
+|---|---|
+| `minimal.html` + `src/minimal/main.ts` | Smallest end-to-end integration (element + load + save loop), run synchronously on the bare URL. Also the neutral host `decoders.spec.ts` / `viewer-mode.spec.ts` probe — the studio would not do, it registers a runtime with an asset cache |
+| `embed.html` + `src/embed/main.ts` | The declarative surface, and nothing else: a single `<scene-editor src=… camera-orbit=… field-of-view=…>` tag with `poster` / `progress-bar` / `error` slots, plus a click-to-hotspot pass (`positionAndNormalFromPoint` → `slot="hotspot-*"` → `updateHotspot`). No panel, no document code — it exists to prove the embed story is three attributes deep |
+| `perf.html` + `src/perf/main.ts` | The CI instrument: `?objects=5000&instancing=0` unbatched control, two-phase handshake (`ready` → metrics → `finish`) driven by `pnpm test:perf`. The report also carries a close-up pass (chunked batching still culls) and the shared-resource pool size (`sharedResources` / `sharedGeo`+`sharedMat`), which keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB. Not an example — it is not on `demos.html` |
+| `demos.html` + `public/demos/*.jpg` | The entry page, split by intent rather than by file: **示例** (studio + vent demo, with screenshots) and **接入参考** (embed / minimal — linked by source file first, page second, because their value is the code, not the picture). Only the two 示例 carry thumbnails. Pure navigation — no JS, no shared modules, and no change to the five pages themselves (each keeps its own URL, so the e2e fixtures and the perf/visual baselines are unaffected). Re-shoot with `node apps/playground/scripts/capture-demo-thumbs.mjs` while the dev server runs. **Local only**: the Pages build emits `index.html` and nothing else, and hides this page's link from the welcome screen |
 
 ## Viewer-first workflow
 
@@ -71,19 +118,56 @@ to 编辑 restores the panels, footer, save/undo/redo and the transform gizmo.
 
 ## Regression surface
 
-`vite.config.ts` has five HTML entries (`index.html`, `embed.html`, `perf.html`,
-`minimal.html`, `vent-demo.html`). SDK-level coverage lives in `packages/scene-editor/test/`;
+`vite.config.ts` has six HTML entries (`index.html`, `embed.html`, `perf.html`,
+`minimal.html`, `vent-demo.html`, plus the `demos.html` index). SDK-level coverage lives in
+`packages/scene-editor/test/`;
 browser-level regression lives in `e2e/*.spec.ts` against the studio, the
 minimal page, the embed page and the perf bench. The former `?demo=` scenario pages and their
 Playwright suites (`sdk-coverage.spec.ts` / `demos-adversarial.spec.ts`) have
 been removed — the SDK surfaces they exercised are covered by unit tests.
+`demos.html` is deliberately a link list, not a router: the five pages stay separate documents
+because they share nothing but the SDK, and collapsing them into one SPA would put the
+perf/unload measurements and the URL-addressed e2e fixtures at risk. It also does not present
+them as five equal examples — `embed` and `minimal` are integration references (the page is just
+the proof that the code runs), so they get no screenshot and their rows link the source file
+before the URL. `perf` is not listed there at all; this file is its only user-facing entry point.
+
+### Two build surfaces
+
+`vite build` emits all six entries. That is the surface CI and the e2e/perf suites drive, so
+every page has to stay buildable — `minimal.html` is the neutral host `decoders.spec.ts` and
+`viewer-mode.spec.ts` need, `perf.html` is the driver `perf.spec.ts` measures, `embed.html` is
+what `embed.spec.ts` holds the declarative surface against.
+
+`vite build --mode pages` (`pnpm --filter @scenio/playground build:pages`) emits the public
+GitHub Pages site, and only `index.html`. The other five do not answer a stranger's first
+question: `perf` is an instrument, `minimal` / `embed` are integration references whose value is
+their source file, `vent-demo` needs a data snapshot that is deliberately not in the repo, and
+`demos` is a local index. Removing them from the repo would remove test hosts; removing them
+from this surface only removes noise.
+
+Two things the pages build has to handle, both because project pages are served from
+`/<repo>/`:
+
+- `base: "/scene-studio/"`, so anything resolved at runtime must go through
+  `import.meta.env.BASE_URL`. Vite rewrites build-time references only — it does not touch
+  custom-element attributes such as `<scene-editor src>`, and it certainly does not touch
+  strings inside modules (`src/studio/assets/model-loader.ts`).
+- `public/` is shared with the local surface, so a plugin prunes `public/data`, `public/bim`
+  and `public/demos` from the output. The first two are gitignored *because* they contain real
+  project identifiers, and a local build should not quietly publish whatever is on disk.
+  `main.ts` also sets `data-surface="public"`, which hides the welcome-screen links to pages
+  this build does not emit.
 
 ```bash
 pnpm --filter @scenio/playground dev
-# http://127.0.0.1:3000/                           studio (viewer-first)
+# http://127.0.0.1:3000/demos.html                 demo index (all six entries)
+# http://127.0.0.1:3000/                           studio (viewer-first) — the published page
 # http://127.0.0.1:3000/embed.html                 三行集成 / declarative embed
 # http://127.0.0.1:3000/minimal.html               smallest host integration
 # http://127.0.0.1:3000/perf.html?objects=5000     performance bench
+
+pnpm --filter @scenio/playground build:pages       # what GitHub Pages serves
 ```
 
 WebGPU is still supported through the SDK's `rendererFactory` seam (see
@@ -261,7 +345,7 @@ part of the SDK: a host points `decoder-path` at its own copy or at
 
 ## 通风感知 demo（vent-demo.html）与 BIM 资产接入
 
-`vent-demo.html` + `src/vent-demo.ts` 用 **@scenio/scene-editor** 逐项对齐参考产品
+`vent-demo.html` + `src/vent/main.ts` 用 **@scenio/scene-editor** 逐项对齐参考产品
 （某通风感知页面）的**模型层**（仅看模型：无右侧面板、无顶部筛选，左侧楼栋/楼层
 选择器精简为「项目/楼栋/楼层/全部建筑」）。数据是**运行环境采样**（73 空间 /
 70 设备 / 3 栋楼），与逐层几何一起**不入库**：`public/data/vent/*.json` +
@@ -308,14 +392,19 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   near≈1ft / far≈10⁵ft，深度精度约 0.25ft，3mm 的顶底两层必然自相交出条纹；
   改用 `outlinePlaneGeometry` 单层三角化平面后条纹消失。
 - **设备模型**：建筑视图隐藏（原「全楼视角默认不展示设备」）；楼层视图 24×24
-  图标图元（开 `#09B3B5` / 关 `#424C59` / 离线 `#8B949E`，白边圆角 + 14px 白 SVG），
-  **名称默认不显示、hover 才浮出**——真实页同一位置也只有图标，常驻文字会把平面图
-  糊成一片。图标样式按参考页的设备图标组件逐项还原。
-- **图元展示**（CSS2D DOM）：设备图标+名称、空间 IoT 值+名称（参考页空间信息
-  组件规格，12px `#1B2129` 白描边），锚点 Y=标高+0.1。
-- **碰撞**（复用参考页的碰撞检测 + 聚合算法）：
-  AABB 重叠 → 设备图标相撞**聚合为计数角标**（`group-wrap` 24×24 `#E8ECF0`）、
-  文字相撞按状态权重隐藏（异常>控反>IoT>普通）；相机变化即重算。
+  图标图元（开 `#09B3B5` / 关 `#424C59` / 离线 `#8B949E`，7px 圆角 + 轻投影 +
+  18px 单色白 SVG），**名称默认不显示、hover 才浮出**——真实页同一位置也只有图标，
+  常驻文字会把平面图糊成一片。图标按设备语义选：`GraphModel.icon` 由 `classCode`
+  派生，`CFC*` 窗类走格子窗、其余走三叶风扇（快照中 59/70 台是通风风机）；
+  `dom-media.ts` 里的 `EQUIP_ICONS` 表可继续加图标名，媒体自己映射 SVG，不改碰撞。
+- **图元展示**：`src/vent/graph/` 的默认 DOM Media（设备图标+名称、空间 IoT 值+名称，
+  12px `#1B2129` 白描边），锚点 Y=标高+0.1；可整键换成其他框架。
+- **碰撞规则**（`collision.ts` + `quadtree.ts`，相机变化即重算，四叉树检索替代 O(n²)）：
+  1. 先逆序回滚上一帧聚合链，复位所有图标/文字隐藏标记；
+  2. 设备按 weight 降序（异常 100 > 开 2 > 其余 0）：**图标 AABB 重叠 → 高权重吸收
+     低权重**，败者图标与文字都隐藏，胜者显示 24×24 `#E8ECF0` 计数角标；
+  3. 设备图标 ↔ 设备文字、文字 ↔ 文字重叠 → 隐藏低权重一方的文字；空间只做
+     文字/文字（IoT 值 50 > 无值 0）。
 - **包围盒 / 相机**：楼层 Box3 **只用 Revit 整层 bbox**（楼板轮廓必然覆盖整层；一旦
   把空间 outline 薄片并进来，个别离群 outline 会把 box 拉偏）→ `floorCameraFromBox`
   照抄 camera-controls 的 `getDistanceToFitBox`：
@@ -347,7 +436,7 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   显示为「项目 / 商业 / F7 F6 F4 F3 B1 B2 B3 / 金街 F5 / 全部建筑」；底部不显示
   调试状态行。
 
-**BIM 自定义资产（Scene.json + FBX）：`src/bim/` 只做结构，不做视觉。**
+**BIM 自定义资产（Scene.json + FBX）：`src/vent/bim/` 只做结构，不做视觉。**
 它曾以 `@scenio/scene-editor/bim` 的形式发布，0.7.0 起搬进本 app——消费者只有这一个，
 放进 SDK 只会把一个产品格式变成全包的依赖。入口导出纯结构装载器与纯几何工具，
 一切样式/单位/相机策略由消费者（本 demo）设定：
@@ -369,8 +458,8 @@ part of the SDK: a host points `decoder-path` at its own copy or at
   —— 单位无关（scale 由消费者给），不产材质、不设标高；`parseBimLocation` 只解析
   `"x,y,z"` 三元组。
 - 消费者侧持有：毫米 Revit→英尺 Y-up 映射（MM2FOOT）、层高×0.6 挤出系数、材质
-  策略、颜色板、图元 DOM、碰撞、包围盒取景、相机。模型与真实 outline/bimLocation
-  **完全对齐**（diag-bim-align 验证）。
+  策略、颜色板、图元层（`src/vent/graph/`，见下）、包围盒取景、相机。模型与真实
+  outline/bimLocation **完全对齐**（diag-bim-align 验证）。
 
 **相机坑（SDK 行为，宿主必读）**：`setCameraTarget` 与 `setCameraOrbit` 都走
 `smoothViewTo` 渐近缓动，同一 tick 连调会互相覆盖（后者从尚未落地的旧 target 推导
@@ -384,6 +473,64 @@ part of the SDK: a host points `decoder-path` at its own copy or at
 
 渲染性能：每个空间两层几何（体块 + 平面）各持独立材质，逐帧逐个 `setMaterial` 会
 打爆 on-demand 渲染——`instancing="false"` + 直改材质 + 每帧一次 `runtime.render()`。
+`selectSpace/selectEquip` 改完材质必须立即 `runtime.render()`，否则 on-demand 渲染要
+等到下一次相机交互才变色（表现为"选中反应很慢"）。
+
+**交互与加载态约定**：
+
+- 加载期 `body:not(.ready)` 隐藏 `#stage`（runtime 默认 view 带 `GridHelper`）、
+  `#nav`、`#legend`，`#onReady()` 构建完场景后才加 `.ready`——不再出现
+  空白色面板与底部网格闪帧。文档里的 `gridVisible:false` 负责就绪后的常态。
+- 切楼层用自增 `#switchToken` + `#floor-loading` 遮罩：新楼层几何未就绪前**保持旧
+  视图不动**，就绪后一次性提交显隐/取景/打光/图元。旧实现先隐藏 07 白模再用空间
+  包围盒取景、Revit 到达后换成真模型，中间会露出一帧空场景。
+- 选中：3D 空间走 `mousemove` raycast（rAF 节流）给出 pointer 小手；空间图元与设备
+  图标也可直接点选。选中后右侧抽屉展示快照现成字段（空间：功能/温度/CO₂/阈值/
+  关联设备；设备：分类/运行状态/采集时间），空白处点击、Esc 或关闭按钮收起。
+- 楼层只关注**上方平面图**：`min/max-camera-orbit="auto 0deg/80deg auto"` 把极角
+  锁在水平线以上（初始 10° 俯角，最多倾斜到 80°，仍高于楼板底面），楼板与空间
+  薄片保持单面材质——交互上到不了楼层底部。`min/max` 必须**同时**给出：
+  `readOrbitLimits()` 对每根轴都要 low + high 才写入限制，缺一侧整轴跳过。
+- 顶部不设任何提示条或返回按钮；返回入口只有左侧「全部建筑」一处。
+- 左侧选择器只列空间数 ≥ 10 的楼层（本快照即 B1/B2/B3；F6 只有 6 个、其余 1~2 个），
+  面板 `max-height` 收内容而非铺满全高。真实快照只有「运行/停止」两种设备状态，
+  `injectDemoFaults()` 在内存 view model 里按楼层位置确定性地给每层标两台 `fault`：
+  **不改图标底色**（仍按运行态青/深灰），只在**独立设备**图标右上角叠 8px 红点
+  （与图例「异常」同色），抽屉里单列「告警状态：异常 · 演示」。一旦被聚合，成员
+  红点全部收起；若组内有异常，改在**计数角标**右上角显示同色红点（只表示「这组有
+  告警」，不暗示是哪台）。不改动不入库的快照 JSON。
+- 聚合角标**不替用户猜代表设备**：点击展开 `#group-popover`，列出组内设备
+  （名称 / 运行态 / 异常标记），点某一行才打开该设备详情；空白处点击、Esc、切层
+  收起。这样聚合后仍有明确路径拿到每一台设备，且不会把告警误绑到代表设备。
+- 层级：`#labels(5) < #nav/#legend(10) < #floor-loading(20) < #detail-drawer(30)`。
+  `GraphScene` 把 `#labels` 追加到 `body` 末尾，没有 z-index 时会盖住
+  DOM 顺序在它之前的 `#legend`——图元文字就冒到图例上方了。
+
+**图元层模块化（`src/vent/graph/`）**：四个机制与 three / DOM 框架解耦，可单独使用。
+
+| 模块 | 职责 |
+|---|---|
+| `quadtree.ts` | `maxObjects=30 / maxLevels=10` 四叉树 AABB 检索；跨象限条目留父节点，`retrieve` 只返回相交项，替代 O(n²) 全量循环 |
+| `state-styles.ts` | `setStateStyles(config)` 整表替换 + `caclCurrentStyle(states)` 按 priority 合并；样式键语义化（`iconColor` / `dotColor` …），换色不动 DOM |
+| `aggregation-chain.ts` | `absorb / undo / clear` 记录每次吸收前的父节点；每帧先逆序回滚再重算，被吸收者转移时从旧根摘下，不串环 |
+| `media.ts` | `registerMedia(name, factory)` 同键覆盖；`frameworkMedia(adapter)` 用 `mount/update/unmount` 桥接任意框架；`getBounds()` 可上报自定义组件真实 AABB |
+
+`graph-scene.ts` 只负责投影回调 → 矩形测量 → 四叉树碰撞 → 样式合并 → Media 更新；
+`dom-media.ts` 是默认实现（保持原视觉）。换成 Vue / React / Solid / Web Component
+只需注册 Media，碰撞 / 样式 / 聚合一行不改：
+
+```ts
+const adapter: FrameworkAdapter = {
+  mount(el, model) { /* createVNode+render / createRoot / render / customElement */ },
+  update(el, model) { /* 把 model.currentStyle 推给组件 props */ },
+  unmount(el) { /* app.unmount() / root.unmount() */ },
+};
+graph.registerMedia("equip", frameworkMedia(adapter));
+```
+
+> **测试缺口**：`graph/` 是纯逻辑（聚合链、四叉树碰撞、样式合并），但目前**没有单测**——
+> 它随本轮目录整理一起入库时就没有带上，验证只靠 `vent-demo.html` 肉眼比对。
+> 按 `AGENTS.md` 的「性能敏感模块先有特征测试」，这块要补。
 
 **Revit 楼层几何提取**（离线脚本在内部环境执行，**不随仓库分发**——脚本本身含
 内网地址；思路如下，可在任何有数据权限的环境复现）：
@@ -410,7 +557,7 @@ part of the SDK: a host points `decoder-path` at its own copy or at
 | `public/bim/revit/{floorId}.json` | 9 层轻量化几何（类别 → base64 buffer + bbox） |
 | `public/bim/07_building_relation/` | 建筑白模 `Scene.json` / `Materials.json` / `Models/*.fbx` |
 
-`vent-demo.ts` 启动时 `fetch` 前两项、按 `buildingTree` 组织左侧选择器；任一文件
+`src/vent/main.ts` 启动时 `fetch` 前两项、按 `buildingTree` 组织左侧选择器；任一文件
 缺失会在页面中央渲染「未找到本地数据快照」提示卡（列出期望路径），既不会白屏，
 也不影响其它三个页面的构建与运行。
 

@@ -438,7 +438,7 @@ The base URL holds three's own payload layout — copying `node_modules/three/ex
 - **`decoder-cdn`** uses `DEFAULT_DECODER_CDN`, pinned to the three version this build was compiled against (`three@0.<REVISION>.0` on jsDelivr). Decoder payloads are version-coupled: an r186 wrapper around an r180 wasm is undefined behaviour, which is why the URL follows `REVISION` instead of floating.
 - **KTX2 needs the renderer.** `KTX2Loader.detectSupport(renderer)` probes the device to choose a compressed texture target; guessing would upload unreadable textures. The default runtime exposes `RuntimeContract.renderer`, so KTX2 is wired automatically; a runtime that omits it loses KTX2 only (Draco + Meshopt still work) rather than lying about device support.
 - **A host-assigned decoder wins.** `el.dracoLoader = …` overrides the bundle for that one format; the others stay automatic.
-- **Failures name the fix.** The `error` message is `Failed to load asset: <id> — this model uses Draco-compressed geometry, which needs a decoder — set decoder-path …`, so the built-in overlay (or `slot="error"`) is actionable instead of a three stack frame.
+- **Failures name the fix, and the address.** The `error` message is `Failed to load asset: <address> — this model uses Draco-compressed geometry, which needs a decoder — set decoder-path …`, so the built-in overlay (or `slot="error"`) is actionable instead of a three stack frame. `<address>` is the resolved URL whenever it carries information (that is the thing you go and check), and the asset id when it does not — a `blob:`/`data:` URL from `loadFiles()`, or the internal `__src__` placeholder that `src` resolves to.
 - Changing either attribute rebuilds the bundle; the effect lands on the **next** load, since a fetch already in flight owns its decoders. Both are presentation-only — never written to the document.
 
 ### `SceneEditorElement` properties & methods
@@ -780,7 +780,7 @@ Meshes above `bvhThreshold` triangles are raycast through a `MeshBVH` (`three-me
 ## BIM / architecture loading
 
 Not part of this package. Revit / FBX / outline loading lives in the playground, where its only
-consumer is: `apps/playground/src/bim/` (hooks and format notes in that folder's README). The
+consumer is: `apps/playground/src/vent/bim/` (hooks and format notes in that folder's README). The
 package deliberately ships no BIM entry, so `three` stays a single peer dependency with no
 format-specific loaders in the tarball.
 
@@ -793,20 +793,23 @@ element with no shadow root, so the host gives it a block box and a size — e.g
 `scene-editor { display: block; height: 480px }`, or an inline `style` on the element. The element
 sets its own `position: relative` and lays out its canvas, poster and slots with inline styles;
 everything else (panels, HUD, toolbar, hotspot treatment) belongs to the host. See
-`apps/playground/src/ui/` and `apps/playground/src/styles/base.css` for a reference implementation.
+`apps/playground/src/studio/ui/` and `apps/playground/src/studio/styles/base.css` for a reference implementation.
 
 ---
 
 ## Related demo code
 
-- `apps/playground/src/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
-- `apps/playground/src/viewer/viewer-controller.ts` — viewer state → engine updates (display / explode route to the SDK rigs, environment, animation)
-- `apps/playground/src/ui/studio-shell.ts` — composes HUD panels, hotkeys
-- `apps/playground/src/ui/panels/object-panel.ts` — object-graph editing: `addObject` / `removeObject` / `reparent` with DTOs, so each edit is one undo step
-- `apps/playground/src/ui/conflict-controller.ts` — turning a `conflict` into a decision: overwrite via `markSaved`, adopt via `applyRemote`, or defer
-- `apps/playground/src/ui/panels/variant-panel.ts` — `availableVariants` / `cameras` / `morphTargets` wiring, including the `setMorphInfluence` refusal case
-- `apps/playground/src/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot
-- `apps/playground/embed.html` + `src/embed-demo.ts` — the declarative surface (`src` / `camera-orbit` / `field-of-view` + slots) and click-to-hotspot via `positionAndNormalFromPoint` / `updateHotspot`
-- `apps/playground/src/vent-demo.ts` — BIM demo: one scene serving a white-massing overview and a
+- `apps/playground/src/studio/main.ts` — composition root: runtimeFactory, assets, save/conflict host store, boot sequence
+- `apps/playground/src/studio/viewer/viewer-controller.ts` — viewer state → engine updates (display / explode route to the SDK rigs, environment, animation)
+- `apps/playground/src/studio/ui/studio-shell.ts` — composes HUD panels, hotkeys
+- `apps/playground/src/studio/ui/panels/object-panel.ts` — object-graph editing: `addObject` / `removeObject` / `reparent` with DTOs, so each edit is one undo step
+- `apps/playground/src/studio/ui/conflict-controller.ts` — turning a `conflict` into a decision: overwrite via `markSaved`, adopt via `applyRemote`, or defer
+- `apps/playground/src/studio/ui/panels/variant-panel.ts` — `availableVariants` / `cameras` / `morphTargets` wiring, including the `setMorphInfluence` refusal case
+- `apps/playground/src/studio/ui/scene-export.ts` — GLB/OBJ export (document state, not preview) + PNG snapshot
+- `apps/playground/embed.html` + `src/embed/main.ts` — the declarative surface (`src` / `camera-orbit` / `field-of-view` + slots) and click-to-hotspot via `positionAndNormalFromPoint` / `updateHotspot`
+- `apps/playground/src/vent/main.ts` — BIM demo: one scene serving a white-massing overview and a
   plan-view floor plan, space outlines with state colours, equipment labels with collision folding.
-  Its loaders live beside it in `apps/playground/src/bim/`.
+  Its loaders live beside it in `apps/playground/src/vent/bim/`.
+- `apps/playground/demos.html` — local index of the host pages, split by intent: the ones you open
+  and use (studio, vent — with a screenshot each) and the ones whose value is their source (embed,
+  minimal). Navigation only: every page keeps its own URL.

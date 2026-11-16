@@ -84,7 +84,7 @@ Breaking one of these is a regression, not a refactor. Where a check exists, it'
    `import()` (see `lazyGltfLoader()`), never a static `import … from`, so the element entry does not
    pull three at module scope. 18 such lazy addon edges exist today and are sanctioned.
    > BIM loading used to live here as `src/bim/` (4 files importing three) and pulled the whole SDK
-   > into an FBX/Revit dependency for one consumer. It now lives in `apps/playground/src/bim/`.
+   > into an FBX/Revit dependency for one consumer. It now lives in `apps/playground/src/vent/bim/`.
    > Rule 3 above is enforced by `scripts/check-boundaries.mjs` (B1).
 4. **`RuntimeContract` is the only rendering seam.** New runtime capability → new **optional**
    member on the interface (plus a fallback in `FakeRuntime`). A required member breaks every
@@ -137,7 +137,7 @@ stale `dist`.
 | Asset loading, decoder assembly | `assets/` | |
 | Anything three.js: rigs, picking, export | `three/` | One `*-rig.ts` per concern in `three/viewer/`; creation order and cross-rig wiring in `three/assembly.ts` |
 | DOM attributes, slots, lifecycle, a11y | `element/` | Element + `slot-chrome` + `viewer-attributes` + `attribute-math` + three small helpers (`register`, `src-document`, `download`); see "Known weak points" |
-| BIM / FBX / Revit loading, outline geometry | `apps/playground/src/bim/` | App-level on purpose: one consumer (`vent-demo.ts`), zero SDK surface |
+| BIM / FBX / Revit loading, outline geometry | `apps/playground/src/vent/bim/` | App-level on purpose: one consumer (`vent/main.ts`), zero SDK surface |
 | Host UI, panels, URL params | `apps/playground/src/` | Never a reason to touch the SDK |
 
 ## Conventions
@@ -226,7 +226,7 @@ stale `dist`.
   `render-loop`, `framing`, `shared-resources`. The batcher's three moving parts sit beside it in
   `three/viewer/instancing/`: `fingerprint.ts` (what counts as the same content, what may batch),
   `chunks.ts` (one `InstancedMesh`: slots, growth, disposal), `layout.ts` (pure spatial ordering).
-- `apps/playground/src/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion)
+- `apps/playground/src/vent/bim/` (770 lines: Revit floor loading, FBX, outline mesh, unit conversion)
   is domain-specific loading code for one product. It used to sit in the SDK behind a public `./bim`
   entry with exactly one consumer; 0.7.0 moved it here so the published surface is three entries.
   It is **not** part of the tarball, has **no unit tests**, and is verified by the playground
