@@ -19,10 +19,11 @@
  *   - 设备模型：建筑视图隐藏（原「全楼视角默认不展示设备」）；楼层视图 24×24
  *     图标图元（开 #09B3B5 / 关 #424C59 / 离线 #8B949E，白边圆角 + 14px 白 SVG），
  *     **名称默认不显示、hover 才浮出**——常驻文字会把平面图糊成一片。
- *   - 图元展示（CSS2D DOM）：设备图标 + 名称、空间 IoT 值（温度/CO₂）+ 名称；
- *     文字 12px #1B2129 白描边，锚点标高 +0.1。
- *   - 碰撞：AABB 重叠——设备图标相撞聚合为计数角标（`group-wrap`，24×24 #E8ECF0），
- *     文字相撞按状态权重隐藏（异常>控反>IoT>普通）；相机变化即重算。
+ *   - 图元展示：消费者侧 `src/vent/graph/` 的框架无关图元层（投影回调 + DOM 覆盖层）。
+ *     设备图标 + 名称、空间 IoT 值（温度/CO₂）+ 名称；文字 12px #1B2129 白描边，
+ *     锚点标高 +0.1。默认 DOM Media 可整键替换为 Vue/React/Solid/Web Component。
+ *   - 碰撞：四叉树 AABB 检索；设备图标相撞聚合为计数角标，文字相撞按状态权重隐藏
+ *     （异常>控反>IoT>普通）；聚合链可逐步撤销，相机变化即重算。
  *   - 包围盒：楼层**只用 Revit 整层 bbox**（并进空间 outline 会被离群轮廓拉偏）
  *     → `floorCameraFromBox`（fov 50 + 10° 俯角 + scale 1.11）；建筑用 07
  *     Scene.json 的 cameraModel 位姿。
@@ -56,6 +57,7 @@ import {
   type RevitFloorHandle,
 } from "./bim/bim-entry";
 import * as THREE from "three";
+import { GraphModel, GraphScene, type StateStyles } from "./graph";
 
 defineSceneEditor();
 
@@ -95,6 +97,7 @@ function outlineCenterWorld(outline: OutlineJson | string | undefined): { x: num
 
 interface RawSpace {
   id: string;
+  localId?: string;
   localName: string;
   objType: string;
   classCode?: string;
@@ -107,7 +110,10 @@ interface RawSpace {
 }
 interface RawEquip {
   id: string;
+  localId?: string;
   localName: string;
+  dynamicName?: string;
+  funcType?: string;
   objType?: string;
   classCode?: string;
   floorId?: string;
@@ -121,6 +127,7 @@ interface RawDynItem {
   unit?: string;
   existsIotRule?: boolean;
   dataTime?: string;
+  infoCodeName?: string;
 }
 interface RawDyn {
   id: string;
@@ -259,11 +266,17 @@ interface SpaceVM {
   y: number;
   z: number;
 }
+type EquipRun = "on" | "off" | "unknown";
+
 interface EquipVM {
   id: string;
   name: string;
   kind: EquipKind | null;
-  run: "on" | "off" | "unknown";
+  run: EquipRun;
+  /** 示例注入的告警标识：图标右上角小红点，不改变图标本来的运行态底色 */
+  fault: boolean;
+  /** 语义图标：CFC* 窗类走 window，其余走 fan */
+  icon: "fan" | "window";
   floorId: string;
   buildingId: string;
   x: number;
@@ -321,6 +334,8 @@ function buildViewModels(): { spaces: SpaceVM[]; equips: EquipVM[] } {
               name: e.localName,
               kind,
               run: open ? "on" : closed ? "off" : "unknown",
+              fault: false,
+              icon: e.classCode?.startsWith("CFC") ? "window" : "fan",
               floorId: s.floorId ?? f.id,
               buildingId: b.id,
               x: pos?.x ?? 0,
@@ -361,7 +376,29 @@ function buildViewModels(): { spaces: SpaceVM[]; equips: EquipVM[] } {
       }
     }
   }
+  injectDemoFaults(equips);
   return { spaces, equips };
+}
+
+/**
+ * 示例注入异常设备：真实快照 67 台设备只有「运行 / 停止」两种取值，图例里的
+ * 「异常」一直是空口径。这里按楼层位置确定性地挑两台打上告警标记，让 demo 能
+ * 演示该状态。标记只写在内存 view model 上，不改动运行态底色，也不改快照 JSON。
+ */
+function injectDemoFaults(equips: EquipVM[]): void {
+  const byFloor = new Map<string, EquipVM[]>();
+  for (const e of equips) {
+    const list = byFloor.get(e.floorId) ?? [];
+    list.push(e);
+    byFloor.set(e.floorId, list);
+  }
+  for (const list of byFloor.values()) {
+    if (list.length < 3) continue;
+    for (const i of new Set([Math.floor(list.length * 0.2), Math.floor(list.length * 0.6)])) {
+      const e = list[i];
+      if (e) e.fault = true;
+    }
+  }
 }
 
 let SPACE_VMS: SpaceVM[] = [];
@@ -436,6 +473,10 @@ const MAT_EDGE = new THREE.LineBasicMaterial({
  *   渐变，3× 放大像糊了一圈软边；Revit 原始几何是逐面法线、硬边。
  *   前几版用 MeshBasic 平涂 + 1px 描边，墙会糊成线。
  */
+/**
+ * 单面（默认 FrontSide）：交互只允许从楼层上方观察（见 vent-demo.html 的
+ * `max-camera-orbit="auto 80deg auto"`）。楼板底面不是关注对象，不做双面。
+ */
 const MAT_REVIT_SLAB = new THREE.MeshBasicMaterial({ color: "#DFE6EE" });
 const MAT_REVIT_WALL = new THREE.MeshStandardMaterial({
   // 屏幕目标：侧面 #C5C5C5 / 顶面 #D8D8D8~#F0F0F0（真实页 fit 视图游程实测）。
@@ -502,42 +543,21 @@ const MAT_ROOM_EDGE = new THREE.LineBasicMaterial({
   opacity: 1,
 });
 
-const EQUIP_ICON_BG: Record<string, string> = {
-  on: "#09B3B5",
-  off: "#424C59",
-  unknown: "#8B949E",
+/** 告警小红点（图例里的「异常」用同一色） */
+const FAULT_DOT = "#F55047";
+
+/** 状态样式表：priority 越大越晚合并。换色或加状态只改这里。 */
+const EQUIP_STATE_STYLES: StateStyles = {
+  on: { priority: 1, style: { iconColor: "#09B3B5" } },
+  off: { priority: 1, style: { iconColor: "#424C59" } },
+  unknown: { priority: 1, style: { iconColor: "#8B949E" } },
+  fault: { priority: 10, style: { dotColor: FAULT_DOT } },
+  selected: { priority: 20, style: { outlineColor: "#246FE5" } },
 };
 
 /* ------------------------------------------------------------------ */
-/* 图元层：CSS2D DOM + 投影 + 碰撞 + 聚合                               */
+/* 图元层：vent/graph（框架无关模块 + 默认 DOM Media）                   */
 /* ------------------------------------------------------------------ */
-
-interface Rect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-interface LabelItem {
-  id: string;
-  kind: "space" | "equip";
-  el: HTMLDivElement;
-  pos: THREE.Vector3;
-  weight: number;
-  name: string;
-  /** screen-space rects (layout 产物) */
-  iconRect: Rect | null;
-  textRect: Rect | null;
-  /** equip: 吸收聚合 */
-  absorbs: LabelItem[];
-  absorbed: boolean;
-  textHidden: boolean;
-  iconHidden: boolean;
-}
-
-function rectsOverlap(a: Rect, b: Rect): boolean {
-  return !(a.x + a.w < b.x || b.x + b.w < a.x || a.y + a.h < b.y || b.y + b.h < a.y);
-}
 
 const measureCtx = document.createElement("canvas").getContext("2d");
 function textWidth(text: string): number {
@@ -546,190 +566,14 @@ function textWidth(text: string): number {
   return measureCtx.measureText(text).width;
 }
 
-class LabelLayer {
-  readonly root: HTMLDivElement;
-  #items: LabelItem[] = [];
-  #w = 1;
-  #h = 1;
+/** 投影复用的临时向量：每帧上百图元，不能每次 new。 */
+const GRAPH_PROJ = new THREE.Vector3();
 
-  constructor(host: HTMLElement) {
-    this.root = document.createElement("div");
-    this.root.id = "labels";
-    host.appendChild(this.root);
-  }
-
-  setItems(items: Array<Omit<LabelItem, "iconRect" | "textRect" | "absorbs" | "absorbed" | "textHidden" | "iconHidden">>): void {
-    this.root.innerHTML = "";
-    this.#items = items.map((it) => ({
-      ...it,
-      iconRect: null,
-      textRect: null,
-      absorbs: [],
-      absorbed: false,
-      textHidden: false,
-      iconHidden: false,
-    }));
-    for (const it of this.#items) this.root.appendChild(it.el);
-  }
-
-  get items(): readonly LabelItem[] {
-    return this.#items;
-  }
-
-  /** 投影 + 碰撞 + DOM 落位。camera 变化后调用。 */
-  layout(camera: THREE.Camera, width: number, height: number): void {
-    this.#w = width;
-    this.#h = height;
-    const v = new THREE.Vector3();
-    for (const it of this.#items) {
-      it.absorbed = false;
-      it.textHidden = false;
-      it.iconHidden = false;
-      it.absorbs = [it];
-      v.copy(it.pos).project(camera);
-      const sx = (v.x * 0.5 + 0.5) * width;
-      const sy = (-v.y * 0.5 + 0.5) * height;
-      const onScreen = v.z > -1 && v.z < 1 && sx > -80 && sx < width + 80 && sy > -80 && sy < height + 80;
-      if (!onScreen) {
-        it.el.classList.add("hidden");
-        it.iconRect = null;
-        it.textRect = null;
-        continue;
-      }
-      it.el.classList.remove("hidden");
-      it.el.style.left = `${sx}px`;
-      it.el.style.top = `${sy}px`;
-
-      if (it.kind === "equip") {
-        it.iconRect = { x: sx - 12, y: sy - 12, w: 24, h: 24 };
-        const tw = textWidth(it.name);
-        it.textRect = { x: sx - tw / 2 - 2.5, y: sy + 12 + 4, w: tw + 5, h: 21 };
-      } else {
-        it.iconRect = null;
-        const tw = Math.max(textWidth(it.name), textWidth((it.el.dataset.lux ?? "") as string));
-        it.textRect = { x: sx - tw / 2 - 2.5, y: sy - 38, w: tw + 5, h: 38 };
-      }
-    }
-
-    this.#collideEquips();
-    this.#collideSpaces();
-    this.#applyVisibility();
-  }
-
-  /** 设备：图标相撞聚合；文字相撞按权重隐藏（沿用参考页的碰撞检测语义） */
-  #collideEquips(): void {
-    const list = this.#items.filter((i) => i.kind === "equip" && (i.iconRect || i.textRect));
-    list.sort((a, b) => b.weight - a.weight);
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i];
-      if (!a || a.absorbed || a.iconHidden) continue;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j];
-        if (!b || b.absorbed || b.iconHidden) continue;
-        if (a.iconRect && b.iconRect && rectsOverlap(a.iconRect, b.iconRect)) {
-          // 图标相撞 → A 吸收 B（聚合计数）
-          b.absorbed = true;
-          b.textHidden = true;
-          a.absorbs.push(...b.absorbs);
-          b.absorbs = [];
-          continue;
-        }
-        // 文字冲突 → 权重低的隐藏文字
-        const pairs: Array<[Rect | null, Rect | null, "a" | "b"]> = [
-          [a.iconRect, b.textRect, "b"],
-          [a.textRect, b.iconRect, "a"],
-          [a.textRect, b.textRect, "b"],
-        ];
-        for (const [ra, rb, loser] of pairs) {
-          if (ra && rb && rectsOverlap(ra, rb)) {
-            if (loser === "b") b.textHidden = true;
-            else a.textHidden = true;
-            break;
-          }
-        }
-      }
-    }
-  }
-
-  /** 空间标注：文字相撞按权重（IoT 值 > 无值）隐藏（原 SpaceInfoCollisionDetector） */
-  #collideSpaces(): void {
-    const list = this.#items.filter((i) => i.kind === "space" && i.textRect && !i.textHidden);
-    list.sort((a, b) => b.weight - a.weight);
-    for (let i = 0; i < list.length; i++) {
-      const a = list[i];
-      if (!a || a.textHidden || !a.textRect) continue;
-      for (let j = i + 1; j < list.length; j++) {
-        const b = list[j];
-        if (!b || b.textHidden || !b.textRect) continue;
-        if (rectsOverlap(a.textRect, b.textRect)) {
-          b.textHidden = true;
-          b.textRect = null;
-        }
-      }
-    }
-  }
-
-  #applyVisibility(): void {
-    for (const it of this.#items) {
-      if (it.kind === "equip") {
-        const grp = it.el.querySelector<HTMLElement>(".grp");
-        const ic = it.el.querySelector<HTMLElement>(".ic");
-        const nm = it.el.querySelector<HTMLElement>(".name");
-        const count = it.absorbs.length;
-        if (count > 1 && !it.iconHidden) {
-          if (grp) {
-            grp.classList.remove("hidden");
-            grp.textContent = String(count);
-          }
-          ic?.classList.add("hidden");
-          if (nm) nm.classList.add("hidden");
-        } else {
-          grp?.classList.add("hidden");
-          if (it.iconHidden) {
-            ic?.classList.add("hidden");
-          } else {
-            ic?.classList.remove("hidden");
-          }
-          if (nm) nm.classList.toggle("hidden", it.textHidden);
-        }
-      } else {
-        it.el.classList.toggle("hidden", it.textHidden && it.el.classList.contains("hidden") === false ? it.textHidden : it.textHidden);
-        if (it.textHidden) it.el.classList.add("hidden");
-      }
-    }
-  }
-}
-
-/* 设备图元 DOM（参考页设备图标规格） */
-function buildEquipDom(vm: EquipVM): HTMLDivElement {
-  const root = document.createElement("div");
-  root.className = "lbl lbl-equip";
-  const bg = EQUIP_ICON_BG[vm.run] ?? EQUIP_ICON_BG.unknown;
-  root.innerHTML = `
-    <div class="ic" style="background:${bg}"><svg viewBox="0 0 14 14"><path d="M7 1C4.2 1 2 3 2 5.4c0 1.6 1 3 2.5 3.8L3 13h2l.6-2.6c.4.1.9.1 1.4.1s1 0 1.4-.1L9 13h2l-1.5-3.8C11 8.4 12 7 12 5.4 12 3 9.8 1 7 1zm0 1.4c1.8 0 3.2 1.3 3.2 3S8.8 8.4 7 8.4 3.8 7.1 3.8 5.4 5.2 2.4 7 2.4z"/></svg></div>
-    <div class="grp hidden">1</div>
-    <div class="name">${escapeHtml(vm.name)}</div>
-    <div class="dots"></div>
-  `;
-  return root;
-}
-
-/* 空间图元 DOM（参考页空间信息组件规格：IoT 值 + 名称） */
-function buildSpaceDom(vm: SpaceVM): HTMLDivElement {
-  const root = document.createElement("div");
-  root.className = "lbl lbl-space";
-  const lux =
-    vm.tdb != null
-      ? `温度: ${vm.tdb} ${vm.tdbUnit}`
-      : vm.co2 != null
-        ? `CO₂: ${vm.co2} ${vm.co2Unit}`
-        : "";
-  root.dataset.lux = lux;
-  root.innerHTML = `
-    <div class="lux">${escapeHtml(lux)}</div>
-    <div class="name">${escapeHtml(displaySpaceName(vm.name))}</div>
-  `;
-  return root;
+/** 空间图元的 IoT 摘要行（与旧 buildSpaceDom 一致）。 */
+function spaceDetailLine(vm: SpaceVM): string {
+  if (vm.tdb != null) return `温度: ${vm.tdb} ${vm.tdbUnit}`;
+  if (vm.co2 != null) return `CO₂: ${vm.co2} ${vm.co2Unit}`;
+  return "";
 }
 
 /**
@@ -854,7 +698,7 @@ interface SpaceRec {
 
 class VentDemo {
   readonly #el: SceneEditorElement;
-  readonly #labels: LabelLayer;
+  readonly #graph: GraphScene;
 
   #shell: BimSceneHandle | null = null; // 07_building_relation（逐层 Board + 逐层线框）
   /** 楼层 Revit 轻量化几何（`public/bim/revit/{floorId}.json`），懒加载并缓存 */
@@ -868,7 +712,13 @@ class VentDemo {
   #mode: ViewMode = "project";
   #buildingId: string | null = null;
   #floorId: string | null = null;
-  #selected: string | null = null;
+  #selectedSpace: string | null = null;
+  #selectedEquip: string | null = null;
+  #hoverId: string | null = null;
+  #mouse: { x: number; y: number } | null = null;
+  #hoverRaf = 0;
+  /** 每次视图切换自增；异步楼层加载回来时用它丢弃过期结果。 */
+  #switchToken = 0;
   #raf = 0;
   #lastMatrix = "";
 
@@ -876,10 +726,37 @@ class VentDemo {
 
   constructor(el: SceneEditorElement) {
     this.#el = el;
-    this.#labels = new LabelLayer(document.body);
-    // scene-ready 在模块执行前就可能派发完毕，必须走 ready promise
+    this.#graph = new GraphScene({
+      host: document.body,
+      rootId: "labels",
+      measureText: textWidth,
+      project: (world, width, height, out) => {
+        const cam = this.runtime?.camera;
+        if (!cam) return false;
+        GRAPH_PROJ.set(world.x, world.y, world.z).project(cam);
+        out.x = (GRAPH_PROJ.x * 0.5 + 0.5) * width;
+        out.y = (-GRAPH_PROJ.y * 0.5 + 0.5) * height;
+        return GRAPH_PROJ.z > -1 && GRAPH_PROJ.z < 1;
+      },
+    });
+    this.#graph.setStateStyles("equip", EQUIP_STATE_STYLES);
+    this.#graph.onModelClick((model, ev) => {
+      if (model.kind === "equip" && model.absorbedCount > 1) {
+        // 聚合角标不再「选中代表设备」，而是展开组内清单让用户挑具体设备
+        showGroupPopover(model, ev.clientX, ev.clientY, (id) => this.selectEquip(id));
+        return;
+      }
+      if (model.kind === "equip") this.selectEquip(model.id);
+      else this.selectSpace(model.id);
+    });
+    // scene-ready 在模块执行前就可能派发完毕，必须走 ready promise。
+    // 注意 ready 只保证 runtime 存在、不保证已 loadDocument —— 此时 getViewState()
+    // 会抛 "No document loaded"。runtime 初始 view 的 gridVisible=true（engine 默认），
+    // 加载期的网格由 CSS 在 body.ready 之前隐藏 #stage 解决（见 vent-demo.html）。
     void el.ready.then(() => this.#onReady());
     this.#el.addEventListener("click", (ev) => this.#onClick(ev as MouseEvent));
+    this.#el.addEventListener("mousemove", (ev) => this.#onMouseMove(ev as MouseEvent));
+    this.#el.addEventListener("mouseleave", () => this.#clearHover());
     window.addEventListener("resize", () => {
       this.#requestLabelLayout();
     });
@@ -1001,6 +878,8 @@ class VentDemo {
       this.#spaceRecs.set(s.id, { vm: s, vol, flat });
     }
 
+    // 模型就绪后才放开左侧/底部面板，加载期不展示空白色块
+    document.body.classList.add("ready");
     this.#el.dispatchEvent(new CustomEvent("vent-ready"));
     this.showProject();
     this.#startLabelLoop();
@@ -1130,6 +1009,9 @@ class VentDemo {
   }
 
   showProject(): void {
+    this.#switchToken++; // 丢弃尚未完成的楼层加载
+    showFloorLoading(false);
+    this.#clearSelection();
     this.#mode = "project";
     this.#buildingId = null;
     this.#floorId = null;
@@ -1142,6 +1024,9 @@ class VentDemo {
   }
 
   showBuilding(buildingId: string): void {
+    this.#switchToken++;
+    showFloorLoading(false);
+    this.#clearSelection();
     this.#mode = "building";
     this.#buildingId = buildingId;
     this.#floorId = null;
@@ -1170,41 +1055,47 @@ class VentDemo {
   }
 
   showFloor(floorId: string): void {
-    this.#mode = "floor";
-    this.#floorId = floorId;
+    const token = ++this.#switchToken;
     const f = DATA.buildingTree.flatMap((b) => b.floors.map((fl) => ({ fl, b }))).find((x) => x.fl.id === floorId);
-    this.#buildingId = f?.b.id ?? null;
+    const buildingId = f?.b.id ?? null;
 
-    // 楼层视图的土建全部来自 Revit 轻量化几何（楼板 + 墙柱楼梯），
-    // 07 场景只服务建筑/项目视图，这里先把它的逐层 mesh 收掉。
-    this.#shell?.setFloorsVisible([]);
-    this.#applyVisibility();
-
-    // 先用空间包围盒给一帧即时取景，等 Revit 楼层数据到达再精取景
-    const rt = this.runtime;
-    const aspect = rt?.camera ? rt.camera.aspect : 16 / 9;
-    const quick = this.#spacesBox((s) => s.floorId === floorId);
-    if (quick) {
-      const { position, target } = floorCameraFromBox(quick, FLOOR_FOV, aspect);
-      applyCamera(this.#el, position, target, FLOOR_FOV, FLOOR_BG);
-    }
-
-    this.#rebuildLabels();
-    setStatus(`视角：${f?.b.localName ?? ""}/${f?.fl.localName ?? ""}层 · 楼层模型（Revit 土建 + 空间薄片 + 设备图元）`);
-
+    // 旧视图保持不动，直到新楼层几何就绪。原先先收掉 07 白模 + 用空间包围盒
+    // 即时取景，Revit JSON 到达后再换成真模型 —— 中间可见一帧空场景（"闪一下"）。
+    // 现在把「切显隐 + 取景 + 打光 + 图元」合并成一次原子提交，遮罩盖住加载期。
+    showFloorLoading(true);
     void this.#ensureRevit(floorId).then(() => {
-      if (this.#mode !== "floor" || this.#floorId !== floorId) return;
+      if (token !== this.#switchToken) return;
+      this.#mode = "floor";
+      this.#floorId = floorId;
+      this.#buildingId = buildingId;
+
+      // 楼层视图的土建全部来自 Revit 轻量化几何，07 场景只服务建筑/项目视图
+      this.#shell?.setFloorsVisible([]);
       this.#applyVisibility();
+
+      const rt = this.runtime;
+      const aspect = rt?.camera ? rt.camera.aspect : 16 / 9;
       const box = this.#floorBox(floorId);
       if (box) {
         const { position, target } = floorCameraFromBox(box, FLOOR_FOV, aspect);
         applyCamera(this.#el, position, target, FLOOR_FOV, FLOOR_BG);
         this.#applyFloorLighting(box);
+      } else {
+        // 楼层几何缺失时退回空间包围盒，至少不空屏
+        const quick = this.#spacesBox((s) => s.floorId === floorId);
+        if (quick) {
+          const { position, target } = floorCameraFromBox(quick, FLOOR_FOV, aspect);
+          applyCamera(this.#el, position, target, FLOOR_FOV, FLOOR_BG);
+        }
+        this.#resetLighting();
       }
-      this.#rebuildLabels();
-    });
 
-    this.onChange?.();
+      this.#clearSelection();
+      this.#rebuildLabels();
+      showFloorLoading(false);
+      setStatus(`视角：${f?.b.localName ?? ""}/${f?.fl.localName ?? ""}层 · 楼层模型（Revit 土建 + 空间薄片 + 设备图元）`);
+      this.onChange?.();
+    });
   }
 
   /** 懒加载某层 Revit 几何并挂到场景（不可见，交由 #applyVisibility 控制）。 */
@@ -1306,33 +1197,44 @@ class VentDemo {
   /* ---------------- 图元编排（对应 updateShowElements + 碰撞） ---------------- */
 
   #rebuildLabels(): void {
-    const items: Array<Omit<LabelItem, "iconRect" | "textRect" | "absorbs" | "absorbed" | "textHidden" | "iconHidden">> = [];
+    const models: GraphModel[] = [];
     if (this.#mode === "floor" && this.#floorId) {
       for (const s of SPACE_VMS) {
         if (s.floorId !== this.#floorId) continue;
-        items.push({
+        const m = new GraphModel({
           id: s.id,
           kind: "space",
-          el: buildSpaceDom(s),
-          pos: new THREE.Vector3(s.x, s.y + s.depth + 0.15, s.z),
+          world: { x: s.x, y: s.y + s.depth + 0.15, z: s.z },
+          label: displaySpaceName(s.name),
+          detail: spaceDetailLine(s),
           weight: s.tdb != null || s.co2 != null ? 50 : 0,
-          name: s.name,
         });
+        m.setState(s.vent);
+        models.push(m);
       }
       for (const e of EQUIP_VMS) {
         if (e.floorId !== this.#floorId) continue;
-        items.push({
+        const m = new GraphModel({
           id: e.id,
           kind: "equip",
-          el: buildEquipDom(e),
-          pos: new THREE.Vector3(e.x, e.y, e.z),
-          weight: e.run === "on" ? 2 : 0,
-          name: e.name,
+          world: { x: e.x, y: e.y, z: e.z },
+          label: e.name,
+          // CFC* 是窗类（普通窗 / 排烟窗），其余按通风风机走风扇图标
+          icon: e.icon,
+          // 异常设备要保证标签不被普通设备碰撞吞掉
+          weight: e.fault ? 100 : e.run === "on" ? 2 : 0,
         });
+        m.setState(e.run);
+        m.setState("fault", e.fault);
+        models.push(m);
       }
     }
     // 建筑/项目视图：原页不展示图元（仅异常空间名，本快照无异常）——保持干净白模
-    this.#labels.setItems(items);
+    hideGroupPopover();
+    this.#graph.setModels(models);
+    // setModels 会整批重建 DOM，选中态要重新贴回去
+    this.#paintEquipSelection(this.#selectedEquip);
+    this.#paintSpaceSelection(this.#selectedSpace);
     this.#requestLabelLayout();
   }
 
@@ -1352,8 +1254,8 @@ class VentDemo {
       const key = `${cam.position.x.toFixed(2)},${cam.position.y.toFixed(2)},${cam.position.z.toFixed(2)},${w},${h}`;
       if (key === this.#lastMatrix) return;
       this.#lastMatrix = key;
-      if (this.#labels.items.length > 0) {
-        this.#labels.layout(cam, w, h);
+      if (this.#graph.models.length > 0) {
+        this.#graph.layout(w, h);
       }
     };
     this.#raf = requestAnimationFrame(tick);
@@ -1361,50 +1263,132 @@ class VentDemo {
 
   /* ---------------- 拾取 ---------------- */
 
-  #onClick(ev: MouseEvent): void {
-    const rt = this.runtime;
-    if (!rt) return;
-    const rect = this.#el.getBoundingClientRect();
-    this.#ndc.set(
-      ((ev.clientX - rect.left) / rect.width) * 2 - 1,
-      -((ev.clientY - rect.top) / rect.height) * 2 + 1,
-    );
-    this.#raycaster.setFromCamera(this.#ndc, rt.camera);
+  /** 收集当前可见、可拾取的空间网格（体块 / 薄片互斥）。 */
+  #pickableMeshes(): THREE.Mesh[] {
     const meshes: THREE.Mesh[] = [];
     for (const rec of this.#spaceRecs.values()) {
       if (rec.vol?.visible) meshes.push(rec.vol);
       if (rec.flat?.visible) meshes.push(rec.flat);
     }
-    const hits = this.#raycaster.intersectObjects(meshes, false);
-    const first = hits[0]?.object;
-    const id = first ? this.#spaceByMesh.get(first) : undefined;
-    this.select(id ?? null);
+    return meshes;
   }
 
-  select(id: string | null): void {
-    // 还原旧选中
-    if (this.#selected) {
-      const rec = this.#spaceRecs.get(this.#selected);
-      for (const m of [rec?.vol, rec?.flat]) {
+  #raycastSpace(clientX: number, clientY: number): string | null {
+    const rt = this.runtime;
+    if (!rt) return null;
+    const rect = this.#el.getBoundingClientRect();
+    this.#ndc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    this.#raycaster.setFromCamera(this.#ndc, rt.camera);
+    const hits = this.#raycaster.intersectObjects(this.#pickableMeshes(), false);
+    const first = hits[0]?.object;
+    return first ? this.#spaceByMesh.get(first) ?? null : null;
+  }
+
+  #onClick(ev: MouseEvent): void {
+    hideGroupPopover();
+    this.selectSpace(this.#raycastSpace(ev.clientX, ev.clientY));
+  }
+
+  /** hover 小手：rAF 节流，避免每次 mousemove 都走一遍 raycast。 */
+  #onMouseMove(ev: MouseEvent): void {
+    this.#mouse = { x: ev.clientX, y: ev.clientY };
+    if (this.#hoverRaf) return;
+    this.#hoverRaf = requestAnimationFrame(() => {
+      this.#hoverRaf = 0;
+      if (!this.#mouse) return;
+      const id = this.#raycastSpace(this.#mouse.x, this.#mouse.y);
+      if (id === this.#hoverId) return;
+      this.#hoverId = id;
+      this.#el.style.cursor = id ? "pointer" : "";
+    });
+  }
+
+  #clearHover(): void {
+    this.#mouse = null;
+    this.#hoverId = null;
+    this.#el.style.cursor = "";
+  }
+
+  /** 遍历全部空间重涂，而不是只还原「上一个」——避免切视图后残留半透明薄片。 */
+  #paintSpaceSelection(id: string | null): void {
+    for (const [spaceId, rec] of this.#spaceRecs) {
+      const on = spaceId === id;
+      for (const m of [rec.vol, rec.flat]) {
         if (!m) continue;
         const mat = m.material as THREE.MeshBasicMaterial;
-        mat.color.set(VENT_STYLE[rec!.vm.vent].color);
-        mat.opacity = ROOM_ALPHA;
+        mat.color.set(on ? "#246FE5" : VENT_STYLE[rec.vm.vent].color);
+        // flat 原本就是 opacity 1，旧实现统一还原成 ROOM_ALPHA 会把薄片洗淡
+        mat.opacity = on ? 1 : m === rec.flat ? 1 : ROOM_ALPHA;
       }
     }
-    this.#selected = id;
-    if (id) {
-      const rec = this.#spaceRecs.get(id);
-      for (const m of [rec?.vol, rec?.flat]) {
-        if (!m) continue;
-        const mat = m.material as THREE.MeshBasicMaterial;
-        mat.color.set("#246FE5");
-        mat.opacity = 1;
-      }
-      setStatus(`选中空间：${rec?.vm.name ?? id}`);
+    for (const m of this.#graph.models) {
+      if (m.kind === "space") m.setState("selected", m.id === id);
     }
     this.#requestLabelLayout();
+  }
+
+  #paintEquipSelection(id: string | null): void {
+    for (const m of this.#graph.models) {
+      if (m.kind === "equip") m.setState("selected", m.id === id);
+    }
+    this.#requestLabelLayout();
+  }
+
+  #clearSelection(): void {
+    this.#paintSpaceSelection(null);
+    this.#paintEquipSelection(null);
+    this.#selectedSpace = null;
+    this.#selectedEquip = null;
+    hideDetail();
+  }
+
+  selectSpace(id: string | null): void {
+    hideGroupPopover();
+    this.#paintEquipSelection(null);
+    this.#selectedEquip = null;
+    this.#paintSpaceSelection(id);
+    this.#selectedSpace = id;
+    if (id) {
+      const rec = this.#spaceRecs.get(id);
+      if (rec) {
+        showDetail("空间详情", rec.vm.name, spaceDetailHtml(rec.vm));
+        setStatus(`选中空间：${rec.vm.name}`);
+      }
+    } else {
+      hideDetail();
+    }
+    // on-demand 渲染：材质改完必须主动重绘，否则要等下一次相机交互才变色
+    this.runtime?.render();
+    this.#requestLabelLayout();
     this.onChange?.();
+  }
+
+  selectEquip(id: string | null): void {
+    hideGroupPopover();
+    this.#paintSpaceSelection(null);
+    this.#selectedSpace = null;
+    this.#paintEquipSelection(id);
+    this.#selectedEquip = id;
+    if (id) {
+      const vm = EQUIP_VMS.find((e) => e.id === id);
+      if (vm) {
+        showDetail("设备详情", vm.name, equipDetailHtml(vm));
+        setStatus(`选中设备：${vm.name}`);
+      }
+    } else {
+      hideDetail();
+    }
+    this.runtime?.render();
+    this.#requestLabelLayout();
+    this.onChange?.();
+  }
+
+  /** 兼容外部脚本原有 `demo.select(id)` 调用。 */
+  select(id: string | null): void {
+    this.selectSpace(id);
   }
 }
 
@@ -1425,14 +1409,28 @@ function buildNav(demo: VentDemo): void {
     return b;
   };
 
-  // 只列有空间数据的楼层（真实页左侧同样只出现有数据的层）
-  const floorsWithData = new Set(SPACE_VMS.map((s) => s.floorId));
+  // 示例只列数据量大的楼层：本快照 B1/B2/B3 各有 14/32/14 个空间，
+  // F6 只有 6 个、其余 1~2 个，全都摆出来只会让选择器变成一长串。
+  const MIN_FLOOR_SPACES = 10;
+  const spaceCount = new Map<string, number>();
+  for (const s of SPACE_VMS) spaceCount.set(s.floorId, (spaceCount.get(s.floorId) ?? 0) + 1);
 
-  nav.appendChild(mk("项目", "primary", () => demo.showProject()));
+  // 「全部建筑」= 原「项目」入口，挪到顶部；选中时实心蓝，其余时候浅蓝底。
+  nav.appendChild(
+    mk("全部建筑", demo.mode === "project" ? "active" : "primary", () => demo.showProject()),
+  );
 
+  let firstBuilding = true;
   for (const b of DATA.buildingTree) {
-    const floors = b.floors.filter((f) => floorsWithData.has(f.id));
+    const floors = b.floors.filter((f) => (spaceCount.get(f.id) ?? 0) >= MIN_FLOOR_SPACES);
     if (floors.length === 0) continue;
+
+    if (!firstBuilding) {
+      const sep = document.createElement("div");
+      sep.className = "nav-sep";
+      nav.appendChild(sep);
+    }
+    firstBuilding = false;
 
     const head = document.createElement("div");
     head.className = "nav-building";
@@ -1443,12 +1441,7 @@ function buildNav(demo: VentDemo): void {
       const active = demo.mode === "floor" && demo.floorId === f.id;
       nav.appendChild(mk(f.localName, active ? "active" : "", () => demo.showFloor(f.id)));
     }
-    const sep = document.createElement("div");
-    sep.className = "nav-sep";
-    nav.appendChild(sep);
   }
-
-  nav.appendChild(mk("全部建筑", "", () => demo.showProject()));
 }
 
 function buildLegend(mode: ViewMode): void {
@@ -1467,29 +1460,240 @@ function buildLegend(mode: ViewMode): void {
       <span class="lg-item"><span class="sw" style="background:#2E3742"></span>关</span>
       <span class="lg-item"><span class="sw" style="background:#C4C9CF"></span>无数据</span>
       <span class="divider"></span>
-      <span class="lg-item"><span class="sw round" style="background:#F55047"></span>异常</span>`;
+      <span class="lg-item"><span class="sw round" style="background:${FAULT_DOT}"></span>异常</span>`;
   }
   legend.innerHTML = html;
-}
-
-function updateCrumb(demo: VentDemo): void {
-  const crumb = document.getElementById("crumb");
-  const text = document.getElementById("crumb-text");
-  if (!crumb || !text) return;
-  if (demo.mode === "floor") {
-    const f = DATA.buildingTree
-      .flatMap((b) => b.floors.map((fl) => ({ fl, b })))
-      .find((x) => x.fl.id === demo.floorId);
-    text.textContent = `${f?.b.localName ?? ""}/${f?.fl.localName ?? ""}层`;
-    crumb.style.display = "flex";
-  } else {
-    crumb.style.display = "none";
-  }
 }
 
 function setStatus(text: string): void {
   const el = document.getElementById("status");
   if (el) el.textContent = text;
+}
+
+/* ------------------------------------------------------------------ */
+/* 选中详情抽屉                                                         */
+/* ------------------------------------------------------------------ */
+
+const TDB_STATUS_META: Record<TdbStatus, { label: string; color: string }> = {
+  cold: { label: "偏冷", color: "#5B8FF9" },
+  cool: { label: "偏低", color: "#61DDAA" },
+  ok: { label: "舒适", color: "#09B3B5" },
+  warm: { label: "偏高", color: "#F6BD16" },
+  hot: { label: "偏热", color: "#F55047" },
+  nodata: { label: "无数据", color: "#8B949E" },
+};
+const CO2_STATUS_META: Record<Co2Status, { label: string; color: string }> = {
+  ok: { label: "正常", color: "#09B3B5" },
+  high: { label: "偏高", color: "#F6BD16" },
+  vhigh: { label: "超标", color: "#F55047" },
+  nodata: { label: "无数据", color: "#8B949E" },
+};
+const EQUIP_KIND_LABEL: Record<EquipKind, string> = {
+  AC: "通风风机 / 空调",
+  FF: "送风机",
+  CF: "排风机",
+};
+
+function detailValue(v: string | number | null | undefined): string {
+  return v == null || v === "" ? '<span class="d-empty">—</span>' : escapeHtml(String(v));
+}
+function detailRow(key: string, value: string): string {
+  return `<div class="d-row"><span class="d-k">${escapeHtml(key)}</span><span class="d-v">${value}</span></div>`;
+}
+function detailGroup(title: string, rows: string): string {
+  return `<section class="d-group"><h4>${escapeHtml(title)}</h4>${rows}</section>`;
+}
+function detailPill(label: string, color: string): string {
+  return `<span class="d-pill" style="background:${color}">${escapeHtml(label)}</span>`;
+}
+function buildingName(id: string | undefined): string {
+  return DATA.buildingTree.find((b) => b.id === id)?.localName ?? "";
+}
+function floorName(id: string | undefined): string {
+  return DATA.buildingTree.flatMap((b) => b.floors).find((f) => f.id === id)?.localName ?? "";
+}
+
+/** 空间详情：基本信息 + 感知值 + 阈值 + 关联设备（全部取自现成快照字段）。 */
+function spaceDetailHtml(vm: SpaceVM): string {
+  const raw = DATA.spaces.find((s) => s.id === vm.id);
+  const vent = VENT_STYLE[vm.vent];
+  const tdbMeta = TDB_STATUS_META[vm.tdbStatus];
+  const co2Meta = CO2_STATUS_META[vm.co2Status];
+  const tdbTime = infoOf(vm.id, "tdb")?.dataTime;
+  const co2Time = infoOf(vm.id, "cO2")?.dataTime;
+
+  const base = detailGroup(
+    "基本信息",
+    detailRow("名称", detailValue(vm.name)) +
+      detailRow("空间编号", detailValue(raw?.localId)) +
+      detailRow("楼栋 / 楼层", detailValue(`${buildingName(vm.buildingId)} / ${floorName(vm.floorId)}`)) +
+      detailRow("对象分类", detailValue(raw?.classCode)) +
+      detailRow("房间功能", detailValue(raw?.roomFuncType)),
+  );
+  const sense = detailGroup(
+    "感知状态",
+    detailRow("通风状态", detailPill(vent.label, vent.color === "#9BD6DE" ? "#09B3B5" : vent.color === "#C9B79B" ? "#B08A5B" : "#8B949E")) +
+      detailRow(
+        "温度",
+        vm.tdb != null
+          ? `${detailValue(`${vm.tdb} ${vm.tdbUnit}`)} ${detailPill(tdbMeta.label, tdbMeta.color)}`
+          : detailValue(null),
+      ) +
+      detailRow("温度时间", detailValue(tdbTime)) +
+      detailRow(
+        "CO₂",
+        vm.co2 != null
+          ? `${detailValue(`${vm.co2} ${vm.co2Unit}`)} ${detailPill(co2Meta.label, co2Meta.color)}`
+          : detailValue(null),
+      ) +
+      detailRow("CO₂ 时间", detailValue(co2Time)),
+  );
+
+  const q = raw?.tdbQuality;
+  const cq = raw?.co2Quality;
+  const thresholdRows =
+    detailRow("舒适温度区间", detailValue(q ? `${q.lowerComfortSeasonLimitValue ?? "—"} ~ ${q.upperComfortSeasonLimitValue ?? "—"} ℃` : null)) +
+    detailRow("CO₂ 限值", detailValue(cq?.carbonDioxideLimitValue ? `${cq.carbonDioxideLimitValue} ppm` : null));
+  const threshold = detailGroup("阈值参考", thresholdRows);
+
+  const rel = raw?.relObjects ?? [];
+  const equips = detailGroup(
+    `关联设备（${rel.length}）`,
+    rel.length === 0
+      ? '<div class="d-empty">无关联设备</div>'
+      : `<ul class="d-list">${rel
+          .map((e) => {
+            const vm = EQUIP_VMS.find((x) => x.id === e.id);
+            const run = infoOf(e.id, "runStatus");
+            const state = run?.existsIotRule
+              ? run.dataValue === "1"
+                ? "运行"
+                : "停止"
+              : "无数据";
+            const alarm = vm?.fault
+              ? ` <span class="d-alarm" style="background:${FAULT_DOT}" title="异常（演示）"></span>`
+              : "";
+            return `<li><span>${escapeHtml(displaySpaceName(e.localName))}</span><em>${state}${alarm}</em></li>`;
+          })
+          .join("")}</ul>`,
+  );
+  return base + sense + threshold + equips;
+}
+
+/** 设备详情：基本信息 + 运行数据 + 数据来源。 */
+function equipDetailHtml(vm: EquipVM): string {
+  const raw = DATA.equips.find((e) => e.id === vm.id);
+  const run = infoOf(vm.id, "runStatus");
+  const runMeta =
+    vm.run === "on"
+      ? { label: "运行", color: "#09B3B5" }
+      : vm.run === "off"
+        ? { label: "停止", color: "#424C59" }
+        : { label: "无数据", color: "#8B949E" };
+
+  const base = detailGroup(
+    "基本信息",
+    detailRow("名称", detailValue(vm.name)) +
+      detailRow("设备编号", detailValue(raw?.localId)) +
+      detailRow("楼栋 / 楼层", detailValue(`${buildingName(vm.buildingId)} / ${floorName(vm.floorId)}`)) +
+      detailRow("设备大类", detailValue(vm.kind ? EQUIP_KIND_LABEL[vm.kind] : null)) +
+      detailRow("对象分类", detailValue(raw?.classCode)) +
+      detailRow("功能类型", detailValue(raw?.funcType)) +
+      detailRow("监测状态", detailValue(raw?.monitoringSurveillanceStatus)),
+  );
+  const live = detailGroup(
+    "运行数据",
+    detailRow("运行状态", detailPill(runMeta.label, runMeta.color)) +
+      (vm.fault ? detailRow("告警状态", detailPill("异常 · 演示", FAULT_DOT)) : "") +
+      detailRow("采集值", detailValue(run?.dataValue)) +
+      detailRow("数据时间", detailValue(run?.dataTime)) +
+      detailRow("IoT 规则", detailValue(run?.existsIotRule ? "已接入" : "未接入")) +
+      detailRow("指标名称", detailValue(run?.infoCodeName)),
+  );
+  return base + live;
+}
+
+function showDetail(kicker: string, title: string, body: string): void {
+  const drawer = document.getElementById("detail-drawer");
+  const k = document.getElementById("drawer-kicker");
+  const t = document.getElementById("drawer-title");
+  const b = document.getElementById("drawer-body");
+  if (!drawer || !k || !t || !b) return;
+  k.textContent = kicker;
+  t.textContent = title;
+  b.innerHTML = body;
+  b.scrollTop = 0;
+  drawer.classList.add("open");
+  drawer.setAttribute("aria-hidden", "false");
+}
+
+function hideDetail(): void {
+  const drawer = document.getElementById("detail-drawer");
+  drawer?.classList.remove("open");
+  drawer?.setAttribute("aria-hidden", "true");
+}
+
+/**
+ * 聚合角标的交互：不再替用户猜「代表设备」，而是列出组内全部设备。
+ * 点某一行才真正选中设备详情；告警只作为组标记，避免红点挂在角标上误导。
+ */
+function showGroupPopover(
+  model: GraphModel,
+  clientX: number,
+  clientY: number,
+  onPick: (id: string) => void,
+): void {
+  const pop = document.getElementById("group-popover");
+  const title = document.getElementById("gp-title");
+  const list = document.getElementById("gp-list");
+  if (!pop || !title || !list) return;
+
+  const members = model.getGroupMembers();
+  title.textContent = `聚合设备 · ${members.length} 台`;
+  list.replaceChildren();
+  for (const member of members) {
+    const vm = EQUIP_VMS.find((e) => e.id === member.id);
+    const row = document.createElement("div");
+    row.className = "gp-row";
+    const name = document.createElement("span");
+    name.className = "gp-name";
+    name.textContent = displaySpaceName(vm?.name ?? member.label);
+    const state = document.createElement("span");
+    state.className = "gp-state";
+    state.textContent = vm?.run === "on" ? "运行" : vm?.run === "off" ? "停止" : "无数据";
+    row.append(name, state);
+    if (vm?.fault) {
+      const alarm = document.createElement("span");
+      alarm.className = "gp-alarm";
+      alarm.textContent = "异常";
+      row.append(alarm);
+    }
+    row.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      hideGroupPopover();
+      onPick(member.id);
+    });
+    list.appendChild(row);
+  }
+
+  // 贴着角标右下展开，并夹在视口内
+  const left = Math.min(Math.max(8, clientX - 20), window.innerWidth - 260);
+  const top = Math.min(Math.max(8, clientY + 16), window.innerHeight - 240);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  pop.classList.remove("hidden");
+  pop.setAttribute("aria-hidden", "false");
+}
+
+function hideGroupPopover(): void {
+  const pop = document.getElementById("group-popover");
+  if (!pop || pop.classList.contains("hidden")) return;
+  pop.classList.add("hidden");
+  pop.setAttribute("aria-hidden", "true");
+}
+
+function showFloorLoading(on: boolean): void {
+  document.getElementById("floor-loading")?.classList.toggle("show", on);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1504,7 +1708,7 @@ function showPrepareHint(err: unknown): void {
   const labels = document.getElementById("labels");
   if (!labels) return;
   // 没有数据就没有导航/图例可显示，避免留下一排空面板
-  for (const id of ["nav", "legend", "crumb"]) {
+  for (const id of ["nav", "legend"]) {
     const el = document.getElementById(id);
     if (el) el.style.display = "none";
   }
@@ -1532,23 +1736,29 @@ async function boot(): Promise<void> {
     return;
   }
   const demo = new VentDemo(el);
-  (window as unknown as { __ventDemo: VentDemo }).__ventDemo = demo;
 
   demo.onChange = () => {
     buildNav(demo);
     buildLegend(demo.mode);
-    updateCrumb(demo);
   };
 
-  document.getElementById("crumb")?.addEventListener("click", () => {
-    if (demo.mode === "floor" && demo.buildingId) demo.showBuilding(demo.buildingId);
-    else demo.showProject();
+  document.getElementById("drawer-close")?.addEventListener("click", () => {
+    demo.selectSpace(null);
+  });
+  document.addEventListener("click", (ev) => {
+    const pop = document.getElementById("group-popover");
+    if (pop && !pop.classList.contains("hidden") && !pop.contains(ev.target as Node)) hideGroupPopover();
+  });
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      hideGroupPopover();
+      demo.selectSpace(null);
+    }
   });
 
   el.addEventListener("vent-ready", () => {
     buildNav(demo);
     buildLegend(demo.mode);
-    updateCrumb(demo);
   });
 
   buildNav(demo);
