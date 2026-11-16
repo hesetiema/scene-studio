@@ -17,8 +17,8 @@ threading a new top-level folder through the others.
 
 ```text
 apps/playground/
-  index.html      studio（产品本身，唯一对外发布的一页）
-  vent-demo.html  通风感知 demo
+  index.html      studio（产品本身，对外发布的一页）
+  vent-demo.html  通风感知 demo（对外发布，读 demo-data 的脱敏快照）
   embed.html      声明式接入参考
   minimal.html    最小宿主
   perf.html       性能仪器（CI）
@@ -42,8 +42,9 @@ apps/playground/
     minimal/  ← minimal.html    main.ts
     perf/     ← perf.html       main.ts
 
-  public/       静态资源（assets、demos 缩略图入库；data、bim 不入库）
-  scripts/      缩略图重拍脚本
+  public/       静态资源（assets、demos 缩略图入库；data、bim 是不入库的真实快照）
+  demo-data/    脱敏后的 vent 快照（入库），由 scripts/make-demo-data.mjs 生成
+  scripts/      缩略图重拍脚本 + 脱敏脚本
 ```
 
 The HTML files stay at the package root because **their filenames are URLs**, and those URLs are
@@ -93,7 +94,7 @@ fixture for no structural gain; the entry module is one line inside each page's 
 | `minimal.html` + `src/minimal/main.ts` | Smallest end-to-end integration (element + load + save loop), run synchronously on the bare URL. Also the neutral host `decoders.spec.ts` / `viewer-mode.spec.ts` probe — the studio would not do, it registers a runtime with an asset cache |
 | `embed.html` + `src/embed/main.ts` | The declarative surface, and nothing else: a single `<scene-editor src=… camera-orbit=… field-of-view=…>` tag with `poster` / `progress-bar` / `error` slots, plus a click-to-hotspot pass (`positionAndNormalFromPoint` → `slot="hotspot-*"` → `updateHotspot`). No panel, no document code — it exists to prove the embed story is three attributes deep |
 | `perf.html` + `src/perf/main.ts` | The CI instrument: `?objects=5000&instancing=0` unbatched control, two-phase handshake (`ready` → metrics → `finish`) driven by `pnpm test:perf`. The report also carries a close-up pass (chunked batching still culls) and the shared-resource pool size (`sharedResources` / `sharedGeo`+`sharedMat`), which keeps 5 000 placeholders at ~11 MB of heap instead of ~26 MB. Not an example — it is not on `demos.html` |
-| `demos.html` + `public/demos/*.jpg` | The entry page, split by intent rather than by file: **示例** (studio + vent demo, with screenshots) and **接入参考** (embed / minimal — linked by source file first, page second, because their value is the code, not the picture). Only the two 示例 carry thumbnails. Pure navigation — no JS, no shared modules, and no change to the five pages themselves (each keeps its own URL, so the e2e fixtures and the perf/visual baselines are unaffected). Re-shoot with `node apps/playground/scripts/capture-demo-thumbs.mjs` while the dev server runs. **Local only**: the Pages build emits `index.html` and nothing else, and hides this page's link from the welcome screen |
+| `demos.html` + `public/demos/*.jpg` | The entry page, split by intent rather than by file: **示例** (studio + vent demo, with screenshots) and **接入参考** (embed / minimal — linked by source file first, page second, because their value is the code, not the picture). Only the two 示例 carry thumbnails. Pure navigation — no JS, no shared modules, and no change to the five pages themselves (each keeps its own URL, so the e2e fixtures and the perf/visual baselines are unaffected). Re-shoot with `node apps/playground/scripts/capture-demo-thumbs.mjs` while the dev server runs. **Local only**: the Pages build emits `index.html` + `vent-demo.html` and hides this page's link from the welcome screen |
 
 ## Viewer-first workflow
 
@@ -140,11 +141,14 @@ every page has to stay buildable — `minimal.html` is the neutral host `decoder
 what `embed.spec.ts` holds the declarative surface against.
 
 `vite build --mode pages` (`pnpm --filter @scenio/playground build:pages`) emits the public
-GitHub Pages site, and only `index.html`. The other five do not answer a stranger's first
-question: `perf` is an instrument, `minimal` / `embed` are integration references whose value is
-their source file, `vent-demo` needs a data snapshot that is deliberately not in the repo, and
-`demos` is a local index. Removing them from the repo would remove test hosts; removing them
-from this surface only removes noise.
+GitHub Pages site: `index.html` and `vent-demo.html`. The other four do not answer a stranger's
+first question — `perf` is an instrument, `minimal` / `embed` are integration references whose
+value is their source file, and `demos` is a local index. Removing them from the repo would
+remove test hosts; removing them from this surface only removes noise.
+
+`vent-demo.html` needs a data snapshot, and the live one is gitignored because it names a real
+project. So the pages build serves `demo-data/` instead (see below), and the workflow refuses to
+deploy if a real identifier survives the swap.
 
 Two things the pages build has to handle, both because project pages are served from
 `/<repo>/`:
@@ -153,11 +157,13 @@ Two things the pages build has to handle, both because project pages are served 
   `import.meta.env.BASE_URL`. Vite rewrites build-time references only — it does not touch
   custom-element attributes such as `<scene-editor src>`, and it certainly does not touch
   strings inside modules (`src/studio/assets/model-loader.ts`).
-- `public/` is shared with the local surface, so a plugin prunes `public/data`, `public/bim`
-  and `public/demos` from the output. The first two are gitignored *because* they contain real
-  project identifiers, and a local build should not quietly publish whatever is on disk.
-  `main.ts` also sets `data-surface="public"`, which hides the welcome-screen links to pages
-  this build does not emit.
+- `public/` is shared with the local surface, so the plugin drops `public/data`, `public/bim`
+  and `public/demos` from the output and copies `demo-data/data` + `demo-data/bim` in their
+  place. Same URLs, so the vent page needs no runtime branch: it reads `data/vent/*.json` and
+  `bim/**` either way. The first two are gitignored *because* they contain real project
+  identifiers, and a local build should not quietly publish whatever is on disk. `main.ts` also
+  sets `data-surface="public"`, which hides the welcome-screen links to pages this build does
+  not emit.
 
 ```bash
 pnpm --filter @scenio/playground dev
@@ -350,6 +356,35 @@ part of the SDK: a host points `decoder-path` at its own copy or at
 选择器精简为「项目/楼栋/楼层/全部建筑」）。数据是**运行环境采样**（73 空间 /
 70 设备 / 3 栋楼），与逐层几何一起**不入库**：`public/data/vent/*.json` +
 `public/bim/`（见文末「本地数据准备」；缺文件时 demo 渲染提示卡而不是白屏）。
+
+### 发布用的脱敏快照（`demo-data/`）
+
+真实快照里的楼栋名、业态名、空间/设备名、人名与手机号、主机名、项目/楼栋/楼层 ID 都
+不允许进公开仓库，而 GitHub Pages 必须有数据才演示得起来。`scripts/make-demo-data.mjs`
+从真实快照**派生出第二份**，脚本头部写清了完整的取舍，要点：
+
+- **保留结构**：数量（73 空间 / 70 设备 / 133 动态值 / 3 栋楼）、ID 的形状与长度、几何、
+  坐标、`classCode` / `roomFuncType` / `infoCodeName` 这类类型字段——图元层靠 `classCode`
+  选图标，拆掉了就没得演示。
+- **换掉身份**：`Pj…`/`Bd…`/`Fl…`/`Sp…`/`Eq…` 与 32 位 GUID → 同前缀同长度的计数器；
+  楼栋 → `楼栋 A/B/C`，空间 → `房间 007`，设备 → `风机 007` / `窗 007`，动态值 → `测点 007`；
+  `intro` / `creator` / `modifier` / `pic` / `floorMap` / `meta.source` 清空或改写。
+- **ID 长度不是美观问题**：同一串 ID 也刻在 FBX 分块里（`0Pj…_Bd…_F1`），而 FBX 的字符串
+  带长度前缀，替换必须等长，否则整个 chunk 失效。分块名里的项目前缀 `XC_` 同样换成 `DX_`。
+- **中文串按内容寻址映射**：`Scene.json` 里的名字和 FBX 里的字节串必须变成**同一个** filler，
+  否则装载器按 `{chunk}/{meshName}` 对不上。所以 filler 由字符串本身哈希得出，而不是按
+  出现顺序编号。
+- **坐标不平移**：`115503.8,131900.58` 看着像测绘坐标，其实是模型局部毫米（白模与 Revit
+  楼层同处一个局部坐标系）；只平移一侧会把视图拆散，而且里面没有可泄露的位置。
+
+产出落在 `apps/playground/demo-data/`（约 14 MB，**入库**），发布时由 vite 插件铺成
+`data/` + `bim/`，页面代码一行不改。CI 的守卫再把真实 ID / 站点名 / 主机名扫一遍，命中就
+拒绝发布。重跑（需要 `public/data` + `public/bim` 在位）：
+
+```bash
+node apps/playground/scripts/make-demo-data.mjs           # 生成
+node apps/playground/scripts/make-demo-data.mjs --check   # 只扫描，不写盘
+```
 
 模型三件套与真实页逐项对齐（**两个视图用两套土建数据源**）：
 

@@ -159,9 +159,14 @@ interface VentRealData {
 /**
  * 数据快照**不入库**（含真实楼栋几何与内部标识），运行时从 `public/` 取。
  * 缺失时由 `boot()` 渲染「准备数据」提示，而不是白屏 —— 打包产物可以先行分发。
+ *
+ * 路径一律走 `BASE_URL`：GitHub Pages 把站点放在 `/<repo>/` 下，写死 `/data/...`
+ * 会让发布版整页 404（vite 只改写构建期引用，不改写这里的运行期字符串）。
+ * 本地是 `/`，发布是 `/scene-studio/`，拼出来都带结尾斜杠。
  */
-const DATA_URL = "/data/vent/vent-real-data.json";
-const MV_URL = "/data/vent/vent-model-view-fields.json";
+const BASE = import.meta.env.BASE_URL;
+const DATA_URL = `${BASE}data/vent/vent-real-data.json`;
+const MV_URL = `${BASE}data/vent/vent-model-view-fields.json`;
 
 const EMPTY_DATA = { spaces: [], equips: [], buildingTree: [], dynamics: [] } as unknown as VentRealData;
 let DATA: VentRealData = EMPTY_DATA;
@@ -802,7 +807,7 @@ class VentDemo {
     // 线框 chunk 在 Scene.json 里 isMainBuilding=false，必须放开过滤，否则
     // 楼层平面图的密集墙线（xiankuang_*）整批丢失。
     this.#shell = await loadBimScene({
-      baseUrl: "/bim",
+      baseUrl: `${BASE}bim`,
       sceneName: "07_building_relation",
       mainBuildingsOnly: false,
       resolveFloorKey: (namePath) => storeyOfMeshName(namePath),
@@ -1106,7 +1111,7 @@ class VentDemo {
     this.#revit.set(floorId, null); // 占位：避免重入
     try {
       const handle = await loadRevitFloor({
-        baseUrl: "/bim/revit",
+        baseUrl: `${BASE}bim/revit`,
         floorId,
         resolveMaterial: (info) => revitMaterial(info.category),
         onMesh: (mesh, info) => {

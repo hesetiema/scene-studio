@@ -2,7 +2,7 @@
 
 可嵌入网页的 3D 场景编辑器与模型查看器。以 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor) 发布。仓库当前版本为 `0.7.1`（线上版本以 `npm view @scenio/scene-editor dist-tags` 为准）。
 
-**[在线试用 →](https://hesetiema.github.io/scene-studio/)** · [![Pages](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml/badge.svg)](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml) —— 加载了示例模型工作台；这里是唯一对外发布的页面，其余入口都是本地测试宿主。
+**[在线试用 →](https://hesetiema.github.io/scene-studio/)** · [![Pages](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml/badge.svg)](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml) —— 加载了示例模型的工作台，以及跑在脱敏快照上的[通风感知 demo](https://hesetiema.github.io/scene-studio/vent-demo.html)。其余入口都是本地测试宿主。
 
 **文档：** 简体中文（本页） · [English](README.md) · [技术架构与基准](docs/ARCHITECTURE.md) · [包快速上手](packages/scene-editor/README.zh-CN.md) · [API 参考](packages/scene-editor/API.md)
 

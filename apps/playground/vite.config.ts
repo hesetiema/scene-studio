@@ -1,6 +1,7 @@
 import { defineConfig, type Plugin } from "vite";
 import { fileURLToPath } from "node:url";
-import { rm } from "node:fs/promises";
+import { cp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 const pkg = (path: string) =>
@@ -10,26 +11,38 @@ const html = (name: string) => fileURLToPath(new URL(`./${name}`, import.meta.ur
 
 /**
  * `public/` is shared by both surfaces, so it also holds things the public site
- * must not carry: the local data snapshot (`data/`, `bim/` — gitignored, and the
- * reason it is gitignored is that it contains real project identifiers) and the
- * demo thumbnails (`demos/`) for a page that is not published. Vite copies
- * `public/` wholesale, so prune them after the bundle is written — a local pages
- * build then produces the same artifact as CI instead of shipping whatever
- * happens to be on disk.
+ * must not carry: the live snapshot (`data/`, `bim/`), the demo thumbnails
+ * (`demos/`) for a page that is not published, and nothing else. Vite copies
+ * `public/` wholesale, so the pages build swaps that content out after the
+ * bundle is written: `demos/` disappears, and `data/` + `bim/` are replaced by
+ * `demo-data/` — the sanitized snapshot produced by `scripts/make-demo-data.mjs`
+ * and committed to the repo. Same URLs, so the vent page loads it without a
+ * single line of runtime branching; a local pages build then produces the same
+ * artifact as CI instead of shipping whatever happens to be on disk.
  */
-function pruneNonPublicDirs(): Plugin {
-  const pruned = ["data", "bim", "demos"];
+function pagesDataSurface(): Plugin {
   let outDir = "";
+  let root = process.cwd();
 
   return {
-    name: "pages-prune-public",
+    name: "pages-data-surface",
     apply: "build",
     configResolved(config) {
       outDir = config.build.outDir;
+      root = config.root;
     },
     async closeBundle() {
-      for (const dir of pruned) {
+      for (const dir of ["data", "bim", "demos"]) {
         await rm(join(outDir, dir), { recursive: true, force: true });
+      }
+      for (const dir of ["data", "bim"]) {
+        const from = join(root, "demo-data", dir);
+        if (!existsSync(from)) {
+          throw new Error(
+            `pages build needs ${from} — run \`node scripts/make-demo-data.mjs\` where the live snapshot exists`,
+          );
+        }
+        await cp(from, join(outDir, dir), { recursive: true });
       }
     },
   };
@@ -41,13 +54,12 @@ function pruneNonPublicDirs(): Plugin {
  * The default (`vite dev` / `vite build`) is the full six-entry surface — the one
  * CI and the e2e/perf suites drive, so every page must stay buildable.
  *
- * `--mode pages` is the public GitHub Pages site, and only that: the studio
- * (`index.html`). The other pages do not answer a stranger's first question —
- * `perf` is an instrument, `minimal` and `embed` are integration references
- * whose value is their source file, `vent-demo` needs a data snapshot that is
- * deliberately not in the repo, and `demos` is a local index. Removing them
- * from the repo would remove test hosts; removing them from this surface only
- * removes noise.
+ * `--mode pages` is the public GitHub Pages site: the studio (`index.html`) and
+ * the vent demo (`vent-demo.html`, served from the sanitized snapshot). The rest
+ * do not answer a stranger's first question — `perf` is an instrument, `minimal`
+ * and `embed` are integration references whose value is their source file, and
+ * `demos` is a local index. Removing them from the repo would remove test hosts;
+ * removing them from this surface only removes noise.
  *
  * Project pages are served from `/<repo>/`, so the pages build carries a base
  * prefix. Anything resolved at runtime (asset URLs in TS) must go through
@@ -59,7 +71,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: pages ? "/scene-studio/" : "/",
-    plugins: pages ? [pruneNonPublicDirs()] : [],
+    plugins: pages ? [pagesDataSurface()] : [],
 
     resolve: {
       // order matters: longer subpaths first (D4 entry map)
@@ -95,7 +107,7 @@ export default defineConfig(({ mode }) => {
     build: {
       rollupOptions: {
         input: pages
-          ? { main: html("index.html") }
+          ? { main: html("index.html"), ventDemo: html("vent-demo.html") }
           : {
               demos: html("demos.html"),
               main: html("index.html"),
