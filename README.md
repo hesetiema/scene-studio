@@ -4,6 +4,8 @@ Embeddable 3D scene editor and model viewer for the web. Published as
 [`@scenio/scene-editor`](https://www.npmjs.com/package/@scenio/scene-editor).
 This repo tracks `0.7.1`. Run `npm view @scenio/scene-editor dist-tags` to see what is live.
 
+**[Live demo →](https://hesetiema.github.io/scene-studio/)** · [![Pages](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml/badge.svg)](https://github.com/hesetiema/scene-studio/actions/workflows/pages.yml) — the studio with a sample model loaded; it is the only page published there, everything else is a local test host.
+
 **Docs:** English (this page) · [简体中文](README.zh-CN.md) · [Architecture & benchmarks](docs/ARCHITECTURE.md) · [Package quick start](packages/scene-editor/README.md) · [API reference](packages/scene-editor/API.md)
 
 ## What this is
